@@ -8,7 +8,9 @@ export function groupPostings(postings: Resident['postings']): PostingBlock[] {
   for (const posting of postings) {
     const block = blocks[blocks.length - 1]
     const previous = block?.[block.length - 1]
-    if (previous && previous.value === posting.value && monthIndex(posting.month) === monthIndex(previous.month) + 1) {
+    if (previous && previous.status === posting.status
+      && (posting.status !== 'posting' || previous.value === posting.value)
+      && monthIndex(posting.month) === monthIndex(previous.month) + 1) {
       block.push(posting)
     } else {
       blocks.push([posting])
