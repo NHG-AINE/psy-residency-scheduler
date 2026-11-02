@@ -68,6 +68,27 @@ class WorkbookImportTests(unittest.TestCase):
         self.assertEqual(unmapped["severity"], "info")
         self.assertNotIn("LOA", unmapped["values"])
 
+    def test_monthly_status_preserves_raw_entries_and_limits_reference_checks(self):
+        values = ["LOA", " loa ", "LoA", None, "", " \t ", "LOA pending", "Repeat R3 TBC", " core EXAMPLE ", "Unknown", "Posting", "LOA/Posting"]
+
+        def edit(w):
+            sheet = w["Jul 2026 - Jun 2027"]
+            for column, value in enumerate(values, 5):
+                sheet.cell(4, column).value = value
+            w["Postings"]["E2"] = "  Core Example  "
+
+        result = parse_workbook(workbook_bytes(edit))
+        entries = result["histories"][0]["residents"][0]["postings"]
+        self.assertEqual([p["status"] for p in entries], ["loa"] * 3 + ["blank"] * 3 + ["posting"] * 6)
+        # Excel stores an empty string as an empty cell; all other text stays exact.
+        self.assertEqual([p["value"] for p in entries], values[:4] + [None] + values[5:])
+        self.assertEqual([p["month"] for p in entries], [f"2026-{m:02d}" for m in range(7, 13)] + [f"2027-{m:02d}" for m in range(1, 7)])
+        self.assertEqual([p["source"] for p in entries], [{"sheet": "Jul 2026 - Jun 2027", "row": 4, "column": chr(c)} for c in range(ord("E"), ord("Q"))])
+        self.assertEqual(result["residents"][0]["postings"][0]["status"], "loa")
+        issue = next(i for i in result["issues"] if i["code"] == "unmapped_posting")
+        self.assertEqual(set(issue["values"]), {"LOA pending", "Repeat R3 TBC", "Unknown", "Posting", "LOA/Posting"})
+        self.assertTrue(all(p["source"] not in issue["sources"] for p in entries[:6]))
+
     def test_identity_problems_withhold_matching_without_dropping_rows(self):
         def duplicate(w):
             s = w["Jul 2027 - Jun 2028"]

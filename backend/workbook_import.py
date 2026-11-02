@@ -87,7 +87,10 @@ def yearly_sheet(sheet):
         resident["postings"] = []
         for c, month in zip(month_cells, months):
             cell = sheet.cell(*anchors.get((row, c.column), (row, c.column)))
-            resident["postings"].append({"month": month["month"], "value": text(cell.value),
+            value = text(cell.value)
+            label = (value or "").strip().casefold()
+            status = "blank" if not label else "loa" if label == "loa" else "posting"
+            resident["postings"].append({"month": month["month"], "value": value, "status": status,
                                           "source": source(sheet, cell.row, cell.column_letter)})
     return {"year": first.year, "sheet": sheet.title, "months": months, "residents": residents}
 
@@ -165,7 +168,7 @@ def review_import(result, yearly_sheets=None):
         if record["match_status"] == "unmatched" and key(record) and key(record) not in known_mcrs:
             issue("unmatched_request", "Request has no matching resident", "This request MCR was not found in any yearly resident tab.", [record])
 
-    # Exact references only: elective fragments, LOA and SAF notes remain raw,
+    # Exact references only: elective fragments and SAF notes remain raw,
     # without guessing aliases or treating a historical entry as training credit.
     known = {r["posting"].strip().casefold() for r in result["postings"]["core"] if r.get("posting")}
     unmapped = {}
@@ -173,7 +176,7 @@ def review_import(result, yearly_sheets=None):
         for record in rows:
             for posting in record["postings"]:
                 value = posting["value"]
-                if value and value.strip().casefold() != "loa" and value.strip().casefold() not in known:
+                if posting["status"] == "posting" and value.strip().casefold() not in known:
                     ref = posting["source"]
                     unmapped[(value, ref["sheet"], ref["row"], ref.get("column"))] = ref
     if unmapped:
