@@ -18,7 +18,9 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Follow the tech stack in README.md.
 - Follow DESIGN.md when changing the interface.
 - Read .agents/context/COMMIT_STYLE.md when proposing or writing commit messages.
-- Read docs/constraints.md when changing scheduling logic.
+- Read docs/programme-structure.md for R1-R5 postings, institutions and durations.
+- Read docs/constraints.md before changing posting interpretation, resident
+  progression or scheduling logic.
 - Keep confirmed requirements distinct from implemented constraints.
 
 ## Implementation plans
