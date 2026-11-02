@@ -76,11 +76,88 @@
   .connection-details { @apply max-w-[75ch] pt-3 text-xs leading-relaxed text-muted; }
   .connection-details p + p { @apply mt-2; }
   .connection-details code { @apply text-body; }
+  .workbook-chooser { @apply flex min-h-52 items-center justify-between gap-8 px-6 py-8; }
+  .workbook-chooser.is-dragging { @apply bg-surface-strong; outline: 2px dashed var(--color-focus); outline-offset: -8px; }
+  .upload-copy { @apply min-w-0; }
+  .upload-copy h3 { @apply text-base font-medium; overflow-wrap: anywhere; }
+  .upload-copy p { @apply mt-2 text-sm leading-relaxed text-body; }
+  .upload-copy .session-note { @apply mt-3 max-w-[70ch] text-xs text-muted; }
+  .upload-actions { @apply flex shrink-0 flex-wrap gap-2; }
+  .button-secondary { @apply border border-hairline-strong bg-surface text-primary hover:bg-surface-strong; }
+  .import-feedback { @apply px-6; }
+  .import-feedback p:not(:empty) { @apply mb-5 text-xs leading-relaxed text-muted; }
+  .import-feedback .error-message { @apply rounded-lg px-4 py-3 text-sm; background: #fff0ee; color: #9f352e; }
+  .review-panel { @apply mt-6; }
+  .review-toolbar { @apply flex flex-wrap items-end justify-between gap-4 px-6 py-5; }
+  label { @apply block text-[13px] font-medium; }
+  select, input[type='search'] { @apply mt-2 block min-h-10 rounded-lg border bg-surface px-3 py-2 text-sm font-normal text-ink; border-color: #938c84; }
+  select:disabled { @apply opacity-50; }
+  .sheet-label { @apply max-w-[60ch] text-xs text-muted; overflow-wrap: anywhere; }
+  .view-nav { @apply flex gap-1 overflow-x-auto border-y border-hairline px-6 py-2; }
+  .view-nav button { @apply min-h-10 shrink-0 rounded-full px-4 text-[13px] text-body hover:bg-surface-strong disabled:opacity-50; }
+  .view-nav button.active { @apply bg-primary text-white; }
+  .search-toolbar { @apply px-6 py-5; }
+  input[type='search'] { @apply w-full max-w-sm; }
+  input::placeholder { color: var(--color-muted); }
+  .table-scroll { @apply max-w-full overflow-x-auto; }
+  table { @apply w-full border-collapse text-left text-xs; font-variant-numeric: tabular-nums; }
+  th, td { @apply border-b border-hairline px-4 py-4 align-top; min-width: 110px; overflow-wrap: anywhere; }
+  thead th { @apply bg-surface-soft font-medium text-body; }
+  tbody th { @apply font-medium; }
+  th small, td small { @apply mt-1 block text-xs font-normal leading-relaxed text-muted; }
+  .timetable table { min-width: 1200px; }
+  .timetable tr > :first-child { @apply sticky left-0 z-10 min-w-48 max-w-60 bg-surface; }
+  .timetable thead tr > :first-child { @apply bg-surface-soft; }
+  .posting-value { @apply block rounded-md bg-surface-strong p-2 leading-relaxed text-body; }
+  .posting-value.unallocated { @apply border border-dashed border-hairline-strong bg-surface text-muted; }
+  .table-note { @apply px-6 py-4 text-xs leading-relaxed text-muted; }
+  .empty-note { @apply px-6 py-10 text-sm leading-relaxed text-muted; }
+  .review-content { @apply px-6 py-6; }
+  .review-content h2 { @apply mb-3 text-xl font-medium; }
+  .review-content > p { @apply mb-5; }
+  .muted { @apply max-w-[75ch] text-sm leading-relaxed text-muted; }
+  .source { @apply mt-2 block text-xs leading-relaxed text-muted; overflow-wrap: anywhere; }
+  .resident-list { @apply px-6 pb-4; }
+  .resident-detail { @apply border-t border-hairline; }
+  summary { @apply cursor-pointer py-4 text-[13px] font-medium; }
+  .resident-content { @apply pb-6; }
+  .resident-facts { @apply grid grid-cols-3 gap-x-6 gap-y-4; }
+  dt { @apply text-xs text-muted; }
+  dd { @apply mt-1 text-sm; overflow-wrap: anywhere; }
+  .record-note { @apply my-4 max-w-[75ch] whitespace-pre-line text-sm leading-relaxed text-body; }
+  .resident-content h3 { @apply mb-3 mt-7 text-base font-medium; }
+  .record { @apply border-b border-hairline py-4 text-sm leading-relaxed; }
+  .history-year { @apply mt-5 border-t border-hairline pt-4; }
+  .history-year h4 { @apply text-sm font-medium; }
+  .history-months { @apply mt-3 grid grid-cols-4 gap-4; }
+  .history-months > div { @apply border-b border-hairline pb-3 text-xs; }
+  .history-months span { @apply font-medium; }
+  .history-months p { @apply mt-2 whitespace-pre-line leading-relaxed text-body; }
+  .issue-list { @apply divide-y divide-hairline; }
+  .issue-list li { @apply py-4 text-sm leading-relaxed; }
+  .raw-postings { @apply mt-6; }
+  .raw-cell { @apply mr-5 inline-block whitespace-pre-line; }
+  .raw-cell strong { @apply font-medium text-muted; }
+  .connection-container { @apply mt-6 overflow-hidden rounded-2xl border border-hairline; }
+  .connection-container .connection-panel { @apply border-t-0; }
+  .loading-region { @apply px-6 py-6; }
+  .loading-region > p { @apply mb-5 text-sm text-muted; }
+  .loading-list-row { @apply flex min-h-20 items-center justify-between border-b border-hairline py-4; }
+  .loading-person { @apply flex items-center gap-3; }
+  .skeleton { @apply block rounded-md bg-surface-strong; height: 12px; animation: skeleton-pulse 1.8s ease-in-out infinite; }
+  .skeleton-file { width: 32px; height: 32px; }
+  .skeleton-title { width: 105px; }
+  .skeleton-small { width: 70px; height: 8px; margin-top: 8px; }
+  .skeleton-pill { width: 48px; height: 22px; border-radius: 9999px; }
 }
+
+@keyframes skeleton-pulse { 50% { opacity: .45; } }
 
 @media (max-width: 800px) {
   .site-header { @apply px-5; }
   .site-main { @apply px-5 py-7; }
+  .workbook-chooser { @apply flex-col items-start gap-5; }
+  .history-months { @apply grid-cols-3; }
 }
 
 @media (max-width: 520px) {
@@ -96,6 +173,11 @@
   .connection-summary { @apply flex-col items-start gap-4; }
   .button { @apply min-h-11; }
   .details-trigger { @apply min-h-11; }
+  .workbook-chooser, .review-content, .review-toolbar, .loading-region { @apply px-4; }
+  .import-feedback, .view-nav, .search-toolbar, .resident-list { @apply px-4; }
+  .view-nav button { @apply min-h-11 px-3; }
+  .resident-facts, .history-months { @apply grid-cols-2; }
+  .upload-actions { @apply w-full; }
 }
 
 @media (prefers-reduced-motion: reduce) {
