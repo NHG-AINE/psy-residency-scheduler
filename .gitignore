@@ -2,3 +2,8 @@
 .env
 .env.*
 !.env.example
+
+# Python environments and generated files
+.venv/
+__pycache__/
+*.py[cod]
