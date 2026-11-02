@@ -3,6 +3,8 @@ import ConnectionStatus from './components/ConnectionStatus'
 import Skeleton from './components/Skeleton'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
+import { groupPostings } from './lib/posting-blocks'
+import type { PostingBlock } from './lib/posting-blocks'
 
 type View = 'Timetable' | 'Residents' | 'Requests' | 'Postings' | 'Issues'
 const views: View[] = ['Timetable', 'Residents', 'Requests', 'Postings', 'Issues']
@@ -54,7 +56,32 @@ function Review({ workbook, view, query }: { workbook: Workbook; view: View; que
   }
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
   if (view === 'Residents') return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} />)}</div>
-  return <><div className="table-scroll timetable"><table><caption className="sr-only">Imported timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption><thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead><tbody>{residents.map((resident, index) => <tr key={index}><th scope="row"><span>{show(resident.name)}</span><small>{show(resident.residency_year)} · {show(resident.mcr)}</small></th>{resident.postings.map((posting) => <td key={posting.month}><span className={posting.value ? 'posting-value' : 'posting-value unallocated'} title={sourceLabel(posting.source)}>{posting.value || 'Unallocated'}</span></td>)}</tr>)}</tbody></table></div><p className="table-note">Imported workbook entries. Open Residents to review source rows, linked requests and recorded history.</p></>
+  return <Timetable residents={residents} workbook={workbook} />
+}
+
+function Timetable({ residents, workbook }: { residents: Resident[]; workbook: Workbook }) {
+  const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
+  const range = (block: PostingBlock) => block.length === 1 ? monthLabel(block[0].month) : `${monthLabel(block[0].month)} – ${monthLabel(block[block.length - 1].month)}`
+  return <>
+    <div className="table-scroll timetable"><table>
+      <caption className="sr-only">Imported timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
+      <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
+      <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
+      <tbody>{residents.map((resident, index) => <tr key={index}>
+        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.residency_year)} · ${show(resident.mcr)}`)}</small></th>
+        {groupPostings(resident.postings).map((block) => {
+          const value = block[0].value || 'Unallocated'
+          return <td key={block[0].month} colSpan={block.length}><div
+            className={block[0].value ? 'posting-value' : 'posting-value unallocated'}
+            title={`${value} · ${range(block)}`} aria-label={`${show(resident.name)} · ${range(block)} · ${value}`}
+            >
+            {words(value)}
+          </div></td>
+        })}
+      </tr>)}</tbody>
+    </table></div>
+    <p className="table-note">Imported workbook entries. Open Residents to review source rows, linked requests and recorded history.</p>
+  </>
 }
 
 export default function App() {
