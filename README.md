@@ -19,6 +19,12 @@ To stop both services, run this from another terminal in the repository root:
 docker compose down
 ```
 
+## Workbook import
+
+Choose an `.xlsx` workbook in the app to review its timetable, residents,
+requests, postings and import issues. See [Workbook import](docs/workbook-import.md)
+for the expected format and current limits.
+
 ## Tech stack
 
 | Area | Technology |
