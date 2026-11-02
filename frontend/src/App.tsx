@@ -81,7 +81,6 @@ function Timetable({ residents, workbook }: { residents: Resident[]; workbook: W
         })}
       </tr>)}</tbody>
     </table></div>
-    <p className="table-note">Imported workbook entries. Open Residents to review source rows, linked requests and recorded history.</p>
   </>
 }
 
