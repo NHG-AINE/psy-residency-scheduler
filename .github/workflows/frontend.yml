@@ -7,12 +7,6 @@ on:
       - 'frontend/**'
       - 'docker-compose.yml'
       - '.github/workflows/frontend.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - 'docker-compose.yml'
-      - '.github/workflows/frontend.yml'
 
 permissions:
   contents: read
