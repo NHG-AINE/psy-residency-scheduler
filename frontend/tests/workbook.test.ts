@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { importWorkbook, workbookError } from '../src/lib/workbook.ts'
+import { groupIssuePostings, importWorkbook, workbookError } from '../src/lib/workbook.ts'
 
 test('validates one nonempty XLSX at the exact 10 MiB boundary', () => {
   assert.match(workbookError([]), /one workbook/)
@@ -42,4 +42,12 @@ test('reports server validation, unreachable backend and non-JSON responses', as
   await assert.rejects(importWorkbook(file, 2027), /unexpected workbook/)
   t.mock.method(globalThis, 'fetch', async () => { throw new DOMException('timeout', 'TimeoutError') })
   await assert.rejects(importWorkbook(file, 2027), /timed out/)
+})
+
+test('groups repeated issue labels without losing distinct source locations', () => {
+  const first = { sheet: 'Year', row: 3, column: 'H' }
+  const second = { sheet: 'Year', row: 4, column: 'I' }
+  const groups = groupIssuePostings({ code: 'unmapped_posting', severity: 'info', message: '', source: first,
+    values: ['Posting A', 'Posting A', 'Posting B', 'Posting A'], sources: [first, second, first, first] })
+  assert.deepEqual(groups, [{ value: 'Posting A', sources: [first, second] }, { value: 'Posting B', sources: [first] }])
 })

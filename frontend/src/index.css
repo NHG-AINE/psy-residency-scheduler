@@ -139,7 +139,22 @@
   .history-months span { @apply font-medium; }
   .history-months p { @apply mt-2 whitespace-pre-line leading-relaxed text-body; }
   .issue-list { @apply divide-y divide-hairline; }
-  .issue-list li { @apply py-4 text-sm leading-relaxed; }
+  .issue-list li { @apply text-sm leading-relaxed; }
+  .import-issue summary { @apply flex items-center justify-between gap-6 py-5; list-style: none; }
+  .import-issue summary::-webkit-details-marker { display: none; }
+  .issue-copy { @apply min-w-0 flex-1; }
+  .issue-copy strong { @apply block text-sm font-medium text-ink; }
+  .issue-copy > span { @apply mt-1 block text-xs font-normal leading-relaxed text-muted; }
+  .issue-chevron { @apply h-4 w-4 shrink-0 fill-none stroke-muted; stroke-width: 1.5; transition: transform .15s; }
+  .import-issue[open] .issue-chevron { transform: rotate(180deg); }
+  .issue-table { @apply mb-5; }
+  .issue-table th, .issue-table td { @apply px-3 py-3; }
+  .issue-table td { @apply whitespace-pre-wrap; }
+  .issues-heading { @apply flex items-center gap-2; }
+  .issue-badge { @apply inline-flex min-w-7 items-center justify-center font-medium; }
+  .issue-badge-warning { background: #fff4d6; color: #805510; border-color: #ead49b; }
+  .issue-badge-neutral { background: #efeeec; color: #625e59; border-color: #dedbd7; }
+  .workbook-warning { @apply py-4; }
   .raw-postings { @apply mt-6; }
   .raw-cell { @apply mr-5 inline-block whitespace-pre-line; }
   .raw-cell strong { @apply font-medium text-muted; }

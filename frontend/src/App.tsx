@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import ConnectionStatus from './components/ConnectionStatus'
 import Skeleton from './components/Skeleton'
+import ImportIssues from './components/ImportIssues'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings } from './lib/posting-blocks'
@@ -13,7 +14,7 @@ const source = (value: Source) => <small className="source">{sourceLabel(value)}
 const linked = (a: Source, b: Source | null | undefined) => a.sheet === b?.sheet && a.row === b?.row
 
 function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: Workbook }) {
-  const requests = workbook.requests.filter((request) => linked(resident.source, request.matched_resident_source))
+  const requests = workbook.requests.filter((request) => request.posting_request?.trim() && linked(resident.source, request.matched_resident_source))
   const histories = workbook.histories.map((history) => ({ ...history, residents: history.residents.filter((person) => linked(resident.source, person.matched_resident_source)) })).filter((history) => history.residents.length)
   return <details className="resident-detail">
     <summary>Review {resident.name || resident.mcr || 'resident'}</summary>
@@ -42,16 +43,16 @@ function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: 
 function Review({ workbook, view, query }: { workbook: Workbook; view: View; query: string }) {
   const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
-  if (view === 'Issues') return <div className="review-content"><h2>Import issues</h2>
-    {workbook.issues?.length || workbook.warnings.length ? <ul className="issue-list">{workbook.issues?.map((issue, index) => <li key={`issue-${index}`}><p>{issue.severity === 'info' ? 'Information: ' : 'Review: '}{issue.message}</p>{source(issue.source)}{issue.values && <details><summary>View recorded posting values</summary>{issue.values.map((value, valueIndex) => <div className="record" key={valueIndex}><p>{value}</p>{issue.sources?.[valueIndex] && source(issue.sources[valueIndex])}</div>)}</details>}</li>)}{workbook.warnings.map((warning, index) => <li key={`warning-${index}`}>{warning}</li>)}</ul> : <p className="muted">No import issues were reported. Imported records still need programme review.</p>}
-    <details className="raw-postings"><summary>Review unresolved historical rows</summary>{workbook.histories.map((history) => <div key={history.sheet}>{history.residents.filter((person) => person.match_status !== 'matched').map((person, index) => <div className="record" key={index}><p>{show(person.name)} · {show(person.mcr)} · {person.match_status || 'Unresolved'}</p>{source(person.source)}<p>{person.postings.map((posting) => `${monthLabel(posting.month)}: ${posting.value || 'No entry'}`).join(' · ')}</p></div>)}</div>)}</details>
+  if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
+    <ImportIssues issues={workbook.issues || []} warnings={workbook.warnings} />
   </div>
+  const corePostings = workbook.postings.core.filter((posting) => [posting.posting, posting.duration_months, posting.max, posting.remarks].some((value) => value?.trim()))
   if (view === 'Postings') return <div className="review-content"><h2>Posting reference</h2><p className="muted">Reference values recorded in the workbook. Blank capacity means unknown.</p>
-    {workbook.postings.core.length ? <div className="table-scroll"><table><caption className="sr-only">Core posting reference</caption><thead><tr><th>Residency year</th><th>Posting</th><th>Duration (months)</th><th>Maximum</th><th>Remarks / source</th></tr></thead><tbody>{workbook.postings.core.map((posting, index) => <tr key={index}><td>{show(posting.residency_year)}</td><td>{show(posting.posting)}</td><td>{show(posting.duration_months)}</td><td>{show(posting.max)}</td><td>{show(posting.remarks)}{source(posting.source)}</td></tr>)}</tbody></table></div> : <p className="empty-note">No core posting reference was found.</p>}
+    {corePostings.length ? <div className="table-scroll"><table><caption className="sr-only">Core posting reference</caption><thead><tr><th>Residency year</th><th>Posting</th><th>Duration (months)</th><th>Maximum</th><th>Remarks / source</th></tr></thead><tbody>{corePostings.map((posting, index) => <tr key={index}><td>{show(posting.residency_year)}</td><td>{show(posting.posting)}</td><td>{show(posting.duration_months)}</td><td>{show(posting.max)}</td><td>{show(posting.remarks)}{source(posting.source)}</td></tr>)}</tbody></table></div> : <p className="empty-note">No core posting reference was found.</p>}
     <details className="raw-postings"><summary>View all posting reference rows</summary><div className="table-scroll"><table><caption className="sr-only">Raw posting reference rows, with original column letters</caption><thead><tr><th>Source</th><th>Recorded cells</th></tr></thead><tbody>{workbook.postings.rows.map((row, index) => <tr key={index}><td>{source(row.source)}</td><td>{Object.entries(row.cells).map(([column, value]) => <span className="raw-cell" key={column}><strong>{column}</strong> {show(value)}</span>)}</td></tr>)}</tbody></table></div></details>
   </div>
   if (view === 'Requests') {
-    const requests = workbook.requests.filter((request) => matches(request.name, request.mcr))
+    const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
     return requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small></td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>
   }
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
