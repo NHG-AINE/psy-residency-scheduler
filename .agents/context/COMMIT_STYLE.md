@@ -45,10 +45,14 @@ Use Conventional Commits for all commit messages.
   creates no merge commit to name.
 - Give pull requests into main a Conventional Commit title that follows
   this guide, including the 72-character subject limit.
-- Use the PR title as the subject of the resulting merge or squash commit,
-  instead of GitHub's default `Merge pull request #... from ...` message.
-- The commit-message preference does not require squash merging;
-  choose the merge method separately.
+- Prefer Rebase and merge for PRs with clean, focused commits. This keeps
+  main linear while preserving the individual commits.
+- Use Squash and merge for PRs with messy history, such as WIP or fixup
+  commits, to combine them into one meaningful commit.
+- Rebase merges retain individual commit messages; the PR title does not
+  become an additional commit.
+- For squash merges or an explicitly chosen merge commit, use the PR title
+  as the commit subject instead of `Merge pull request #... from ...`.
 
 ## Examples
 
