@@ -5,7 +5,7 @@ export type Resident = {
   intake: string | null; mom_number: string | null; email: string | null
   remarks: string | null; source: Source
   match_status?: 'matched' | 'unmatched' | 'ambiguous'; matched_resident_source?: Source | null
-  postings: { month: string; value: string | null; source: Source }[]
+  postings: { month: string; value: string | null; status: 'posting' | 'loa' | 'blank'; source: Source }[]
 }
 export type Request = {
   name: string | null; mcr: string | null; email: string | null; intake: string | null

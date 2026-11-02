@@ -33,7 +33,7 @@ function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: 
       <p className="muted">Workbook records only. These entries do not establish credited or completed training. Unresolved identity matches appear in Issues.</p>
       {histories.length ? histories.map((history) => <div className="history-year" key={history.sheet}>
         <h4>{history.year}–{history.year + 1}</h4>
-        {history.residents.map((person, index) => <div key={index}>{source(person.source)}<div className="history-months">{person.postings.map((posting) => <div key={posting.month}><span>{monthLabel(posting.month)}</span><p>{posting.value || 'No entry'}</p>{source(posting.source)}</div>)}</div>{person.remarks && <p className="record-note">{person.remarks}</p>}</div>)}
+        {history.residents.map((person, index) => <div key={index}>{source(person.source)}<div className="history-months">{person.postings.map((posting) => <div key={posting.month}><span>{monthLabel(posting.month)}</span><p className={posting.status === 'loa' ? 'posting-value loa' : undefined}>{posting.status === 'loa' ? 'LOA' : posting.status === 'blank' ? 'No entry' : posting.value}</p>{source(posting.source)}</div>)}</div>{person.remarks && <p className="record-note">{person.remarks}</p>}</div>)}
       </div>) : <p className="muted">No safely matched historical records in this workbook.</p>}
     </div>
   </details>
@@ -70,9 +70,10 @@ function Timetable({ residents, workbook }: { residents: Resident[]; workbook: W
       <tbody>{residents.map((resident, index) => <tr key={index}>
         <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small></th>
         {groupPostings(resident.postings).map((block) => {
-          const value = block[0].value || 'Unallocated'
+          const status = block[0].status
+          const value = status === 'loa' ? 'LOA' : status === 'blank' ? 'Unallocated' : block[0].value || 'Unallocated'
           return <td key={block[0].month} colSpan={block.length}><div
-            className={block[0].value ? 'posting-value' : 'posting-value unallocated'}
+            className={`posting-value${status === 'loa' ? ' loa' : status === 'blank' ? ' unallocated' : ''}`}
             title={`${value} · ${range(block)}`} aria-label={`${show(resident.name)} · ${range(block)} · ${value}`}
             >
             {words(value)}
