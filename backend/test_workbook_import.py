@@ -5,7 +5,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from main import app
-from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
+from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, review_import
 
 
 def workbook_bytes(edit=None):
@@ -66,7 +66,7 @@ class WorkbookImportTests(unittest.TestCase):
         self.assertEqual(r["months"][1]["date_range_text"], "7 Jul - 5 Aug (original display text)")
         unmapped = next(i for i in r["issues"] if i["code"] == "unmapped_posting")
         self.assertEqual(unmapped["severity"], "info")
-        self.assertIn("LOA", unmapped["values"])
+        self.assertNotIn("LOA", unmapped["values"])
 
     def test_identity_problems_withhold_matching_without_dropping_rows(self):
         def duplicate(w):
@@ -87,6 +87,86 @@ class WorkbookImportTests(unittest.TestCase):
                 self.assertIsNone(history["matched_resident_source"])
                 self.assertIn(code, [i["code"] for i in r["issues"]])
                 self.assertEqual(len(history["postings"]), 12)
+
+    def test_identity_conflicts_group_related_rows_but_keep_distinct_conflicts_separate(self):
+        def record(name, mcr, sheet, row):
+            return {"name": name, "mcr": mcr, "source": {"sheet": sheet, "row": row}, "postings": []}
+        current = [record("Alex Example", " M001 ", "Current", 3), record("Jamie Example", "M002", "Current", 4)]
+        history = [record("Alex Example (SAF)", "m001", "History", 5), record("Jamie Example", "M003", "History", 6)]
+        requests = [record("Alex Example", "M001", "Request", 7)]
+        result = review_import({"residents": current, "histories": [{"residents": history}], "requests": requests, "postings": {"core": []}})
+        conflicts = [i for i in result["issues"] if i["code"] == "conflicting_identity"]
+        self.assertEqual(len(conflicts), 2)
+        self.assertEqual([len(i["records"]) for i in conflicts], [3, 2])
+        originals = current + history + requests
+        reported = [r for issue in conflicts for r in issue["records"]]
+        self.assertCountEqual(reported, [{"name": r["name"], "mcr": r["mcr"], "source": r["source"]} for r in originals])
+        self.assertEqual(reported[0]["mcr"], " M001 ")
+        self.assertEqual(len(current) + len(history) + len(requests), 5)
+        # Parenthetical suffixes stay significant; grouping must not relax matching.
+        self.assertTrue(all(r["match_status"] == "ambiguous" for r in history + requests))
+        self.assertTrue(all(r["matched_resident_source"] is None for r in history + requests))
+
+    def test_duplicates_are_grouped_per_mcr_per_annual_sheet_and_missing_rows_stay_visible(self):
+        def record(name, mcr, sheet, row):
+            return {"name": name, "mcr": mcr, "source": {"sheet": sheet, "row": row}, "postings": []}
+        current = [record("Alex", "M001", "Current", n) for n in (3, 4, 5)]
+        history = [record("Alex", "M001", "History", n) for n in (6, 7)]
+        requests = [record("Missing MCR", None, "Request", 8), record(None, "M009", "Request", 9), record("Unmatched", "M010", "Request", 10)]
+        result = review_import({"residents": current, "histories": [{"residents": history}], "requests": requests, "postings": {"core": []}})
+        duplicates = [i for i in result["issues"] if i["code"] == "duplicate_mcr"]
+        self.assertEqual([len(i["records"]) for i in duplicates], [3, 2])
+        self.assertEqual([{r["source"]["sheet"] for r in i["records"]} for i in duplicates], [{"Current"}, {"History"}])
+        for code, request in zip(("missing_mcr", "missing_name", "unmatched_request"), requests):
+            issue = next(i for i in result["issues"] if i["code"] == code)
+            self.assertEqual(issue["records"], [{"name": request["name"], "mcr": request["mcr"], "source": request["source"]}])
+        self.assertEqual(requests[-1]["match_status"], "unmatched")
+        self.assertTrue(all(r["match_status"] == "ambiguous" for r in history))
+
+    def test_request_mcr_is_checked_across_years_without_linking_future_residents(self):
+        def edit(w):
+            w["Jul 2027 - Jun 2028"]["D3"] = "New Resident"
+            w["Jul 2027 - Jun 2028"]["E3"] = "M99999A"
+            w["Request"]["A2"] = "New Resident"
+            w["Request"]["B2"] = " m99999a "
+            w["Request"].append(["Unknown Resident", "M00000X", "R1", "Example", "July"])
+        result = parse_workbook(workbook_bytes(edit), 2026)
+        issues = [i for i in result["issues"] if i["code"] == "unmatched_request"]
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["records"][0]["mcr"], "M00000X")
+        self.assertEqual(result["requests"][0]["match_status"], "unmatched")
+        self.assertIsNone(result["requests"][0]["matched_resident_source"])
+        self.assertEqual(result["histories"], [])
+        self.assertEqual(result["residents"][0]["mcr"], "M12345A")
+
+    def test_posting_comparison_ignores_outer_spaces_and_case_but_preserves_text(self):
+        def edit(w):
+            w["Postings"]["E2"] = "  Core Example  "
+            w["Jul 2027 - Jun 2028"]["G3"] = " core EXAMPLE "
+            w["Jul 2027 - Jun 2028"]["J3"] = "Core Example (Elective)"
+        result = parse_workbook(workbook_bytes(edit))
+        issue = next(i for i in result["issues"] if i["code"] == "unmapped_posting")
+        self.assertNotIn(" core EXAMPLE ", issue["values"])
+        self.assertIn("Core Example (Elective)", issue["values"])
+        self.assertEqual(result["residents"][0]["postings"][0]["value"], " core EXAMPLE ")
+        self.assertEqual(result["postings"]["core"][0]["posting"], "  Core Example  ")
+
+    def test_unmapped_postings_retain_every_distinct_original_cell_source(self):
+        def edit(w):
+            w["Jul 2026 - Jun 2027"]["F4"] = " loa "
+        result = parse_workbook(workbook_bytes(edit))
+        issue = next(i for i in result["issues"] if i["code"] == "unmapped_posting")
+        reported = list(zip(issue["values"], issue["sources"]))
+        expected = []
+        for resident in result["residents"] + result["histories"][0]["residents"]:
+            for posting in resident["postings"]:
+                pair = (posting["value"], posting["source"])
+                if posting["value"] and posting["value"].strip().casefold() != "loa" and pair not in expected:
+                    expected.append(pair)
+        self.assertEqual(reported, expected)
+        self.assertFalse(any(value.strip().casefold() == "loa" for value in issue["values"]))
+        self.assertEqual(result["histories"][0]["residents"][0]["postings"][1]["value"], " loa ")
+        self.assertEqual(issue["severity"], "info")
 
     def test_months_history_and_raw_text_remain_separate(self):
         r = parse_workbook(workbook_bytes())
