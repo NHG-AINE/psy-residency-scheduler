@@ -93,6 +93,7 @@ export default function App() {
   const [workbook, setWorkbook] = useState<Workbook | null>(null)
   const [year, setYear] = useState(2027)
   const [busy, setBusy] = useState(false)
+  const [loadingHeight, setLoadingHeight] = useState<number>()
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -135,6 +136,7 @@ export default function App() {
   }, [busy, workbook])
 
   async function load(nextFile: File, nextYear: number, reveal = false) {
+    setLoadingHeight(review.current?.getBoundingClientRect().height)
     setBusy(true); setError(''); setStatus(`Reading ${nextFile.name}…`)
     try {
       const result = await importWorkbook(nextFile, nextYear)
@@ -168,10 +170,11 @@ export default function App() {
         </div>
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
-      {(workbook || busy) && <section ref={review} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
+      {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
         <div className="review-toolbar"><label>Planning year<select value={year} disabled={busy} onChange={(event) => { if (file) void load(file, Number(event.target.value)) }}>{years.map((value) => <option key={value} value={value}>Jul {value} – Jun {value + 1}</option>)}</select></label>{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => setView(item)}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
-        {busy ? <div className="loading-region"><p>Reading workbook sheets and linking resident records…</p><Skeleton /></div> : workbook && <>{['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar"><label htmlFor="resident-search">Search residents</label><input id="resident-search" type="search" placeholder="Name or MCR number" value={query} onChange={(event) => setQuery(event.target.value)} /></div>}<Review workbook={workbook} view={view} query={query} /></>}
+        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar"><label htmlFor="resident-search">Search residents</label><input id="resident-search" type="search" placeholder="Name or MCR number" value={query} disabled={busy} onChange={(event) => setQuery(event.target.value)} /></div>}
+        {busy ? <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></> : workbook && <Review workbook={workbook} view={view} query={query} />}
       </section>}
     </main>
   </>
