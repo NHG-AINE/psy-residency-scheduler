@@ -13,6 +13,11 @@ export type Request = {
   remarks: string | null; source: Source
   match_status?: 'matched' | 'unmatched' | 'ambiguous'; matched_resident_source?: Source | null
 }
+export type ImportIssue = {
+  code: string; severity: 'warning' | 'info'; title?: string; message: string; source: Source
+  records?: { name: string | null; mcr: string | null; source: Source }[]
+  values?: string[]; sources?: Source[]
+}
 export type Workbook = {
   target_year: number; available_years: { year: number; sheet: string }[]
   target_sheet: string | null; months: Month[]; residents: Resident[]
@@ -23,7 +28,7 @@ export type Workbook = {
     rows: { source: Source; cells: Record<string, string | null> }[]
   }
   warnings: string[]
-  issues?: { code: string; severity: 'warning' | 'info'; message: string; source: Source; values?: string[]; sources?: Source[] }[]
+  issues?: ImportIssue[]
 }
 
 export function workbookError(files: Pick<File, 'name' | 'size'>[]): string {
@@ -69,4 +74,15 @@ export function sourceLabel(source: Source): string {
 
 export function monthLabel(month: string): string {
   return new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-SG', { month: 'short', year: '2-digit', timeZone: 'UTC' })
+}
+
+export function groupIssuePostings(issue: ImportIssue): { value: string; sources: Source[] }[] {
+  const groups = new Map<string, Source[]>()
+  issue.values?.forEach((value, index) => {
+    const sources = groups.get(value) || []
+    const source = issue.sources?.[index] || issue.source
+    if (!sources.some((existing) => existing.sheet === source.sheet && existing.row === source.row && existing.column === source.column)) sources.push(source)
+    groups.set(value, sources)
+  })
+  return Array.from(groups, ([value, sources]) => ({ value, sources }))
 }
