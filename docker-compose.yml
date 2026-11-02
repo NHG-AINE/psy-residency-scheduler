@@ -1,0 +1,38 @@
+services:
+  backend:
+    build: ./backend
+    init: true
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend:/app:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          response = urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2);
+          assert response.status == 200 and json.load(response) == {'status': 'ok'}
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    init: true
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      API_PROXY_TARGET: http://backend:8000
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+      - ./frontend/index.html:/app/index.html:ro
+      - ./frontend/vite.config.ts:/app/vite.config.ts:ro
+    depends_on:
+      backend:
+        condition: service_healthy
