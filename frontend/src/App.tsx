@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Skeleton from './components/Skeleton'
 import ImportIssues from './components/ImportIssues'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
@@ -87,6 +87,8 @@ function Timetable({ residents, workbook }: { residents: Resident[]; workbook: W
 export default function App() {
   const input = useRef<HTMLInputElement>(null)
   const browse = useRef<HTMLButtonElement>(null)
+  const review = useRef<HTMLElement>(null)
+  const revealAfterUpload = useRef(false)
   const [file, setFile] = useState<File | null>(null)
   const [workbook, setWorkbook] = useState<Workbook | null>(null)
   const [year, setYear] = useState(2027)
@@ -97,10 +99,47 @@ export default function App() {
   const [view, setView] = useState<View>('Timetable')
   const [query, setQuery] = useState('')
 
-  async function load(nextFile: File, nextYear: number) {
+  useEffect(() => {
+    if (busy || !workbook || !revealAfterUpload.current) return
+    revealAfterUpload.current = false
+    const target = review.current?.querySelector<HTMLElement>('.timetable') || review.current
+    if (!target) return
+    const rect = target.getBoundingClientRect()
+    const start = window.scrollY
+    const offset = rect.height > window.innerHeight - 32 ? 16 : (window.innerHeight - rect.height) / 2
+    const end = Math.max(0, Math.min(start + rect.top - offset, document.documentElement.scrollHeight - window.innerHeight))
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      window.scrollTo({ top: end, behavior: 'instant' })
+      return
+    }
+    const started = performance.now()
+    let frame = 0
+    const cancel = () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('wheel', cancel)
+      window.removeEventListener('touchstart', cancel)
+      window.removeEventListener('keydown', cancel)
+    }
+    const animate = (now: number) => {
+      const progress = Math.min((now - started) / 700, 1)
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
+      window.scrollTo({ top: start + (end - start) * eased, behavior: 'instant' })
+      if (progress < 1) frame = requestAnimationFrame(animate)
+      else cancel()
+    }
+    window.addEventListener('wheel', cancel, { passive: true })
+    window.addEventListener('touchstart', cancel, { passive: true })
+    window.addEventListener('keydown', cancel)
+    frame = requestAnimationFrame(animate)
+    return cancel
+  }, [busy, workbook])
+
+  async function load(nextFile: File, nextYear: number, reveal = false) {
     setBusy(true); setError(''); setStatus(`Reading ${nextFile.name}…`)
     try {
       const result = await importWorkbook(nextFile, nextYear)
+      revealAfterUpload.current = reveal
+      if (reveal) setView('Timetable')
       setWorkbook(result); setFile(nextFile); setYear(result.target_year); setQuery('')
       setStatus(`Imported ${nextFile.name}. ${result.residents.length} residents in the selected planning year. ${(result.issues?.length || 0) + result.warnings.length} import issues.`)
     } catch (problem: unknown) {
@@ -112,7 +151,7 @@ export default function App() {
     if (busy || !files.length) return
     const problem = workbookError(files)
     if (problem) { setError(problem); return }
-    void load(files[0], year)
+    void load(files[0], year, true)
   }
   const years = [...new Set([2027, year, ...(workbook?.available_years.map((item) => item.year) || [])])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
@@ -129,7 +168,7 @@ export default function App() {
         </div>
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
-      {(workbook || busy) && <section className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
+      {(workbook || busy) && <section ref={review} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
         <div className="review-toolbar"><label>Planning year<select value={year} disabled={busy} onChange={(event) => { if (file) void load(file, Number(event.target.value)) }}>{years.map((value) => <option key={value} value={value}>Jul {value} – Jun {value + 1}</option>)}</select></label>{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => setView(item)}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
         {busy ? <div className="loading-region"><p>Reading workbook sheets and linking resident records…</p><Skeleton /></div> : workbook && <>{['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar"><label htmlFor="resident-search">Search residents</label><input id="resident-search" type="search" placeholder="Name or MCR number" value={query} onChange={(event) => setQuery(event.target.value)} /></div>}<Review workbook={workbook} view={view} query={query} /></>}
