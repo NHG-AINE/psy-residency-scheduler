@@ -1,5 +1,6 @@
 """Read posting records without interpreting them as completed training or rules."""
 from datetime import date, datetime
+from collections import defaultdict
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -91,6 +92,86 @@ def yearly_sheet(sheet):
     return {"year": first.year, "sheet": sheet.title, "months": months, "residents": residents}
 
 
+def review_import(result):
+    """Link source records conservatively, retaining every raw value for review."""
+    issues = []
+    annual = [result["residents"]] + [s["residents"] for s in result["histories"]]
+    identities = [r for rows in annual for r in rows] + result["requests"]
+    names, mcrs = defaultdict(set), defaultdict(set)
+    duplicate_sources = set()
+
+    def key(record):
+        return " ".join((record.get("mcr") or "").split()).upper()
+
+    def name(record):
+        return " ".join((record.get("name") or "").split()).casefold()
+
+    def issue(code, message, record):
+        issues.append({"code": code, "severity": "warning", "message": message,
+                       "source": record["source"]})
+
+    for record in identities:
+        mcr, resident_name = key(record), name(record)
+        if not mcr:
+            issue("missing_mcr", "MCR is missing; this row cannot be matched by identity.", record)
+        if not resident_name:
+            issue("missing_name", "Resident name is missing; confirm this row's identity.", record)
+        if mcr and resident_name:
+            names[resident_name].add(mcr)
+            mcrs[mcr].add(resident_name)
+    for rows in annual:
+        counts = defaultdict(list)
+        for record in rows:
+            if key(record):
+                counts[key(record)].append(record)
+        for mcr, repeated in counts.items():
+            if len(repeated) > 1:
+                for record in repeated:
+                    duplicate_sources.add((record["source"]["sheet"], record["source"]["row"]))
+                    issue("duplicate_mcr", f"MCR {mcr} occurs more than once in this annual worksheet.", record)
+    for record in identities:
+        if len(names[name(record)]) > 1 or len(mcrs[key(record)]) > 1:
+            issue("conflicting_identity", "Name and MCR disagree across source rows; matching is withheld until reviewed.", record)
+
+    target = defaultdict(list)
+    for record in result["residents"]:
+        if key(record):
+            target[key(record)].append(record)
+    for record in [r for rows in annual[1:] for r in rows] + result["requests"]:
+        mcr = key(record)
+        candidates = target[mcr] if mcr else []
+        ambiguous = (len(candidates) > 1 or len(names[name(record)]) > 1
+                     or len(mcrs[mcr]) > 1
+                     or (record["source"]["sheet"], record["source"]["row"]) in duplicate_sources
+                     or not name(record)
+                     or any(not name(r) for r in candidates))
+        matched = len(candidates) == 1 and not ambiguous
+        record["match_status"] = "matched" if matched else "ambiguous" if ambiguous else "unmatched"
+        record["matched_resident_source"] = candidates[0]["source"] if matched else None
+
+    for record in result["requests"]:
+        if record["match_status"] == "unmatched" and key(record):
+            issue("unmatched_request", "Request MCR has no matching resident in the target worksheet.", record)
+
+    # Exact references only: elective fragments, LOA and SAF notes remain raw,
+    # without guessing aliases or treating a historical entry as training credit.
+    known = {r["posting"] for r in result["postings"]["core"] if r.get("posting")}
+    unmapped = {}
+    for rows in annual:
+        for record in rows:
+            for posting in record["postings"]:
+                value = posting["value"]
+                if value and value not in known:
+                    unmapped.setdefault(value, posting["source"])
+    if unmapped:
+        issues.append({"code": "unmapped_posting", "severity": "info",
+                       "message": f"{len(unmapped)} distinct posting values have no exact Core Posting reference. Values are retained for review; this does not mean they are invalid.",
+                       "source": next(iter(unmapped.values())), "values": list(unmapped),
+                       "sources": list(unmapped.values())})
+    result["issues"] = issues
+    return result
+
+
 def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
     if len(content) > MAX_UPLOAD_BYTES:
         raise WorkbookError("Workbook exceeds the 10 MB upload limit")
@@ -129,11 +210,11 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
         rows = [{"source": source(postings, row[0].row),
                  "cells": {c.column_letter: text(c.value) for c in row if c.value is not None}}
                 for row in postings if any(c.value is not None for c in row)]
-        return {"target_year": target_year, "target_sheet": target["sheet"],
+        return review_import({"target_year": target_year, "target_sheet": target["sheet"],
                 "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
                 "months": target["months"], "residents": target["residents"],
                 "histories": [s for s in years if s["year"] < target_year], "requests": requests,
-                "postings": {"core": core, "rows": rows}, "warnings": []}
+                "postings": {"core": core, "rows": rows}, "warnings": []})
     finally:
         workbook.close()
 
