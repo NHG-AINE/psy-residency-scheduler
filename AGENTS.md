@@ -8,6 +8,7 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Clarify uncertain requirements and surface material tradeoffs before implementation.
 - Write the minimum code needed. Reuse existing tools and components.
 - Make focused changes. Avoid unrelated edits and unnecessary abstractions.
+- Do not spawn subagents unless explicitly requested.
 - Keep backend logic separate from the interface.
 - Preserve historical data and export changes to a new workbook.
 - Never commit credentials.
@@ -40,6 +41,6 @@ Before implementing a feature, provide a short, readable plan covering:
 
 - Start each new task on a dedicated branch before making changes.
 - Name branches `<type>/<short-kebab-case-description>`.
-  Use feature/, fix/, ci/, docs/, refactor/, test/ or chore/.
+  Use feature/, fix/, build/, ci/, docs/, refactor/, test/ or chore/.
   Example: `feature/workbook-import`.
 - Commit and push only when explicitly asked.
