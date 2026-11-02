@@ -68,7 +68,7 @@ function Timetable({ residents, workbook }: { residents: Resident[]; workbook: W
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
       <tbody>{residents.map((resident, index) => <tr key={index}>
-        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.residency_year)} · ${show(resident.mcr)}`)}</small></th>
+        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small></th>
         {groupPostings(resident.postings).map((block) => {
           const value = block[0].value || 'Unallocated'
           return <td key={block[0].month} colSpan={block.length}><div
