@@ -1,10 +1,13 @@
-// React counterpart of preview/components.mjs workbook skeleton.
-// Decorative shapes only; the owning region supplies its busy state and label.
+// Decorative timetable placeholders; the owning region supplies its busy state and label.
 export default function Skeleton() {
-  return <div className="skeleton-content" aria-hidden="true">
-    {[0, 1, 2].map((row) => <div className="loading-list-row" key={row}>
-      <div className="loading-person"><span className="skeleton skeleton-file" /><div><span className="skeleton skeleton-title" /><span className="skeleton skeleton-small" /></div></div>
-      <span className="skeleton skeleton-pill" />
-    </div>)}
+  return <div className="table-scroll timetable" aria-hidden="true">
+    <table>
+      <colgroup><col className="resident-column" />{Array.from({ length: 12 }, (_, month) => <col key={month} />)}</colgroup>
+      <thead><tr><th><span className="skeleton skeleton-title" /></th>{Array.from({ length: 12 }, (_, month) => <th key={month}><span className="skeleton skeleton-month" /></th>)}</tr></thead>
+      <tbody>{Array.from({ length: 7 }, (_, row) => <tr key={row}>
+        <th scope="row"><span className="skeleton skeleton-name" /><span className="skeleton skeleton-meta" /></th>
+        <td colSpan={12}><span className="skeleton skeleton-posting" /></td>
+      </tr>)}</tbody>
+    </table>
   </div>
 }
