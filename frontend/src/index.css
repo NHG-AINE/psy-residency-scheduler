@@ -1,0 +1,103 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: Inter;
+  src: url('./assets/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Instrument Serif';
+  src: url('./assets/fonts/InstrumentSerif-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: Inter, Arial, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --color-canvas: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-surface-soft: #fafafa;
+  --color-surface-strong: #f0efed;
+  --color-ink: #0c0a09;
+  --color-primary: #292524;
+  --color-body: #4e4e4e;
+  --color-muted: #6e675e;
+  --color-hairline: #e7e5e4;
+  --color-hairline-strong: #d6d3d1;
+  --color-focus: #695b82;
+  --color-success: #276344;
+  --color-warning: #815b24;
+}
+
+@layer base {
+  :root { font-synthesis: none; color-scheme: light; }
+  body { @apply m-0 bg-canvas font-sans text-sm text-ink antialiased; }
+  button, a, [tabindex] { outline-offset: 4px; }
+  :focus-visible { outline: 2px solid var(--color-focus); }
+  button { cursor: pointer; }
+  button:disabled { cursor: wait; }
+  ::selection { background: #c8b8e0; color: var(--color-ink); }
+  a { text-underline-offset: 4px; }
+}
+
+@layer components {
+  .skip-link { @apply fixed -top-20 left-4 z-20 rounded-lg bg-primary px-4 py-3 text-white focus:top-3; }
+  .site-header { @apply flex min-h-[76px] items-center justify-between gap-4 border-b border-hairline px-9; }
+  .brand { @apply flex items-center gap-3 text-sm no-underline; }
+  .brand-mark { @apply grid h-9 w-10 place-items-center rounded-lg border border-hairline-strong bg-surface text-xs font-semibold; }
+  .workspace-label { @apply text-xs text-muted; }
+  .site-main { @apply mx-auto max-w-[1440px] px-9 py-[38px]; }
+  .page-heading { @apply mb-7; }
+  .page-heading h1 { @apply font-display text-4xl font-normal leading-[1.1] tracking-[-0.02em]; }
+  .page-heading p { @apply mt-3 text-[13px] leading-relaxed text-muted; }
+  .workspace-panel { @apply overflow-hidden rounded-2xl border border-hairline bg-surface; }
+  .panel-heading { @apply flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-6 py-5; }
+  .panel-heading h2 { @apply text-xl font-medium tracking-[-0.02em]; }
+  .badge { @apply rounded-full border border-hairline-strong px-3 py-1 text-xs text-muted; }
+  .empty-workspace { @apply flex min-h-[320px] flex-col items-center justify-center px-6 py-12 text-center; }
+  .calendar-icon { @apply mb-5 h-9 w-9 fill-none stroke-muted; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+  .empty-workspace h3 { @apply text-base font-medium; }
+  .empty-workspace p { @apply mt-3 max-w-[48ch] text-sm leading-relaxed text-muted; }
+  .connection-panel { @apply border-t border-hairline bg-surface-soft px-6 py-5; }
+  .connection-summary { @apply flex items-center justify-between gap-5; }
+  .connection-label { @apply flex items-center gap-2 text-[13px] font-medium; }
+  .connection-label.checking { @apply text-muted; }
+  .connection-label.ready { @apply text-success; }
+  .connection-label.unavailable { @apply text-warning; }
+  .status-dot { @apply h-1.5 w-1.5 shrink-0 rounded-full bg-current; }
+  .connection-help { @apply mt-2 text-xs leading-relaxed text-muted; }
+  .button { @apply inline-flex min-h-10 shrink-0 items-center justify-center rounded-full bg-primary px-[18px] py-[9px] text-[13px] font-medium text-white transition-colors hover:bg-ink disabled:opacity-50; }
+  .details-trigger { @apply mt-5 inline-flex min-h-8 items-center gap-1.5 rounded-sm text-xs text-body underline decoration-hairline-strong hover:decoration-body; }
+  .details-trigger svg { @apply h-4 w-4 fill-none stroke-current; stroke-width: 1.5; transition: transform .15s; }
+  .details-trigger[data-state='open'] svg { transform: rotate(180deg); }
+  .connection-details { @apply max-w-[75ch] pt-3 text-xs leading-relaxed text-muted; }
+  .connection-details p + p { @apply mt-2; }
+  .connection-details code { @apply text-body; }
+}
+
+@media (max-width: 800px) {
+  .site-header { @apply px-5; }
+  .site-main { @apply px-5 py-7; }
+}
+
+@media (max-width: 520px) {
+  .site-header { @apply min-h-[72px] px-4; }
+  .brand { @apply gap-2 text-xs; }
+  .workspace-label { @apply max-w-16 text-right text-[11px]; }
+  .site-main { @apply px-4 py-7; }
+  .page-heading h1 { @apply text-[30px]; }
+  .panel-heading { @apply px-4 py-4; }
+  .panel-heading h2 { @apply text-base; }
+  .empty-workspace { @apply min-h-[280px] px-5 py-9; }
+  .connection-panel { @apply px-4 py-4; }
+  .connection-summary { @apply flex-col items-start gap-4; }
+  .button { @apply min-h-11; }
+  .details-trigger { @apply min-h-11; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
