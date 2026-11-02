@@ -105,13 +105,15 @@
   thead th { @apply bg-surface-soft font-medium text-body; }
   tbody th { @apply font-medium; }
   th small, td small { @apply mt-1 block text-xs font-normal leading-relaxed text-muted; }
+  .timetable { max-height: 65vh; overflow: auto; }
   .timetable table { table-layout: fixed; min-width: 760px; }
   .timetable .resident-column { width: 180px; }
   .timetable th, .timetable td { min-width: 0; padding: 12px 4px; }
-  .timetable thead th { white-space: nowrap; }
+  .timetable thead th { position: sticky; top: 0; z-index: 20; white-space: nowrap; }
+  .timetable thead th:not(:first-child) { text-align: center; }
   .timetable tbody th { overflow-wrap: normal; word-break: normal; hyphens: none; }
   .timetable tr > :first-child { @apply sticky left-0 z-10 bg-surface; padding-left: 16px; padding-right: 12px; }
-  .timetable thead tr > :first-child { @apply bg-surface-soft; }
+  .timetable thead tr > :first-child { @apply bg-surface-soft; z-index: 30; }
   .posting-value { @apply block w-full rounded-md bg-surface-strong px-1.5 py-2 text-center text-xs leading-relaxed text-body; min-height: 44px; overflow-wrap: normal; word-break: normal; hyphens: none; }
   .posting-word { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
   .posting-value.unallocated { @apply border border-dashed border-hairline-strong bg-surface text-muted; }
