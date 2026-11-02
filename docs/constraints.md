@@ -11,10 +11,9 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
 
 - **Do not assign postings during LOA.** A resident on LOA for a month must
   not receive a posting in that month.
-- **LOA does not count towards training.** A month recorded as LOA contributes
-  no training credit.
-- **Unfinished training carries into the next academic year.** July starts a
-  new scheduling year, but does not automatically advance a resident's R-year.
+- **Complete the required postings before progressing.** Unfinished posting
+  requirements carry forward, even across academic years. July does not
+  automatically advance a resident's R-year.
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
   across yearly tabs, including a posting that continues across June and July.
