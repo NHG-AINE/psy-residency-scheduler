@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import ConnectionStatus from './components/ConnectionStatus'
 import Skeleton from './components/Skeleton'
 import ImportIssues from './components/ImportIssues'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
@@ -118,7 +117,7 @@ export default function App() {
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
   return <>
     <a href="#main" className="skip-link">Skip to workspace</a>
-    <header className="site-header"><a href="/" className="brand" aria-label="PSY Residency Scheduler home"><span className="brand-mark" aria-hidden="true">PSY</span><span>Residency scheduler</span></a><span className="workspace-label">Local workspace</span></header>
+    <header className="site-header"><a href="/" className="brand" aria-label="PSY Residency Scheduler home"><span className="brand-mark" aria-hidden="true">PSY</span><span>Residency scheduler</span></a></header>
     <main id="main" className="site-main" tabIndex={-1}>
       <div className="page-heading"><h1>Posting timetable</h1><p>NHG Psychiatry Residency Programme</p></div>
       <section className="workspace-panel" aria-labelledby="import-title">
@@ -134,7 +133,6 @@ export default function App() {
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => setView(item)}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
         {busy ? <div className="loading-region"><p>Reading workbook sheets and linking resident records…</p><Skeleton /></div> : workbook && <>{['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar"><label htmlFor="resident-search">Search residents</label><input id="resident-search" type="search" placeholder="Name or MCR number" value={query} onChange={(event) => setQuery(event.target.value)} /></div>}<Review workbook={workbook} view={view} query={query} /></>}
       </section>}
-      <div className="connection-container"><ConnectionStatus /></div>
     </main>
   </>
 }
