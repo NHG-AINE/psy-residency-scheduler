@@ -92,7 +92,7 @@ def yearly_sheet(sheet):
     return {"year": first.year, "sheet": sheet.title, "months": months, "residents": residents}
 
 
-def review_import(result):
+def review_import(result, yearly_sheets=None):
     """Link source records conservatively, retaining every raw value for review."""
     issues = []
     annual = [result["residents"]] + [s["residents"] for s in result["histories"]]
@@ -106,16 +106,18 @@ def review_import(result):
     def name(record):
         return " ".join((record.get("name") or "").split()).casefold()
 
-    def issue(code, message, record):
-        issues.append({"code": code, "severity": "warning", "message": message,
-                       "source": record["source"]})
+    def issue(code, title, message, records):
+        issues.append({"code": code, "severity": "warning", "title": title, "message": message,
+                       "source": records[0]["source"],
+                       "records": [{"name": r.get("name"), "mcr": r.get("mcr"), "source": r["source"]}
+                                   for r in records]})
 
     for record in identities:
         mcr, resident_name = key(record), name(record)
         if not mcr:
-            issue("missing_mcr", "MCR is missing; this row cannot be matched by identity.", record)
+            issue("missing_mcr", "Missing MCR", "This row cannot be matched by MCR.", [record])
         if not resident_name:
-            issue("missing_name", "Resident name is missing; confirm this row's identity.", record)
+            issue("missing_name", "Missing resident name", "Confirm this row's identity in the workbook.", [record])
         if mcr and resident_name:
             names[resident_name].add(mcr)
             mcrs[mcr].add(resident_name)
@@ -128,10 +130,18 @@ def review_import(result):
             if len(repeated) > 1:
                 for record in repeated:
                     duplicate_sources.add((record["source"]["sheet"], record["source"]["row"]))
-                    issue("duplicate_mcr", f"MCR {mcr} occurs more than once in this annual worksheet.", record)
-    for record in identities:
-        if len(names[name(record)]) > 1 or len(mcrs[key(record)]) > 1:
-            issue("conflicting_identity", "Name and MCR disagree across source rows; matching is withheld until reviewed.", record)
+                issue("duplicate_mcr", f"Duplicate MCR {mcr}",
+                      "This MCR appears more than once in the same annual worksheet.", repeated)
+    for mcr, recorded_names in mcrs.items():
+        if len(recorded_names) > 1:
+            issue("conflicting_identity", f"Different names for MCR {mcr}",
+                  "The same MCR is recorded with different names.",
+                  [r for r in identities if key(r) == mcr])
+    for resident_name, recorded_mcrs in names.items():
+        if len(recorded_mcrs) > 1:
+            related = [r for r in identities if name(r) == resident_name]
+            issue("conflicting_identity", f"Different MCRs for {related[0]['name']}",
+                  "The same name is recorded with different MCRs.", related)
 
     target = defaultdict(list)
     for record in result["residents"]:
@@ -149,24 +159,28 @@ def review_import(result):
         record["match_status"] = "matched" if matched else "ambiguous" if ambiguous else "unmatched"
         record["matched_resident_source"] = candidates[0]["source"] if matched else None
 
+    resident_rows = [s["residents"] for s in yearly_sheets] if yearly_sheets is not None else annual
+    known_mcrs = {key(r) for rows in resident_rows for r in rows if key(r)}
     for record in result["requests"]:
-        if record["match_status"] == "unmatched" and key(record):
-            issue("unmatched_request", "Request MCR has no matching resident in the target worksheet.", record)
+        if record["match_status"] == "unmatched" and key(record) and key(record) not in known_mcrs:
+            issue("unmatched_request", "Request has no matching resident", "This request MCR was not found in any yearly resident tab.", [record])
 
     # Exact references only: elective fragments, LOA and SAF notes remain raw,
     # without guessing aliases or treating a historical entry as training credit.
-    known = {r["posting"] for r in result["postings"]["core"] if r.get("posting")}
+    known = {r["posting"].strip().casefold() for r in result["postings"]["core"] if r.get("posting")}
     unmapped = {}
     for rows in annual:
         for record in rows:
             for posting in record["postings"]:
                 value = posting["value"]
-                if value and value not in known:
-                    unmapped.setdefault(value, posting["source"])
+                if value and value.strip().casefold() != "loa" and value.strip().casefold() not in known:
+                    ref = posting["source"]
+                    unmapped[(value, ref["sheet"], ref["row"], ref.get("column"))] = ref
     if unmapped:
         issues.append({"code": "unmapped_posting", "severity": "info",
-                       "message": f"{len(unmapped)} distinct posting values have no exact Core Posting reference. Values are retained for review; this does not mean they are invalid.",
-                       "source": next(iter(unmapped.values())), "values": list(unmapped),
+                       "title": "Posting labels without an exact reference",
+                       "message": f"{len({entry[0] for entry in unmapped})} distinct posting values have no exact Core Posting reference.",
+                       "source": next(iter(unmapped.values())), "values": [entry[0] for entry in unmapped],
                        "sources": list(unmapped.values())})
     result["issues"] = issues
     return result
@@ -214,7 +228,7 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
                 "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
                 "months": target["months"], "residents": target["residents"],
                 "histories": [s for s in years if s["year"] < target_year], "requests": requests,
-                "postings": {"core": core, "rows": rows}, "warnings": []})
+                "postings": {"core": core, "rows": rows}, "warnings": []}, yearly_sheets=years)
     finally:
         workbook.close()
 
