@@ -143,6 +143,9 @@
   .issue-badge-warning { background: #fff4d6; color: #805510; border-color: #ead49b; }
   .issue-badge-neutral { background: #efeeec; color: #625e59; border-color: #dedbd7; }
   .workbook-warning { @apply py-4; }
+  .catalogue-heading { @apply mb-3 mt-7 text-base font-medium; }
+  .elective-catalogue td { @apply whitespace-pre-wrap; }
+  .elective-remark + .elective-remark { @apply mt-3; }
   .raw-postings { @apply mt-6; }
   .raw-cell { @apply mr-5 inline-block whitespace-pre-line; }
   .raw-cell strong { @apply font-medium text-muted; }

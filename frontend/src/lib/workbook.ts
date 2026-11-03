@@ -25,6 +25,9 @@ export type Workbook = {
   requests: Request[]
   postings: {
     core: { residency_year: string | null; posting: string | null; duration_months: string | null; max: string | null; remarks: string | null; source: Source }[]
+    electives?: { residency_year: string; institution: string; elective: string
+      remarks: { text: string; source: Source }[]; source: Source
+      residency_year_source: Source; institution_source: Source }[]
     rows: { source: Source; cells: Record<string, string | null> }[]
   }
   warnings: string[]
@@ -62,6 +65,7 @@ export async function importWorkbook(file: File, year: number): Promise<Workbook
   }
   const workbook = result as Workbook | null
   if (!workbook || typeof workbook !== 'object' || !Number.isInteger(workbook.target_year)
+    || (workbook.postings?.electives !== undefined && !Array.isArray(workbook.postings.electives))
     || ![workbook.residents, workbook.available_years, workbook.months, workbook.histories, workbook.requests, workbook.warnings, workbook.postings?.core, workbook.postings?.rows].every(Array.isArray)) {
     throw new Error('The backend returned an unexpected workbook response. Check the connection and try again.')
   }
