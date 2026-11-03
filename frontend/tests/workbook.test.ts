@@ -51,3 +51,11 @@ test('groups repeated issue labels without losing distinct source locations', ()
     values: ['Posting A', 'Posting A', 'Posting B', 'Posting A'], sources: [first, second, first, first] })
   assert.deepEqual(groups, [{ value: 'Posting A', sources: [first, second] }, { value: 'Posting B', sources: [first] }])
 })
+
+test('accepts elective catalogues and rejects malformed optional catalogue responses', async (t) => {
+  const result = { target_year: 2027, target_sheet: 'Year', residents: [], available_years: [], months: [], histories: [], requests: [], warnings: [], postings: { core: [], rows: [], electives: [] } }
+  t.mock.method(globalThis, 'fetch', async () => Response.json(result))
+  assert.deepEqual(await importWorkbook(new File(['x'], 'demo.xlsx'), 2027), result)
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ ...result, postings: { ...result.postings, electives: {} } }))
+  await assert.rejects(importWorkbook(new File(['x'], 'demo.xlsx'), 2027), /unexpected workbook/)
+})

@@ -2,6 +2,7 @@
 from datetime import date, datetime
 from collections import defaultdict
 from io import BytesIO
+import re
 from zipfile import ZipFile
 
 from openpyxl import load_workbook
@@ -93,6 +94,42 @@ def yearly_sheet(sheet):
             resident["postings"].append({"month": month["month"], "value": value, "status": status,
                                           "source": source(sheet, cell.row, cell.column_letter)})
     return {"year": first.year, "sheet": sheet.title, "months": months, "residents": residents}
+
+
+def elective_catalogue(sheet, header_row, columns):
+    """Extract reference labels and notes only; do not infer training credit."""
+    electives = []
+    for year in ("R2", "R5"):
+        column = columns.get(f"{year.lower()} electives")
+        if column is None:
+            continue
+        institution, institution_source, institution_notes, previous = None, None, [], None
+        year_source = source(sheet, header_row, sheet.cell(header_row, column).column_letter)
+        for row in range(header_row + 1, sheet.max_row + 1):
+            cell = sheet.cell(row, column)
+            raw = text(cell.value)
+            label = (raw or "").strip()
+            if not label:
+                continue
+            ref = source(sheet, row, cell.column_letter)
+            heading = re.fullmatch(r"([A-Z][A-Z0-9]*)(?:\s*(\(.*\)))?", label, re.DOTALL)
+            if heading:
+                institution, institution_source = heading[1], ref
+                institution_notes = ([{"text": raw[raw.index("("):], "source": ref}]
+                                     if heading[2] else [])
+                previous = None
+            elif label.startswith(("-", "\u2022")) and institution and label[1:].strip():
+                previous = {"residency_year": year, "institution": institution,
+                            "elective": label[1:].strip(), "remarks": list(institution_notes),
+                            "source": ref, "residency_year_source": year_source,
+                            "institution_source": institution_source}
+                electives.append(previous)
+            elif label.startswith("("):
+                if previous is not None:
+                    previous["remarks"].append({"text": raw, "source": ref})
+            else:
+                institution, institution_source, institution_notes, previous = None, None, [], None
+    return electives
 
 
 def review_import(result, yearly_sheets=None):
@@ -231,7 +268,7 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
                 "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
                 "months": target["months"], "residents": target["residents"],
                 "histories": [s for s in years if s["year"] < target_year], "requests": requests,
-                "postings": {"core": core, "rows": rows}, "warnings": []}, yearly_sheets=years)
+                "postings": {"core": core, "electives": elective_catalogue(postings, posting_row, posting_columns), "rows": rows}, "warnings": []}, yearly_sheets=years)
     finally:
         workbook.close()
 

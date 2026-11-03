@@ -207,6 +207,69 @@ class WorkbookImportTests(unittest.TestCase):
         self.assertEqual(r["postings"]["rows"][1]["cells"]["A"], "Raw elective note")
         self.assertEqual(r["postings"]["core"][1]["posting"], "Standalone posting")
 
+    def test_elective_catalogue_preserves_labels_notes_sources_and_separate_years(self):
+        def edit(w):
+            sheet = w["Postings"]
+            sheet["B1"] = "R5 Electives"
+            cells = {
+                "A2": "Sites/Department", "A3": "SITEA (3 months duration)",
+                "A4": "  - First Department  ", "A5": "(local note)",
+                "A6": "- Second Department", "A7": "SITEB", "A8": "- Third Department",
+                "B2": "Sites/Department", "B3": "SITEA (all required 6 months duration)",
+                "B4": "- First Department (6 months)", "B5": "  (continuation verbatim)  ",
+                "B6": "(second continuation)", "B7": "- Second Department", "B8": "SITEB",
+                "B9": "(orphan note)", "B10": "- Combined Department", "B11": "(3 months- pairing note)",
+            }
+            for address, value in cells.items():
+                sheet[address] = value
+            w["Jul 2027 - Jun 2028"]["J3"] = "First Department (6 months)"
+        result = parse_workbook(workbook_bytes(edit))
+        electives = result["postings"]["electives"]
+        self.assertEqual([(e["residency_year"], e["institution"], e["elective"]) for e in electives], [
+            ("R2", "SITEA", "First Department"), ("R2", "SITEA", "Second Department"),
+            ("R2", "SITEB", "Third Department"), ("R5", "SITEA", "First Department (6 months)"),
+            ("R5", "SITEA", "Second Department"), ("R5", "SITEB", "Combined Department")])
+        ref = lambda row, column: {"sheet": "Postings", "row": row, "column": column}
+        self.assertEqual(electives[0]["source"], ref(4, "A"))
+        self.assertEqual(electives[0]["institution_source"], ref(3, "A"))
+        self.assertEqual(electives[0]["residency_year_source"], ref(1, "A"))
+        self.assertEqual(electives[0]["remarks"], [
+            {"text": "(3 months duration)", "source": ref(3, "A")},
+            {"text": "(local note)", "source": ref(5, "A")}])
+        self.assertEqual(electives[1]["remarks"], electives[0]["remarks"][:1])
+        self.assertEqual(electives[2]["remarks"], [])
+        self.assertEqual(electives[3]["remarks"], [
+            {"text": "(all required 6 months duration)", "source": ref(3, "B")},
+            {"text": "  (continuation verbatim)  ", "source": ref(5, "B")},
+            {"text": "(second continuation)", "source": ref(6, "B")}])
+        self.assertEqual(electives[4]["remarks"], electives[3]["remarks"][:1])
+        self.assertEqual(electives[5]["remarks"], [{"text": "(3 months- pairing note)", "source": ref(11, "B")}])
+        self.assertEqual(next(r for r in result["postings"]["rows"] if r["source"]["row"] == 4)["cells"]["A"], "  - First Department  ")
+        self.assertEqual(result["postings"]["core"][0]["posting"], "Core example")
+        issue = next(i for i in result["issues"] if i["code"] == "unmapped_posting")
+        self.assertIn("First Department (6 months)", issue["values"])
+        self.assertNotIn("duration_months", electives[3])
+
+    def test_elective_columns_are_optional_and_follow_headers(self):
+        def edit(w):
+            sheet = w["Postings"]
+            sheet["A1"] = None
+            sheet["B1"] = "R5 Electives"
+            sheet["B2"] = "- Orphan elective"
+            sheet["B3"] = "SITEA"
+            sheet["B4"] = "\u2022 Department"
+            sheet["B5"] = "Unrecognised heading"
+            sheet["B6"] = "- Must remain raw"
+            sheet["B7"] = "(Must not attach to Department)"
+        result = parse_workbook(workbook_bytes(edit))
+        self.assertEqual(len(result["postings"]["electives"]), 1)
+        self.assertEqual(result["postings"]["electives"][0]["residency_year"], "R5")
+        self.assertEqual(result["postings"]["electives"][0]["source"]["column"], "B")
+        self.assertEqual(result["postings"]["electives"][0]["remarks"], [])
+        result = parse_workbook(workbook_bytes(lambda w: setattr(w["Postings"]["A1"], "value", None)))
+        self.assertEqual(result["postings"]["electives"], [])
+        self.assertEqual(len(result["postings"]["core"]), 2)
+
     def test_missing_target_and_corrupt_workbooks(self):
         with self.assertRaisesRegex(WorkbookError, "No July"):
             parse_workbook(workbook_bytes(), 2030)
