@@ -9,18 +9,22 @@ including timing restrictions and progression after LOA, are documented in
 
 ## R1
 
-| Posting | Institution | Duration |
-| --- | --- | --- |
-| General Medicine | TTSH / SGH | 4 months |
-| Neurology | NNI / SGH | 2 months |
-| Inpatient Psychiatry | IMH / TTSH / CGH / SGH / NUH | 6 months |
+Complete either General Medicine plus Neurology, or the combined NUH Medicine &
+Neurology posting, followed by Inpatient Psychiatry.
+
+| Posting | Institution | Duration | Remarks |
+| --- | --- | --- | --- |
+| General Medicine | TTSH / SGH | 4 months | To be completed in the first 6 months of R1 |
+| Neurology | NNI / SGH | 2 months | To be completed in the first 6 months of R1 |
+| Medicine & Neurology | NUH | 6 months | To be completed in the first 6 months of R1 |
+| Inpatient Psychiatry | IMH / TTSH / CGH / SGH / NUH | 6 months | To be completed in the second 6 months of R1 |
 
 ## R2
 
 | Posting | Institution | Duration |
 | --- | --- | --- |
 | Elective | Depends on the selected elective | 3 months |
-| Geriatric Psychiatry | IMH / CGH / NUH | 3 months |
+| Geriatric Psychiatry | IMH / CGH / NUH / SGH | 3 months |
 | Child & Adolescent Psychiatry | IMH / NUH | 3 months |
 | Addiction Medicine | IMH | 3 months |
 
@@ -28,7 +32,7 @@ including timing restrictions and progression after LOA, are documented in
 
 | Posting | Institution | Duration |
 | --- | --- | --- |
-| Continuity Clinics / Community Mental Health Team (CMHT) / Cognitive Behavioural Therapy (CBT) / Psychodynamic Psychotherapy | IMH / TTSH / KTPH / CGH / SGH / NUH / NTFGH | 12 months |
+| Continuity Clinic | IMH / TTSH / KTPH / WH / CGH / SGH / NUH / NTFGH / AH | 12 months |
 
 ## R4
 
