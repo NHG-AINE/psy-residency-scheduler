@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupIssuePostings, importWorkbook, workbookError } from '../src/lib/workbook.ts'
+import { groupIssuePostings, importWorkbook, matchesPostingReference, postingReferenceYears, workbookError } from '../src/lib/workbook.ts'
 
 test('validates one nonempty XLSX at the exact 10 MiB boundary', () => {
   assert.match(workbookError([]), /one workbook/)
@@ -58,4 +58,38 @@ test('accepts elective catalogues and rejects malformed optional catalogue respo
   assert.deepEqual(await importWorkbook(new File(['x'], 'demo.xlsx'), 2027), result)
   t.mock.method(globalThis, 'fetch', async () => Response.json({ ...result, postings: { ...result.postings, electives: {} } }))
   await assert.rejects(importWorkbook(new File(['x'], 'demo.xlsx'), 2027), /unexpected workbook/)
+})
+
+test('posting reference filters combine year and live name search without changing records', () => {
+  const rows = [
+    { residency_year: ' R1 ', posting: 'SITEA General Medicine', remarks: 'Psychiatry in remarks only' },
+    { residency_year: 'R2', posting: 'SITEB Psychiatry' },
+    { residency_year: 'R2', posting: 'SITEA Psychiatry' },
+    { residency_year: null, posting: null },
+  ]
+  const filter = (year: string, query: string) => rows.filter((row) => matchesPostingReference(row, year, query))
+  assert.deepEqual(filter('', ''), rows)
+  assert.deepEqual(filter('R2', 'sitea'), [rows[2]])
+  assert.deepEqual(filter('R1', '  GENERAL medICINE '), [rows[0]])
+  assert.deepEqual(filter('R1', 'Psychiatry'), [])
+  assert.deepEqual(filter('', 'SITEB'), [rows[1]])
+  // Each new query is evaluated directly, including removal of typed characters.
+  assert.equal(filter('R2', 'SITEA Psychiatry').length, 1)
+  assert.equal(filter('R2', 'SITEA Psychiatryx').length, 0)
+  assert.equal(filter('R2', 'SITEA Psychiatr').length, 1)
+  assert.equal(rows[0].residency_year, ' R1 ')
+  assert.deepEqual(postingReferenceYears(rows), ['R1', 'R2'])
+})
+
+test('elective search includes institution and department while year options stay within the selected category', () => {
+  const electives = [
+    { residency_year: 'R2', institution: 'SITEA', elective: 'Department of Psychiatry' },
+    { residency_year: 'R5', institution: 'SITEB', elective: 'Department of Psychiatry' },
+  ]
+  assert.deepEqual(electives.filter((row) => matchesPostingReference(row, 'R5', 'siteb department')), [electives[1]])
+  assert.deepEqual(electives.filter((row) => matchesPostingReference(row, 'R2', 'siteb')), [])
+  assert.deepEqual(postingReferenceYears(electives), ['R2', 'R5'])
+  assert.equal(postingReferenceYears(electives).includes('R1'), false)
+  assert.equal(postingReferenceYears(electives).includes('R2'), true)
+  assert.deepEqual(postingReferenceYears([]), [])
 })

@@ -90,3 +90,14 @@ export function groupIssuePostings(issue: ImportIssue): { value: string; sources
   })
   return Array.from(groups, ([value, sources]) => ({ value, sources }))
 }
+
+type PostingReference = { residency_year: string | null; posting?: string | null; elective?: string; institution?: string }
+
+export function postingReferenceYears(rows: PostingReference[]): string[] {
+  return [...new Set(rows.map((row) => row.residency_year?.trim()).filter((year): year is string => !!year))].sort()
+}
+
+export function matchesPostingReference(row: PostingReference, year: string, query: string): boolean {
+  const name = row.elective !== undefined ? `${row.institution || ''} ${row.elective}` : row.posting || ''
+  return (!year || row.residency_year?.trim() === year) && name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+}
