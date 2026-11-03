@@ -1,9 +1,12 @@
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
+    from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 else:
+    from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 
 app = FastAPI(title="PSY Residency Scheduler API")
@@ -28,3 +31,16 @@ async def import_workbook(file: UploadFile = File(...), target_year: int = Form(
             raise HTTPException(400, str(exc)) from exc
     finally:
         await file.close()
+
+
+class HistoryReviewRequest(BaseModel):
+    workbook: dict
+    store: ReviewStore
+
+
+@app.post("/api/history-review")
+async def history_review(request: HistoryReviewRequest):
+    try:
+        return await run_in_threadpool(evaluate_review, request.workbook, request.store)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(422, "The workbook review data is incomplete. Import the workbook again.") from exc

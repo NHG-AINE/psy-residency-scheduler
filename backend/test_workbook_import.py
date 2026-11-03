@@ -1,11 +1,12 @@
 import unittest
+from copy import deepcopy
 from datetime import datetime
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from main import app
-from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, review_import
+from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, review_import, match_posting, posting_catalogue
 
 
 def workbook_bytes(edit=None):
@@ -290,6 +291,141 @@ class WorkbookImportTests(unittest.TestCase):
                 self.assertEqual(client.post("/api/import", files={"file": (name, content)}).status_code, 400)
             self.assertEqual(client.post("/api/import", files={"file": ("large.xlsx", b"x" * (MAX_UPLOAD_BYTES + 1))}).status_code, 413)
             self.assertEqual(client.post("/api/import", data={"target_year": "bad"}, files={"file": ("example.xlsx", workbook_bytes())}).status_code, 422)
+
+
+class HistoricalPostingMatchTests(unittest.TestCase):
+    def catalogue(self):
+        core = [{"posting": label, "residency_year": year,
+                 "source": {"sheet": "Catalogue", "row": row}}
+                for row, (label, year) in enumerate([
+                    ("NUH Inpatient Psychiatry", "R1"),
+                    ("IMH Addiction Medicine", "R2"),
+                    ("IMH Forensic Psychiatry", "R4"),
+                    ("SGH Neurology", "R1")], 10)]
+        electives = [{"institution": institution, "elective": label, "residency_year": year,
+                      "source": {"sheet": "Catalogue", "row": row, "column": "B"}}
+                     for row, (institution, label, year) in enumerate([
+                         ("NUH", "Inpatient Psychiatry", "R2"),
+                         ("IMH", "Addiction Medicine", "R2"),
+                         ("IMH", "Forensic Psychiatry", "R5"),
+                         ("IMH", "Adult Neurodevelopmental Disorders Service (ANDS)", "R2"),
+                         ("IMH", "Adult Neurodevelopmental Disorders Service (ANDS)", "R5"),
+                         ("CGH", "Inpatient Psychiatry", "R2"),
+                         ("SGH", "Eating disorder", "R2"),
+                         ("SGH", "Psycho-oncology cum Palliative", "R2"),
+                         ("NUH", "Women\ufffds Emotional Health Service", "R2")], 20)]
+        return posting_catalogue({"core": core, "electives": electives})
+
+    def match(self, value, year="R2", catalogue=None, status="posting"):
+        posting = {"value": value, "status": status,
+                   "source": {"sheet": "Anonymous history", "row": 91, "column": "J"}}
+        original = deepcopy(posting)
+        result = match_posting(posting, year, self.catalogue() if catalogue is None else catalogue)
+        self.assertEqual(posting, original)
+        return result
+
+    def test_elective_marker_variants_restrict_candidates_and_keep_catalogue_refs(self):
+        for label in ("NUH Inpatient Psychiatry(Elective)",
+                      " nuh  Inpatient Psychiatry ( eLeCtIvE ) "):
+            with self.subTest(label=label):
+                result = self.match(label)
+                self.assertEqual(result["status"], "matched")
+                self.assertEqual(len(result["candidates"]), 1)
+                candidate = result["candidates"][0]
+                self.assertEqual(candidate["category"], "elective")
+                self.assertEqual(candidate["source"], {"sheet": "Catalogue", "row": 20, "column": "B"})
+        self.assertEqual(self.match("SGH Neurology (Elective)", "R1")["status"], "unmatched")
+
+    def test_unique_core_precedence_resolves_same_and_other_year_elective_alternatives(self):
+        for label, year in (("NUH Inpatient Psychiatry", "R1"),
+                            ("IMH Addiction Medicine", "R2"),
+                            ("IMH Forensic Psychiatry", "R4")):
+            with self.subTest(label=label):
+                result = self.match(label, year)
+                self.assertEqual(result["candidates"][0]["category"], "core")
+                self.assertEqual(len(result["candidates"]), 2)
+                self.assertEqual(result["status"], "matched")
+                self.assertEqual(result["selected_candidate"]["category"], "core")
+                self.assertIn("catalogue_alternatives", result["reasons"])
+                self.assertNotIn("core_elective_ambiguity", result["reasons"])
+
+    def test_year_context_ranks_but_never_drops_earlier_requirements(self):
+        label = "IMH Adult Neurodevelopmental Disorders Service (ANDS) (Elective)"
+        for year, first, reason in (("R3", "R2", "earlier_year_fallback"),
+                                    ("R5", "R5", "catalogue_alternatives"),
+                                    ("R2,R5", "R2", "mixed_recorded_years")):
+            with self.subTest(year=year):
+                result = self.match(label, year)
+                self.assertEqual(result["status"], "matched" if year in {"R3", "R5"} else "ambiguous")
+                self.assertEqual(result["candidates"][0]["residency_year"], first)
+                self.assertEqual({c["residency_year"] for c in result["candidates"]}, {"R2", "R5"})
+                self.assertIn(reason, result["reasons"])
+        result = self.match("CGH Inpatient Psychiatry (Elective)", "R3")
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["selected_candidate"]["residency_year"], "R2")
+        self.assertEqual(result["selected_candidate"]["year_context"], "earlier_fallback_year")
+        self.assertEqual(self.match("SGH Neurology", "R1,R2")["status"], "matched")
+        self.assertNotIn("mixed_recorded_years", self.match("SGH Neurology", "R1,R2")["reasons"])
+
+    def test_remediation_recognizes_label_but_requires_separate_credit_review(self):
+        result = self.match(" SGH Neurology (Remediation) ", "R1")
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("remediation_credit_review", result["reasons"])
+        self.assertEqual(result["candidates"][0]["label"], "SGH Neurology")
+
+    def test_no_builtin_aliases_and_case_whitespace_normalization(self):
+        self.assertEqual(self.match("Unreviewed historical wording (Elective)", "R3")["status"], "unmatched")
+        for label in ("SGH Eating Disorder (Elective)", "SGH Psycho-Oncology cum Palliative(Elective)"):
+            self.assertEqual(self.match(label)["status"], "matched")
+        for label in ("Unknown", "TTSH Psychiatry(Elective)",
+                      "NUH Consultation Liaison Psychiatry(Elective)",
+                      "SKH Consultation Liaison Psychiatry (Elective)",
+                      "NUH Women's Emotional Health Service (Elective)"):
+            with self.subTest(label=label):
+                self.assertEqual(self.match(label)["status"], "unmatched")
+        self.assertEqual(self.match("NUH Women\ufffds Emotional Health Service (Elective)")["candidates"][0]["label"],
+                         "NUH Women\ufffds Emotional Health Service")
+
+    def test_unknown_year_and_missing_alias_target_need_review(self):
+        result = self.match("SGH Neurology", "Unknown year")
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("recorded_year_unknown", result["reasons"])
+        self.assertEqual(result["candidates"][0]["year_context"], "unknown")
+        result = self.match("Unreviewed historical wording (Elective)", catalogue=[])
+        self.assertEqual(result["status"], "unmatched")
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(self.match("SGH Neurology (Unreviewed qualifier)", "R1")["status"], "unmatched")
+
+    def test_optional_catalogue_and_non_postings(self):
+        catalogue = posting_catalogue({"core": [{"posting": "Example", "source": {"sheet": "Ref", "row": 2}}]})
+        result = self.match("Example", catalogue=catalogue)
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("catalogue_year_unknown", result["reasons"])
+        self.assertEqual(self.match("Example (Elective)", catalogue=catalogue)["status"], "unmatched")
+        self.assertEqual(self.match("Example", catalogue=[])["status"], "unmatched")
+        for value, status in (("LOA", "loa"), (None, "blank")):
+            self.assertEqual(self.match(value, status=status), {"status": "not_applicable", "reasons": [], "candidates": []})
+
+    def test_import_adds_matches_without_rewriting_history_or_current_year(self):
+        def edit(w):
+            w["Postings"]["A2"] = "CGH"
+            w["Postings"]["A3"] = "- Inpatient Psychiatry"
+            w["Jul 2026 - Jun 2027"]["D4"] = "R3"
+            w["Jul 2026 - Jun 2027"]["F4"] = " CGH Inpatient Psychiatry (Elective) "
+            w["Jul 2027 - Jun 2028"]["F3"] = "R3"
+        result = parse_workbook(workbook_bytes(edit))
+        history = result["histories"][0]["residents"][0]
+        self.assertEqual(history["residency_year"], "R3")
+        self.assertEqual(result["residents"][0]["residency_year"], "R3")
+        self.assertEqual(history["match_status"], "matched")
+        posting = history["postings"][1]
+        self.assertEqual(posting["value"], " CGH Inpatient Psychiatry (Elective) ")
+        self.assertEqual(posting["status"], "posting")
+        self.assertEqual(posting["source"], {"sheet": "Jul 2026 - Jun 2027", "row": 4, "column": "F"})
+        self.assertEqual(posting["catalogue_match"]["status"], "matched")
+        self.assertEqual(posting["catalogue_match"]["candidates"][0]["residency_year"], "R2")
+        self.assertNotIn("completed", history)
+        self.assertIn(posting["value"], next(i for i in result["issues"] if i["code"] == "unmapped_posting")["values"])
 
 
 if __name__ == "__main__":

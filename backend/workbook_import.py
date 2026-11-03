@@ -132,6 +132,88 @@ def elective_catalogue(sheet, header_row, columns):
     return electives
 
 
+def normalized_label(value):
+    return " ".join((value or "").split()).casefold()
+
+
+def recorded_years(value):
+    return set(re.findall(r"\br[1-5]\b", normalized_label(value)))
+
+
+def posting_catalogue(postings):
+    """Keep catalogue source identities, including duplicate labels across years."""
+    return [
+        {"source": row["source"], "category": category,
+         "residency_year": row.get("residency_year"), "label": label}
+        for category, rows in (("core", postings.get("core", [])),
+                               ("elective", postings.get("electives", [])))
+        for row in rows
+        if (label := (row.get("posting") if category == "core" else
+                      f"{row['institution']} {row['elective']}"))
+    ]
+
+
+def match_posting(posting, residency_year, catalogue):
+    """Recognize labels only: candidates are not requirement assignments or credit."""
+    if posting["status"] != "posting":
+        return {"status": "not_applicable", "reasons": [], "candidates": []}
+    label = posting["value"]
+    elective = bool(re.search(r"\(\s*elective\s*\)", label, re.IGNORECASE))
+    remediation = bool(re.search(r"\bremediation\b", label, re.IGNORECASE))
+    lookup = normalized_label(re.sub(r"\(\s*(?:elective|remediation)\s*\)", " ", label, flags=re.IGNORECASE))
+    candidates = [dict(c, match_basis="exact") for c in catalogue
+                  if normalized_label(c["label"]) == lookup
+                  and (not elective or c["category"] == "elective")]
+    years = recorded_years(residency_year)
+    earlier_years = {f"r{year}" for year in range(1, max(int(y[1:]) for y in years))} if years else set()
+    eligible_years = earlier_years if remediation else years
+    eligible_context = "earlier_remediation_year" if remediation else "recorded_year"
+    reasons = []
+    if elective:
+        reasons.append("explicit_elective")
+    if remediation:
+        reasons.append("remediation_credit_review")
+    if not years:
+        reasons.append("recorded_year_unknown")
+    elif remediation and not eligible_years:
+        reasons.append("no_earlier_year_context")
+    for candidate in candidates:
+        candidate_years = recorded_years(candidate["residency_year"])
+        candidate["year_context"] = ("unknown" if not years or not candidate_years else
+                                     eligible_context if eligible_years & candidate_years else "different_year")
+    if not remediation and years and not any(c["year_context"] == "recorded_year" for c in candidates):
+        eligible_context = "earlier_fallback_year"
+        for candidate in candidates:
+            if earlier_years & recorded_years(candidate["residency_year"]):
+                candidate["year_context"] = eligible_context
+    if any(not recorded_years(c["residency_year"]) for c in candidates):
+        reasons.append("catalogue_year_unknown")
+    if any(len(recorded_years(c["residency_year"])) > 1 for c in candidates):
+        reasons.append("mixed_catalogue_years")
+    # Keep every exact candidate; use all recorded years as one matching context.
+    candidates.sort(key=lambda c: (c["category"] != "core", c["year_context"] != eligible_context))
+    within_context = [c for c in candidates if c["year_context"] == eligible_context]
+    preferred = [c for c in within_context if c["category"] == "core"] or within_context
+    selected = (preferred[0] if years and len(preferred) == 1
+                and "catalogue_year_unknown" not in reasons and "mixed_catalogue_years" not in reasons else None)
+    if selected and eligible_context == "earlier_fallback_year":
+        reasons.append("earlier_year_fallback")
+    if len(years) > 1 and not selected:
+        reasons.append("mixed_recorded_years")
+    relevant = preferred if years and preferred else candidates
+    if {c["category"] for c in relevant} == {"core", "elective"}:
+        reasons.append("core_elective_ambiguity")
+    if not selected and any(c["year_context"] == "different_year" for c in candidates):
+        reasons.append("requirement_year_review")
+    if not candidates:
+        reasons.append("no_catalogue_match")
+    elif len(candidates) > 1:
+        reasons.append("catalogue_alternatives" if selected else "multiple_catalogue_candidates")
+    status = ("matched" if selected else "unmatched" if not candidates else
+              "ambiguous" if len(candidates) > 1 else "needs_review")
+    return {"status": status, "reasons": reasons, "candidates": candidates, "selected_candidate": selected}
+
+
 def review_import(result, yearly_sheets=None):
     """Link source records conservatively, retaining every raw value for review."""
     issues = []
@@ -205,6 +287,13 @@ def review_import(result, yearly_sheets=None):
         if record["match_status"] == "unmatched" and key(record) and key(record) not in known_mcrs:
             issue("unmatched_request", "Request has no matching resident", "This request MCR was not found in any yearly resident tab.", [record])
 
+    catalogue = posting_catalogue(result["postings"])
+    for rows in annual:
+        for record in rows:
+            for posting in record["postings"]:
+                posting["catalogue_match"] = match_posting(posting, record.get("residency_year"), catalogue)
+
+    # Preserve the existing Issues output until the review interface consumes matches.
     # Exact references only: elective fragments and SAF notes remain raw,
     # without guessing aliases or treating a historical entry as training credit.
     known = {r["posting"].strip().casefold() for r in result["postings"]["core"] if r.get("posting")}

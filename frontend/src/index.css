@@ -84,7 +84,7 @@
   .search-toolbar { @apply px-6 py-5; }
   input[type='search'] { @apply w-full max-w-sm; }
   input::placeholder { color: var(--color-muted); }
-  .table-scroll { @apply max-w-full overflow-x-auto; }
+  .table-scroll { @apply relative max-w-full overflow-x-auto; }
   table { @apply w-full border-collapse text-left text-xs; font-variant-numeric: tabular-nums; }
   th, td { @apply border-b border-hairline px-4 py-4 align-top; min-width: 110px; overflow-wrap: anywhere; }
   thead th { @apply bg-surface-soft font-medium text-body; }
@@ -149,6 +149,35 @@
   .posting-reference-note { @apply mb-5; }
   .elective-catalogue td { @apply whitespace-pre-wrap; }
   .elective-remark + .elective-remark { @apply mt-3; }
+  .history-heading { @apply flex flex-wrap items-start justify-between gap-5; }
+  .history-heading > div:first-child { @apply min-w-0; flex: 1 1 400px; }
+  .history-actions { @apply flex flex-wrap gap-2; }
+  .history-help { @apply my-3 max-w-[75ch] text-xs leading-relaxed text-muted; }
+  .history-feedback { @apply my-3 text-sm leading-relaxed text-success; }
+  .history-error { @apply my-4 rounded-lg px-4 py-3 text-sm leading-relaxed; background: #fff0ee; color: #9f352e; }
+  .history-error .button { @apply mt-3; }
+  .history-warning { @apply my-2 text-xs leading-relaxed text-warning; }
+  .history-review-table { min-width: 960px; }
+  .history-review-table th:first-child { width: 170px; }
+  .history-review-table td:nth-child(2), .history-review-table td:nth-child(3) { width: 25%; }
+  .history-review-table td:last-child { width: 100px; }
+  .history-review-table .button { white-space: nowrap; }
+  .history-original { @apply whitespace-pre-wrap text-sm leading-relaxed; }
+  .history-candidates li + li { @apply mt-3; }
+  .history-reasons { @apply mt-3 space-y-2 text-muted; }
+  .history-loading { @apply opacity-60; pointer-events: none; }
+  .history-pagination { @apply flex flex-wrap items-center justify-between gap-3 py-5 text-xs text-muted; }
+  .history-pagination > div { @apply flex gap-2; }
+  .history-saved { @apply mt-4 border-t border-hairline; }
+  .history-editor { @apply bg-surface-soft px-5 py-5; }
+  .history-editor-heading { @apply mb-3 flex items-center justify-between gap-3; }
+  .history-editor h3 { @apply text-base font-medium; }
+  .history-editor-fields { @apply my-5 grid grid-cols-1 gap-5; }
+  .history-editor-fields > div { @apply min-w-0; }
+  .history-editor label + label, .history-editor .search-field + label { @apply mt-4; }
+  .history-editor select { @apply w-full; }
+  .history-editor .button:disabled, .history-pagination .button:disabled { cursor: not-allowed; }
+  @media (min-width: 800px) { .history-editor-fields { @apply grid-cols-2; } }
   .skeleton { @apply block rounded-md bg-surface-strong; height: 12px; animation: skeleton-pulse 1.8s ease-in-out infinite; }
   .skeleton-title { width: 70px; max-width: 100%; }
   .skeleton-month { width: 32px; max-width: 100%; margin: 0 auto; }
