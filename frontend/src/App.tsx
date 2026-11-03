@@ -2,14 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import Skeleton from './components/Skeleton'
 import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
+import HistoricalPostingReview from './components/HistoricalPostingReview'
 import SearchField from './components/SearchField'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings } from './lib/posting-blocks'
 import type { PostingBlock } from './lib/posting-blocks'
 
-type View = 'Timetable' | 'Residents' | 'Requests' | 'Postings' | 'Issues'
-const views: View[] = ['Timetable', 'Residents', 'Requests', 'Postings', 'Issues']
+type View = 'Timetable' | 'Residents' | 'Requests' | 'Postings' | 'History review' | 'Issues'
+const views: View[] = ['Timetable', 'Residents', 'Requests', 'Postings', 'History review', 'Issues']
 const show = (value: string | null | undefined) => value || '—'
 const source = (value: Source) => <small className="source">{sourceLabel(value)}</small>
 const linked = (a: Source, b: Source | null | undefined) => a.sheet === b?.sheet && a.row === b?.row
@@ -47,6 +48,7 @@ function Review({ workbook, view, query }: { workbook: Workbook; view: View; que
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
     <ImportIssues issues={workbook.issues || []} warnings={workbook.warnings} />
   </div>
+  if (view === 'History review') return <HistoricalPostingReview workbook={workbook} />
   if (view === 'Postings') return <PostingReference workbook={workbook} />
   if (view === 'Requests') {
     const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
@@ -163,7 +165,7 @@ export default function App() {
       <section className="workspace-panel" aria-labelledby="import-title">
         <div className="panel-heading"><h2 id="import-title">Workbook import</h2><span className="badge">Current session only</span></div>
         <div className={`workbook-chooser ${dragging ? 'is-dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false) }} onDrop={(event) => { event.preventDefault(); setDragging(false); choose(Array.from(event.dataTransfer.files)) }}>
-          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Review imported records before planning. Refreshing this page clears the import.</p></div>
+          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Review imported records before planning. Refreshing this page clears the import. Historical review decisions are saved separately in this browser.</p></div>
           <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={() => { setFile(null); setWorkbook(null); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
         </div>
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
