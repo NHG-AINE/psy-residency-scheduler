@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Skeleton from './components/Skeleton'
+import ResidentRequirements from './components/ResidentRequirements'
 import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
 import HistoricalPostingReview from './components/HistoricalPostingReview'
@@ -17,10 +18,12 @@ const show = (value: string | null | undefined) => value || '—'
 const source = (value: Source) => <small className="source">{sourceLabel(value)}</small>
 const linked = (a: Source, b: Source | null | undefined) => a.sheet === b?.sheet && a.row === b?.row
 
-function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: Workbook }) {
+function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Resident; workbook: Workbook; onHistoryReview: () => void }) {
+  const [tab, setTab] = useState('history')
+  const [open, setOpen] = useState(false)
   const requests = workbook.requests.filter((request) => request.posting_request?.trim() && linked(resident.source, request.matched_resident_source))
   const histories = workbook.histories.map((history) => ({ ...history, residents: history.residents.filter((person) => linked(resident.source, person.matched_resident_source)) })).filter((history) => history.residents.length)
-  return <details className="resident-detail">
+  return <details className="resident-detail" onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>Review {resident.name || resident.mcr || 'resident'}</summary>
     <div className="resident-content">
       <dl className="resident-facts">
@@ -34,23 +37,26 @@ function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: 
       {source(resident.source)}
       <h3>Linked requests</h3>
       {requests.length ? requests.map((request, index) => <div className="record" key={index}><p>{show(request.posting_request)}</p><p className="muted">{show(request.period)}{request.remarks && ` · ${request.remarks}`}</p>{source(request.source)}</div>) : <p className="muted">No safely matched requests in this workbook.</p>}
+      <div className="resident-tabs" role="group" aria-label="Resident records"><button type="button" className={`button ${tab === 'history' ? '' : 'button-secondary'}`} aria-pressed={tab === 'history'} onClick={() => setTab('history')}>Recorded history</button><button type="button" className={`button ${tab === 'requirements' ? '' : 'button-secondary'}`} aria-pressed={tab === 'requirements'} onClick={() => setTab('requirements')}>Requirements</button></div>
+      {tab === 'requirements' ? open && <ResidentRequirements resident={resident} workbook={workbook} onHistoryReview={onHistoryReview} /> : <>
       <h3>Recorded history</h3>
       <p className="muted">Workbook records only. These entries do not establish credited or completed training. Unresolved identity matches appear in Issues.</p>
       {histories.length ? histories.map((history) => <div className="history-year" key={history.sheet}>
         <h4>{history.year}–{history.year + 1}</h4>
         {history.residents.map((person, index) => <div key={index}>{source(person.source)}<div className="history-months">{person.postings.map((posting) => <div key={posting.month}><span>{monthLabel(posting.month)}</span><p className={posting.status === 'loa' ? 'posting-value loa' : undefined}>{posting.status === 'loa' ? 'LOA' : posting.status === 'blank' ? 'No entry' : posting.value}</p>{source(posting.source)}</div>)}</div>{person.remarks && <p className="record-note">{person.remarks}</p>}</div>)}
       </div>) : <p className="muted">No safely matched historical records in this workbook.</p>}
+      </>}
     </div>
   </details>
 }
 
-function Review({ workbook, view, query, year, years, onYearChange, loading = false }: { workbook: Workbook; view: View; query: string; year: number; years: number[]; onYearChange: (year: number) => void; loading?: boolean }) {
+function Review({ workbook, view, query, year, years, onYearChange, onHistoryReview, historyResident, loading = false }: { workbook: Workbook; view: View; query: string; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; loading?: boolean }) {
   const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
     <ImportIssues issues={workbook.issues || []} warnings={workbook.warnings} />
   </div>
-  if (view === 'History review') return <HistoricalPostingReview workbook={workbook} />
+  if (view === 'History review') return <HistoricalPostingReview workbook={workbook} initialQuery={historyResident} />
   if (view === 'Postings') return <PostingReference workbook={workbook} />
   if (view === 'Requests') {
     const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
@@ -58,7 +64,7 @@ function Review({ workbook, view, query, year, years, onYearChange, loading = fa
   }
   if (view === 'Timetable') return <Timetable residents={residents} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
-  return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} />)}</div>
+  return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
 const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
@@ -139,6 +145,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [view, setView] = useState<View>('Timetable')
   const [query, setQuery] = useState('')
+  const [historyResident, setHistoryResident] = useState('')
 
   useEffect(() => {
     if (busy || !workbook || !revealAfterUpload.current) return
@@ -214,9 +221,9 @@ export default function App() {
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
-        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => setView(item)}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
+        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
         {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
-        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
+        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
     </main>
   </>

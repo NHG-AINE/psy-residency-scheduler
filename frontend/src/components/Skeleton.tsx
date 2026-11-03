@@ -1,5 +1,6 @@
 // Decorative timetable placeholders; the owning region supplies its busy state and label.
-export default function Skeleton() {
+export default function Skeleton({ variant = 'timetable' }: { variant?: 'timetable' | 'requirements' }) {
+  if (variant === 'requirements') return <div className="table-scroll requirements-table" aria-hidden="true"><table><thead><tr>{Array.from({ length: 5 }, (_, column) => <th key={column}><span className="skeleton skeleton-title" /></th>)}</tr></thead><tbody>{Array.from({ length: 5 }, (_, row) => <tr key={row}>{Array.from({ length: 5 }, (_, column) => <td key={column}><span className="skeleton skeleton-meta" /></td>)}</tr>)}</tbody></table></div>
   return <div className="table-scroll timetable" aria-hidden="true">
     <table>
       <colgroup><col className="resident-column" />{Array.from({ length: 12 }, (_, month) => <col key={month} />)}</colgroup>

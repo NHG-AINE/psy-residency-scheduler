@@ -4,9 +4,11 @@ from typing import Literal
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
+    from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 else:
+    from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 
@@ -46,3 +48,16 @@ async def history_review(request: HistoryReviewRequest):
         return await run_in_threadpool(evaluate_review, request.workbook, request.store, request.scope)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The workbook review data is incomplete. Import the workbook again.") from exc
+
+
+class RequirementLedgerRequest(BaseModel):
+    workbook: dict
+    store: ReviewStore
+
+
+@app.post("/api/requirement-ledger")
+async def requirement_ledger(request: RequirementLedgerRequest):
+    try:
+        return await run_in_threadpool(build_requirement_ledger, request.workbook, request.store)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(422, "The workbook or planning period is incomplete. Import the workbook again for the selected planning year.") from exc

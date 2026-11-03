@@ -1,6 +1,8 @@
 import unittest
 from copy import deepcopy
 
+from fastapi.testclient import TestClient
+from main import app
 from history_review import ReviewStore, evaluate_review
 from requirement_ledger import build_requirement_ledger
 
@@ -36,6 +38,23 @@ def requirement(result, key):
 
 
 class RequirementLedgerTests(unittest.TestCase):
+    def test_endpoint_uses_workbook_context_serializes_evidence_and_validates_requests(self):
+        workbook = book([resident([("2026-06", "TTSH General Medicine")])], "2026-07")
+        original = deepcopy(workbook)
+        with TestClient(app) as client:
+            response = client.post("/api/requirement-ledger", json={"workbook": workbook, "store": {"version": 1, "decisions": []}})
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["cutoff"], "2026-06")
+            self.assertEqual(result["basis"], "projected_expected_not_certified")
+            self.assertEqual(result["residents"][0]["months"][0]["evidence"][0]["source"], workbook["annual_sheets"][0]["residents"][0]["postings"][0]["source"])
+            for payload in ({"workbook": {}, "store": {"version": 1, "decisions": []}},
+                            {"workbook": workbook, "store": {"version": 2, "decisions": []}}):
+                invalid = client.post("/api/requirement-ledger", json=payload)
+                self.assertEqual(invalid.status_code, 422)
+            self.assertIn("Import the workbook again", client.post("/api/requirement-ledger", json={"workbook": {}, "store": {"version": 1, "decisions": []}}).json()["detail"])
+        self.assertEqual(workbook, original)
+
     def test_dynamic_cutoff_sources_duplicates_and_no_mutation(self):
         history = resident([("2026-06", "TTSH General Medicine"), ("2026-07", "TTSH General Medicine")])
         duplicate = deepcopy(history)
@@ -63,7 +82,7 @@ class RequirementLedgerTests(unittest.TestCase):
         other = resident([("2026-01", "LOA"), ("2026-02", None)], sheet="Other")
         result = ledger(book([history, other]))
         self.assertEqual([item["status"] for item in result["residents"][0]["months"]], ["pending", "pending"])
-        self.assertEqual(requirement(result, "r1.general_medicine")["remaining_months"], None)
+        self.assertEqual(requirement(result, "r1.general_medicine")["remaining_months"], 4)
         workbook = book([history])
         workbook["issues"] = [{"code": "duplicate_mcr", "records": [{"source": history["source"]},
                                {"source": workbook["residents"][0]["source"]}]}]
@@ -112,7 +131,7 @@ class RequirementLedgerTests(unittest.TestCase):
     def test_year_confirmation_remediation_stale_and_programme_validation(self):
         history = resident([("2026-01", "TTSH General Medicine")], "R3")
         workbook = book([history])
-        self.assertEqual(ledger(workbook)["residents"][0]["months"][0]["reasons"], ["requirement_year_unconfirmed"])
+        self.assertEqual(requirement(ledger(workbook), "r1.general_medicine")["expected_months"], 1)
         reviewed = evaluate_review(workbook, ReviewStore(version=1, decisions=[]))
         candidate = next(item for item in reviewed["catalogue"] if item["label"] == "TTSH General Medicine")
         decision = {"kind": "resident", "context": reviewed["entries"][0]["context"],
@@ -124,9 +143,36 @@ class RequirementLedgerTests(unittest.TestCase):
         history["postings"][0]["value"] += " (Remediation)"
         reviewed = evaluate_review(workbook, ReviewStore(version=1, decisions=[]))
         decision["context"] = reviewed["entries"][0]["context"]
-        self.assertIn("remediation_credit_review", ledger(workbook, [decision])["residents"][0]["months"][0]["reasons"])
+        self.assertEqual(requirement(ledger(workbook), "r1.general_medicine")["expected_months"], 1)
+        self.assertEqual(requirement(ledger(workbook, [decision]), "r1.general_medicine")["expected_months"], 1)
         invalid = book([resident([("2026-01", "TTSH Geriatric Psychiatry")], "R2")])
         self.assertEqual(ledger(invalid)["residents"][0]["months"][0]["reasons"], ["institution_not_allowed"])
+
+    def test_earlier_electives_and_remediation_count_without_bypassing_ambiguity(self):
+        history = resident([(f"2026-{month:02d}", "IMH Geriatric Psychiatry (Remediation)" if month <= 9
+                            else "IMH ANDS (Elective)") for month in range(7, 13)], "R3")
+        earlier = resident([(f"2025-{month:02d}", "IMH Geriatric Psychiatry") for month in range(1, 4)], "R2", "Earlier")
+        workbook = book([earlier, history])
+        workbook["postings"]["core"].append({"posting": "IMH Geriatric Psychiatry", "residency_year": "R2",
+                                            "source": {"sheet": "Reference", "row": 20}})
+        workbook["postings"]["electives"] = [{"institution": "IMH", "elective": "ANDS", "residency_year": year,
+                                             "source": {"sheet": "Reference", "row": i + 21}, "remarks": []}
+                                            for i, year in enumerate(("R2", "R5"))]
+        original = deepcopy(workbook)
+        result = ledger(workbook)
+        self.assertEqual(requirement(result, "r2.geriatric_psychiatry")["expected_months"], 6)
+        self.assertEqual(requirement(result, "r2.geriatric_psychiatry")["remaining_months"], 0)
+        self.assertEqual(requirement(result, "r2.elective")["expected_months"], 3)
+        self.assertEqual(requirement(result, "r2.elective")["remaining_months"], 0)
+        self.assertEqual(requirement(result, "r5.elective")["expected_months"], 0)
+        self.assertEqual(workbook, original)
+        workbook["postings"]["electives"] = workbook["postings"]["electives"][1:]
+        self.assertTrue(all(m["status"] == "pending" for m in ledger(workbook)["residents"][0]["months"] if m["month"] >= "2026-10"))
+        workbook = original
+        workbook["postings"]["core"].append({"posting": "IMH Geriatric Psychiatry", "residency_year": "R1",
+                                            "source": {"sheet": "Reference", "row": 30}})
+        result = ledger(workbook)
+        self.assertTrue(all(m["status"] == "pending" for m in result["residents"][0]["months"] if "2026-07" <= m["month"] <= "2026-09"))
 
 
 if __name__ == "__main__":

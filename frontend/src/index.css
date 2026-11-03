@@ -239,3 +239,21 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Resident requirement evidence stays inside the existing detail surface. */
+.resident-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 24px; }
+.resident-requirements { min-width: 0; }
+.resident-requirements h4 { margin: 24px 0 12px; font-weight: 500; }
+.requirements-table table { min-width: 540px; }
+.requirements-table td { font-variant-numeric: tabular-nums; }
+.requirement-detail { margin: 12px 0; }
+.requirement-detail > summary { cursor: pointer; font-weight: 500; }
+.requirement-evidence { margin-top: 12px; padding-left: 18px; font-weight: 400; }
+.requirement-evidence > li { margin-bottom: 16px; }
+.requirement-evidence strong, .requirement-evidence span, .requirement-evidence small { display: block; }
+.requirement-evidence div { margin-top: 8px; overflow-wrap: anywhere; }
+.requirements-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 20px 0 16px; }
+.requirements-toolbar h3 { margin: 0; }
+.requirements-toolbar label { min-width: 150px; }
+.requirements-table .requirement-missing > th, .requirements-table .requirement-missing > td { background: #fff1dc; color: #0c0a09; }
+.requirements-pending { margin-top: 24px; }
