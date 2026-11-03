@@ -93,3 +93,12 @@ test('elective search includes institution and department while year options sta
   assert.equal(postingReferenceYears(electives).includes('R2'), true)
   assert.deepEqual(postingReferenceYears([]), [])
 })
+
+
+test('accepts optional all-year review data and rejects a malformed annual-sheet field', async (t) => {
+  const result = { target_year: 2027, target_sheet: 'Current', residents: [], available_years: [], months: [], histories: [], annual_sheets: [{ year: 2028, sheet: 'Later', months: [], residents: [] }], requests: [], warnings: [], postings: { core: [], rows: [] } }
+  t.mock.method(globalThis, 'fetch', async () => Response.json(result))
+  assert.deepEqual(await importWorkbook(new File(['x'], 'example.xlsx'), 2027), result)
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ ...result, annual_sheets: {} }))
+  await assert.rejects(importWorkbook(new File(['x'], 'example.xlsx'), 2027), /unexpected workbook/)
+})

@@ -6,7 +6,9 @@ import HistoricalPostingReview from './components/HistoricalPostingReview'
 import SearchField from './components/SearchField'
 import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
-import { groupPostings } from './lib/posting-blocks'
+import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
+import { evaluateHistory, readReviewStore, STORAGE_KEY } from './lib/history-review'
+import type { HistoryReview } from './lib/history-review'
 import type { PostingBlock } from './lib/posting-blocks'
 
 type View = 'Timetable' | 'Residents' | 'Requests' | 'Postings' | 'History review' | 'Issues'
@@ -42,7 +44,7 @@ function ResidentDetail({ resident, workbook }: { resident: Resident; workbook: 
   </details>
 }
 
-function Review({ workbook, view, query }: { workbook: Workbook; view: View; query: string }) {
+function Review({ workbook, view, query, year, years, onYearChange, loading = false }: { workbook: Workbook; view: View; query: string; year: number; years: number[]; onYearChange: (year: number) => void; loading?: boolean }) {
   const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
@@ -52,18 +54,48 @@ function Review({ workbook, view, query }: { workbook: Workbook; view: View; que
   if (view === 'Postings') return <PostingReference workbook={workbook} />
   if (view === 'Requests') {
     const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
-    return requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small></td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>
+    return <><p className="table-note">Requests are not assigned to a planning year. The selected year changes resident links, not request dates or the recorded request rows.</p>{requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small></td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>}</>
   }
+  if (view === 'Timetable') return <Timetable residents={residents} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
-  if (view === 'Residents') return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} />)}</div>
-  return <Timetable residents={residents} workbook={workbook} />
+  return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} />)}</div>
 }
 
-function Timetable({ residents, workbook }: { residents: Resident[]; workbook: Workbook }) {
+const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
+
+function Timetable({ residents, workbook, year, years, onYearChange, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean }) {
+  const [attempt, setAttempt] = useState(0)
+  const [loaded, setLoaded] = useState<{ workbook: Workbook; attempt: number; data: HistoryReview } | null>(null)
+  const [failure, setFailure] = useState<{ workbook: Workbook; attempt: number; message: string } | null>(null)
+  useEffect(() => {
+    if (importLoading) return
+    const controller = new AbortController()
+    const changed = (event: StorageEvent) => { if (event.key === STORAGE_KEY || event.key === null) setAttempt((value) => value + 1) }
+    window.addEventListener('storage', changed)
+    void (async () => {
+      try {
+        const saved = readReviewStore(window.localStorage)
+        if (saved.error) throw new Error(saved.error)
+        const data = await evaluateHistory(workbook, saved.store, controller.signal, 'timetable')
+        if (!controller.signal.aborted) setLoaded({ workbook, attempt, data })
+      } catch (problem) {
+        if (!controller.signal.aborted) setFailure({ workbook, attempt, message: problem instanceof Error ? problem.message : 'Catalogue labels could not be loaded.' })
+      }
+    })()
+    return () => { controller.abort(); window.removeEventListener('storage', changed) }
+  }, [workbook, attempt, importLoading])
+  const resolution = !importLoading && loaded?.workbook === workbook && loaded.attempt === attempt ? loaded.data : null
+  const error = !importLoading && failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
+  const loading = importLoading || (!resolution && !error)
+  const availableYears = [...years].sort((a, b) => a - b)
+  const yearIndex = availableYears.indexOf(year)
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
   const range = (block: PostingBlock) => block.length === 1 ? monthLabel(block[0].month) : `${monthLabel(block[0].month)} – ${monthLabel(block[block.length - 1].month)}`
   return <>
-    <div className="table-scroll timetable"><table>
+    <div className="timetable-toolbar"><div className="year-navigation" role="group" aria-label="Timetable planning year"><button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button><span className="year-range">Jul {year} - Jun {year + 1}</span><button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button></div><ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-dot legend-${kind}`} />{label}</li>)}</ul></div>
+    {error && <div className="timetable-label-error" role="alert"><p>Catalogue labels are unavailable. Original labels are shown. {error}</p><button className="button button-secondary" type="button" onClick={() => setAttempt((value) => value + 1)}>Retry catalogue labels</button></div>}
+    <div aria-busy={loading}>
+    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p> : <div className="table-scroll timetable"><table>
       <caption className="sr-only">Imported timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
@@ -71,16 +103,24 @@ function Timetable({ residents, workbook }: { residents: Resident[]; workbook: W
         <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small></th>
         {groupPostings(resident.postings).map((block) => {
           const status = block[0].status
-          const value = status === 'loa' ? 'LOA' : status === 'blank' ? 'Unallocated' : block[0].value || 'Unallocated'
+          const display = postingDisplay(block, 'catalogue', resolution?.entries)
+          const value = display.label
+          const category = postingCategory(display, status)
+          const classification = ` - ${postingCategoryLabels[category]}`
+          const qualifiers = display.markers.filter((marker) => marker !== 'Elective')
+          const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
+          const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
           return <td key={block[0].month} colSpan={block.length}><div
-            className={`posting-value${status === 'loa' ? ' loa' : status === 'blank' ? ' unallocated' : ''}`}
-            title={`${value} · ${range(block)}`} aria-label={`${show(resident.name)} · ${range(block)} · ${value}`}
+            className={`posting-value ${category}`}
+            title={`${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
             >
             {words(value)}
+            {display.markers.some((marker) => marker !== 'Elective') && <span className="posting-markers">{display.markers.filter((marker) => marker !== 'Elective').map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
           </div></td>
         })}
       </tr>)}</tbody>
-    </table></div>
+    </table></div>}
+    </div>
   </>
 }
 
@@ -155,7 +195,10 @@ export default function App() {
     if (problem) { setError(problem); return }
     void load(files[0], year, true)
   }
-  const years = [...new Set([2027, year, ...(workbook?.available_years.map((item) => item.year) || [])])].sort((a, b) => b - a)
+  function selectYear(nextYear: number) {
+    if (file && !busy) void load(file, nextYear)
+  }
+  const years = [...new Set(workbook?.available_years.map((item) => item.year) || [year])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
   return <>
     <a href="#main" className="skip-link">Skip to workspace</a>
@@ -171,10 +214,9 @@ export default function App() {
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
-        <div className="review-toolbar"><label>Planning year<select value={year} disabled={busy} onChange={(event) => { if (file) void load(file, Number(event.target.value)) }}>{years.map((value) => <option key={value} value={value}>Jul {value} – Jun {value + 1}</option>)}</select></label>{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => setView(item)}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
-        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar"><SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} /></div>}
-        {busy ? <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></> : workbook && <Review workbook={workbook} view={view} query={query} />}
+        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
+        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
     </main>
   </>

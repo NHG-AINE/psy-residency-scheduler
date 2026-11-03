@@ -18,10 +18,12 @@ export type ImportIssue = {
   records?: { name: string | null; mcr: string | null; source: Source }[]
   values?: string[]; sources?: Source[]
 }
+export type AnnualSheet = { year: number; sheet: string; months: Month[]; residents: Resident[] }
 export type Workbook = {
   target_year: number; available_years: { year: number; sheet: string }[]
   target_sheet: string | null; months: Month[]; residents: Resident[]
-  histories: { year: number; sheet: string; months: Month[]; residents: Resident[] }[]
+  histories: AnnualSheet[]
+  annual_sheets?: AnnualSheet[]
   requests: Request[]
   postings: {
     core: { residency_year: string | null; posting: string | null; duration_months: string | null; max: string | null; remarks: string | null; source: Source }[]
@@ -65,6 +67,7 @@ export async function importWorkbook(file: File, year: number): Promise<Workbook
   }
   const workbook = result as Workbook | null
   if (!workbook || typeof workbook !== 'object' || !Number.isInteger(workbook.target_year)
+    || (workbook.annual_sheets !== undefined && !Array.isArray(workbook.annual_sheets))
     || (workbook.postings?.electives !== undefined && !Array.isArray(workbook.postings.electives))
     || ![workbook.residents, workbook.available_years, workbook.months, workbook.histories, workbook.requests, workbook.warnings, workbook.postings?.core, workbook.postings?.rows].every(Array.isArray)) {
     throw new Error('The backend returned an unexpected workbook response. Check the connection and try again.')

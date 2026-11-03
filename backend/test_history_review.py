@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from main import app
 from history_review import ReviewStore, evaluate_review
+from workbook_import import parse_workbook
+from test_workbook_import import workbook_bytes
 
 
 def workbook():
@@ -436,7 +438,7 @@ class HistoryReviewTests(unittest.TestCase):
 
     def test_changed_year_identity_period_label_or_target_are_unapplied_and_visible(self):
         for change, expected in (("year", "recorded_context_changed"), ("name", "recorded_context_changed"),
-                                 ("period", "not_present_in_this_import"), ("label", "not_present_in_this_import"),
+                                 ("period", "recorded_period_changed"), ("label", "recorded_period_changed"),
                                  ("target", "catalogue_target_changed_or_missing"),
                                  ("remarks", "catalogue_target_changed_or_missing")):
             with self.subTest(change=change):
@@ -718,6 +720,219 @@ class HistoryReviewTests(unittest.TestCase):
             decision = alias(evaluate(workbook()))
             decision["requirement_year"] = "R2"
             ReviewStore.model_validate({"version": 1, "decisions": [decision]})
+
+
+def timetable_workbook(value=" site  department "):
+    book = workbook()
+    resident = deepcopy(book["histories"][0]["residents"][0])
+    resident["source"] = {"sheet": "Current timetable", "row": 12}
+    resident["postings"] = [{"month": month, "value": value, "status": "posting",
+                              "source": {"sheet": "Current timetable", "row": 12, "column": column}}
+                             for month, column in (("2027-07", "G"), ("2027-08", "H"))]
+    book["residents"] = [resident]
+    return book
+
+
+class TimetableLabelReviewTests(unittest.TestCase):
+    def evaluate(self, book, decisions=None):
+        return evaluate_review(book, ReviewStore.model_validate({"version": 1, "decisions": decisions or []}), "timetable")
+
+    def test_timetable_scope_resolves_target_year_without_changing_history_default_or_records(self):
+        book = timetable_workbook()
+        original = deepcopy(book)
+        current = self.evaluate(book)
+        self.assertEqual(len(current["entries"]), 1)
+        self.assertEqual([m["month"] for m in current["entries"][0]["months"]], ["2027-07", "2027-08"])
+        self.assertEqual(current["entries"][0]["review"]["status"], "automatic_match")
+        self.assertEqual(current["entries"][0]["review"]["target"]["label"], "SITE Department")
+        self.assertTrue(all(m["month"].startswith("2025-") for e in evaluate(book)["entries"] for m in e["months"]))
+        self.assertEqual(book, original)
+
+    def test_valid_target_resident_decision_and_shared_mapping_precede_automatic_match(self):
+        book = timetable_workbook()
+        initial = self.evaluate(book)
+        self.assertEqual(initial["entries"][0]["review"]["target"]["category"], "core")
+        personal_decision = personal(initial, year="R2", candidate=1)
+        manual = self.evaluate(book, [personal_decision])["entries"][0]
+        self.assertEqual(manual["review"]["status"], "reviewed")
+        self.assertEqual(manual["review"]["target"]["category"], "elective")
+        shared = alias(initial)
+        shared["context"]["label"] = initial["entries"][0]["months"][0]["value"]
+        mapped = self.evaluate(book, [shared])["entries"][0]
+        self.assertEqual(mapped["review"]["status"], "label_confirmed")
+        self.assertEqual(mapped["review"]["target"]["category"], "elective")
+        # Changes in catalogue source positions alone preserve manual target identity.
+        book["postings"]["electives"][0]["source"]["row"] += 40
+        self.assertEqual(self.evaluate(book, [personal_decision])["entries"][0]["review"]["target"]["category"], "elective")
+
+    def test_timetable_stale_conflicting_and_unsafe_personal_decisions_remain_unapplied(self):
+        for scenario in ("stale", "conflict", "identity"):
+            with self.subTest(scenario=scenario):
+                book = timetable_workbook()
+                decision = personal(self.evaluate(book), year="R2", candidate=1)
+                decisions = [decision, decision] if scenario == "conflict" else [decision]
+                if scenario == "stale":
+                    book["postings"]["electives"][0]["remarks"] = [{"text": "Changed condition"}]
+                elif scenario == "identity":
+                    book["issues"] = [{"code": "conflicting_identity", "records": [{"source": book["residents"][0]["source"]}]}]
+                result = self.evaluate(book, decisions)
+                self.assertEqual(result["entries"][0]["review"]["status"], "needs_review")
+                self.assertIsNone(result["entries"][0]["review"]["target"])
+                self.assertEqual(result["decisions"][0]["status"], "needs_review")
+
+    def test_overlapping_changed_or_cross_year_personal_period_never_broadens_into_target(self):
+        for scenario in ("partial", "cross_year", "changed_label"):
+            with self.subTest(scenario=scenario):
+                book = timetable_workbook()
+                decision = personal(self.evaluate(book), year="R2", candidate=1)
+                if scenario == "partial":
+                    decision["context"]["months"] = decision["context"]["months"][:1]
+                elif scenario == "cross_year":
+                    decision["context"]["months"][0]["month"] = "2027-06"
+                else:
+                    decision["context"]["months"][0]["value"] = "Different prior label"
+                entry = self.evaluate(book, [decision])["entries"][0]
+                self.assertEqual(entry["review"]["status"], "needs_review")
+                self.assertIsNone(entry["review"]["target"])
+                self.assertIn("recorded_period_changed", entry["review"]["reasons"])
+
+    def test_nonoverlapping_or_other_resident_decisions_do_not_block_safe_target_matching(self):
+        book = timetable_workbook()
+        initial = self.evaluate(book)
+        prior = personal(initial, year="R2", candidate=1)
+        for month in prior["context"]["months"]:
+            month["month"] = month["month"].replace("2027", "2026")
+        other = personal(initial, year="R2", candidate=1)
+        other["context"]["mcr"] = "M999"
+        result = self.evaluate(book, [prior, other])
+        self.assertEqual(result["entries"][0]["review"]["status"], "automatic_match")
+        self.assertTrue(all(state["status"] == "not_present" for state in result["decisions"]))
+
+    def test_timetable_scope_is_validated_and_omitted_scope_still_reviews_only_history(self):
+        with TestClient(app) as client:
+            payload = {"workbook": timetable_workbook(), "store": {"version": 1, "decisions": []}}
+            history = client.post('/api/history-review', json=payload)
+            current = client.post('/api/history-review', json={**payload, "scope": "timetable"})
+            self.assertEqual(history.status_code, 200, history.text)
+            self.assertEqual(current.status_code, 200, current.text)
+            self.assertTrue(history.json()["entries"][0]["months"][0]["month"].startswith("2025-"))
+            self.assertEqual(current.json()["entries"][0]["months"][0]["month"], "2027-07")
+            self.assertEqual(client.post('/api/history-review', json={**payload, "scope": "all"}).status_code, 422)
+
+
+def all_year_workbook_bytes(duplicate_target=False):
+    def edit(w):
+        for title in ("Jul 2026 - Jun 2027", "Jul 2027 - Jun 2028"):
+            sheet = w[title]
+            for merged in list(sheet.merged_cells.ranges):
+                sheet.unmerge_cells(str(merged))
+            start, row = (2, 4) if title.startswith("Jul 2026") else (4, 3)
+            for column, value in enumerate(("Main Example", "M001", "R3"), start):
+                sheet.cell(row, column, value)
+            for column in range(start + 3, start + 15):
+                sheet.cell(row, column, "SITE Department")
+        future = w.copy_worksheet(w["Jul 2027 - Jun 2028"])
+        future.title = "Jul 2028 - Jun 2029"
+        for cell in future[1]:
+            if hasattr(cell.value, "year"):
+                cell.value = cell.value.replace(year=cell.value.year + 1)
+        for sheet, start, row in ((w["Jul 2026 - Jun 2027"], 2, 5), (future, 4, 4)):
+            for column, value in enumerate(("Jamie Example", "M002", "R3"), start):
+                sheet.cell(row, column, value)
+            for column in range(start + 3, start + 15):
+                sheet.cell(row, column, "Unknown shared wording")
+        future["D5"], future["F5"] = "Missing identifier", "R1"
+        if duplicate_target:
+            current = w["Jul 2027 - Jun 2028"]
+            for column in range(4, 19):
+                current.cell(4, column, current.cell(3, column).value)
+        request = w["Request"]
+        for column, value in enumerate(("Jamie Example", "M002", "R3", "Original request", "Any suitable month"), 1):
+            request.cell(2, column, value)
+        request.append(["Unknown Example", "M999", "R2", "Second request", "Unqualified period"])
+        w["Postings"]["D2"], w["Postings"]["E2"] = "R2", "SITE Department"
+    return workbook_bytes(edit)
+
+
+class AllYearReviewTests(unittest.TestCase):
+    def test_all_annual_data_review_keys_queue_and_issues_are_independent_of_planning_year(self):
+        content = all_year_workbook_bytes()
+        imported = [parse_workbook(content, year) for year in (2026, 2027, 2028)]
+        baseline = None
+        for year, book in zip((2026, 2027, 2028), imported):
+            self.assertEqual([sheet["year"] for sheet in book["annual_sheets"]], [2026, 2027, 2028])
+            self.assertEqual(sum(sheet["year"] == year for sheet in book["annual_sheets"]), 1)
+            self.assertEqual([sheet["year"] for sheet in book["histories"]], list(range(2026, year)))
+            result = evaluate(book)
+            main = next(entry for entry in result["entries"] if entry["mcr"] == "M001")
+            self.assertEqual(len(main["months"]), 36)
+            self.assertEqual(len({month["month"] for month in main["months"]}), 36)
+            self.assertEqual(main["months"][0]["month"], "2026-07")
+            self.assertEqual(main["months"][-1]["month"], "2029-06")
+            state = ([(entry["key"], entry["review"], entry["identity_safe"]) for entry in result["entries"]], book["issues"])
+            if baseline is None:
+                baseline = state
+            self.assertEqual(state, baseline)
+            self.assertIn("missing_mcr", [issue["code"] for issue in book["issues"]])
+            target = evaluate_review(book, ReviewStore(version=1, decisions=[]), "timetable")
+            self.assertTrue(all(month["month"] >= f"{year}-07" and month["month"] <= f"{year + 1}-06"
+                                for entry in target["entries"] for month in entry["months"]))
+
+    def test_request_rows_are_unqualified_and_unchanged_while_selected_resident_links_change(self):
+        content = all_year_workbook_bytes()
+        raw = None
+        for year, expected in ((2026, "matched"), (2027, "unmatched"), (2028, "matched")):
+            book = parse_workbook(content, year)
+            records = [{key: value for key, value in request.items() if key not in {"match_status", "matched_resident_source"}}
+                       for request in book["requests"]]
+            if raw is None:
+                raw = records
+            self.assertEqual(records, raw)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(book["requests"][0]["match_status"], expected)
+            self.assertEqual(book["requests"][0]["period"], "Any suitable month")
+            if expected == "matched":
+                self.assertEqual(book["requests"][0]["matched_resident_source"]["sheet"], book["target_sheet"])
+            else:
+                self.assertIsNone(book["requests"][0]["matched_resident_source"])
+            unmatched = next(issue for issue in book["issues"] if issue["code"] == "unmatched_request")
+            self.assertEqual([record["mcr"] for record in unmatched["records"]], ["M999"])
+
+    def test_global_identity_sources_keep_grouping_stable_when_selected_link_is_ambiguous(self):
+        content = all_year_workbook_bytes(duplicate_target=True)
+        baseline = None
+        for year in (2026, 2027, 2028):
+            book = parse_workbook(content, year)
+            past = book["annual_sheets"][0]["residents"][0]
+            self.assertEqual(past["match_status"], "ambiguous" if year == 2027 else "matched")
+            result = evaluate(book)
+            state = [(entry["key"], entry["identity_safe"]) for entry in result["entries"]]
+            if baseline is None:
+                baseline = state
+            self.assertEqual(state, baseline)
+            earlier = next(entry for entry in result["entries"] if entry["mcr"] == "M001" and entry["months"][0]["month"] == "2026-07")
+            self.assertTrue(earlier["identity_safe"])
+            duplicated = [entry for entry in result["entries"] if entry["mcr"] == "M001" and entry["months"][0]["month"] == "2027-07"]
+            self.assertEqual(len(duplicated), 2)
+            self.assertTrue(all(not entry["identity_safe"] for entry in duplicated))
+
+    def test_old_cutoff_period_decision_is_visible_unapplied_without_broadening_to_full_run(self):
+        book = parse_workbook(all_year_workbook_bytes(), 2027)
+        legacy = deepcopy(book)
+        legacy.pop("annual_sheets")
+        old = evaluate(legacy)
+        index = next(index for index, entry in enumerate(old["entries"]) if entry["mcr"] == "M001")
+        decision = personal(old, index=index, year="R2", candidate=0)
+        original_decision = deepcopy(decision)
+        result = evaluate(book, [decision])
+        main = next(entry for entry in result["entries"] if entry["mcr"] == "M001")
+        self.assertEqual(len(decision["context"]["months"]), 12)
+        self.assertEqual(len(main["months"]), 36)
+        self.assertEqual(main["review"]["status"], "needs_review")
+        self.assertIn("recorded_period_changed", main["review"]["reasons"])
+        self.assertIsNone(main["review"]["target"])
+        self.assertEqual(result["decisions"][0]["status"], "needs_review")
+        self.assertEqual(decision, original_decision)
 
 
 if __name__ == '__main__':

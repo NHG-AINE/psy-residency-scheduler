@@ -217,7 +217,9 @@ def match_posting(posting, residency_year, catalogue):
 def review_import(result, yearly_sheets=None):
     """Link source records conservatively, retaining every raw value for review."""
     issues = []
-    annual = [result["residents"]] + [s["residents"] for s in result["histories"]]
+    sheets = result.get("annual_sheets", yearly_sheets)
+    annual = ([s["residents"] for s in sheets] if sheets is not None else
+              [result["residents"]] + [s["residents"] for s in result["histories"]])
     identities = [r for rows in annual for r in rows] + result["requests"]
     names, mcrs = defaultdict(set), defaultdict(set)
     duplicate_sources = set()
@@ -269,7 +271,7 @@ def review_import(result, yearly_sheets=None):
     for record in result["residents"]:
         if key(record):
             target[key(record)].append(record)
-    for record in [r for rows in annual[1:] for r in rows] + result["requests"]:
+    for record in [r for rows in annual for r in rows] + result["requests"]:
         mcr = key(record)
         candidates = target[mcr] if mcr else []
         ambiguous = (len(candidates) > 1 or len(names[name(record)]) > 1
@@ -281,8 +283,7 @@ def review_import(result, yearly_sheets=None):
         record["match_status"] = "matched" if matched else "ambiguous" if ambiguous else "unmatched"
         record["matched_resident_source"] = candidates[0]["source"] if matched else None
 
-    resident_rows = [s["residents"] for s in yearly_sheets] if yearly_sheets is not None else annual
-    known_mcrs = {key(r) for rows in resident_rows for r in rows if key(r)}
+    known_mcrs = {key(r) for rows in annual for r in rows if key(r)}
     for record in result["requests"]:
         if record["match_status"] == "unmatched" and key(record) and key(record) not in known_mcrs:
             issue("unmatched_request", "Request has no matching resident", "This request MCR was not found in any yearly resident tab.", [record])
@@ -293,22 +294,19 @@ def review_import(result, yearly_sheets=None):
             for posting in record["postings"]:
                 posting["catalogue_match"] = match_posting(posting, record.get("residency_year"), catalogue)
 
-    # Preserve the existing Issues output until the review interface consumes matches.
-    # Exact references only: elective fragments and SAF notes remain raw,
-    # without guessing aliases or treating a historical entry as training credit.
-    known = {r["posting"].strip().casefold() for r in result["postings"]["core"] if r.get("posting")}
+    # Reference existence only; requirement year and credit are reviewed separately.
     unmapped = {}
     for rows in annual:
         for record in rows:
             for posting in record["postings"]:
                 value = posting["value"]
-                if posting["status"] == "posting" and value.strip().casefold() not in known:
+                if posting["status"] == "posting" and not posting["catalogue_match"]["candidates"]:
                     ref = posting["source"]
                     unmapped[(value, ref["sheet"], ref["row"], ref.get("column"))] = ref
     if unmapped:
         issues.append({"code": "unmapped_posting", "severity": "info",
-                       "title": "Posting labels without an exact reference",
-                       "message": f"{len({entry[0] for entry in unmapped})} distinct posting values have no exact Core Posting reference.",
+                       "title": "Posting labels without a catalogue reference",
+                       "message": f"{len({entry[0] for entry in unmapped})} distinct posting values have no reference in the core or elective catalogue.",
                        "source": next(iter(unmapped.values())), "values": [entry[0] for entry in unmapped],
                        "sources": list(unmapped.values())})
     result["issues"] = issues
@@ -356,7 +354,7 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
         return review_import({"target_year": target_year, "target_sheet": target["sheet"],
                 "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
                 "months": target["months"], "residents": target["residents"],
-                "histories": [s for s in years if s["year"] < target_year], "requests": requests,
+                "histories": [s for s in years if s["year"] < target_year], "annual_sheets": years, "requests": requests,
                 "postings": {"core": core, "electives": elective_catalogue(postings, posting_row, posting_columns), "rows": rows}, "warnings": []}, yearly_sheets=years)
     finally:
         workbook.close()

@@ -87,7 +87,7 @@ test('review API sends structured decisions and surfaces malformed or unavailabl
   t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
     assert.equal(url, '/api/history-review')
     assert.equal(init.method, 'POST')
-    assert.deepEqual(JSON.parse(String(init.body)), { workbook, store: store() })
+    assert.deepEqual(JSON.parse(String(init.body)), { workbook, store: store(), scope: 'history' })
     return Response.json(result)
   })
   assert.deepEqual(await evaluateHistory(workbook, store()), result)
