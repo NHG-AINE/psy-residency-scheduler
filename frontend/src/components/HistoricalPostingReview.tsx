@@ -55,7 +55,7 @@ function DecisionEditor({ entry, catalogue, store, onSave, onCancel }: {
   </form>
 }
 
-export default function HistoricalPostingReview({ workbook }: { workbook: Workbook }) {
+export default function HistoricalPostingReview({ workbook, initialQuery = '' }: { workbook: Workbook; initialQuery?: string }) {
   const [initial] = useState(() => { try { return readReviewStore(window.localStorage) } catch { return { store: emptyStore(), error: 'Browser storage is unavailable. Enable it to save review decisions.' } } })
   const [store, setStore] = useState<ReviewStore>(initial.store)
   const [storageError, setStorageError] = useState(initial.error)
@@ -65,8 +65,8 @@ export default function HistoricalPostingReview({ workbook }: { workbook: Workbo
   const [actionError, setActionError] = useState('')
   const [message, setMessage] = useState('')
   const [retry, setRetry] = useState(0)
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('open')
+  const [query, setQuery] = useState(initialQuery)
+  const [filter, setFilter] = useState(initialQuery ? 'all' : 'open')
   const [selected, setSelected] = useState<string | null>(null)
   const [page, setPage] = useState(0)
   const input = useRef<HTMLInputElement>(null)

@@ -28,8 +28,8 @@ def build_requirement_ledger(workbook, store):
     """Build selected-roster expected progress before the planning period.
 
     Resolution remains global so saved exact periods are not broadened/truncated.
-    A resolved label needs recorded-year support or a personal confirmed year.
-    Remediation remains pending regardless of that confirmation.
+    Resolved current/earlier-year postings, including remediation, count duration.
+    This does not certify training completion or rewrite review decisions.
     """
     try:
         start = workbook["months"][0]["month"]
@@ -109,14 +109,15 @@ def _allocation(entry, workbook):
     reasons = []
     if not entry["identity_safe"]:
         reasons.append("unsafe_identity")
-    if review["status"] not in {"automatic_match", "label_confirmed", "reviewed"} or target is None:
+    if review["status"] not in {"automatic_match", "label_confirmed", "reviewed", "credit_review_required"} or target is None:
         reasons.extend(review.get("reasons", []) or ["unresolved_history"])
-    if "remediation_credit_review" in review.get("reasons", []):
-        reasons.append("remediation_credit_review")
+    reasons.extend(reason for reason in review.get("reasons", []) if reason != "remediation_credit_review")
     if reasons:
         return {"status": "pending", "reasons": sorted(set(reasons))}
     year = review.get("requirement_year") or target["residency_year"]
-    if not review.get("requirement_year") and year.casefold() not in recorded_years(entry["recorded_year"]):
+    years = recorded_years(entry["recorded_year"])
+    target_year = year.strip().casefold()
+    if not review.get("requirement_year") and (not years or target_year > max(years)):
         return {"status": "pending", "reasons": ["requirement_year_unconfirmed"]}
     validation = validate_posting(year, target, workbook.get("postings", {}).get("electives", []))
     if not validation["valid"]:
@@ -161,7 +162,7 @@ def _summaries(months):
                 count = max((group["expected_months"] for group in groups), default=0)
             item = {"requirement_id": rule["id"], "requirement_year": year, "posting": posting,
                     "required_months": rule["months"], "expected_months": count,
-                    "remaining_months": max(0, rule["months"] - count) if count else None,
+                    "remaining_months": max(0, rule["months"] - count),
                     "evidence_status": "not_evidenced" if not count else "supported" if count >= rule["months"] else "partial"}
             if year == "R3":
                 item["continuity_groups"] = groups
