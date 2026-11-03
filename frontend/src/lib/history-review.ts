@@ -102,9 +102,9 @@ export function writeReviewStore(storage: Pick<Storage, 'setItem'>, store: Revie
   }
 }
 
-export async function evaluateHistory(workbook: Workbook, store: ReviewStore, signal?: AbortSignal): Promise<HistoryReview> {
+export async function evaluateHistory(workbook: Workbook, store: ReviewStore, signal?: AbortSignal, scope: 'history' | 'timetable' = 'history'): Promise<HistoryReview> {
   let response: Response
-  try { response = await fetch('/api/history-review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal }) } catch {
+  try { response = await fetch('/api/history-review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store, scope }), signal }) } catch {
     throw new Error('Could not reach the backend for history review. Check the connection and retry.')
   }
   const data = await response.json().catch(() => null)
@@ -127,6 +127,7 @@ export const reviewReasons: Record<string, string> = {
   incompatible_requirement_year: 'Requirement year does not match the chosen catalogue entry', incompatible_alias_category: 'Mapping category differs from the catalogue entry',
   explicit_elective_target_required: 'An explicit elective label requires an elective target',
   identity_review_required: 'Resolve the resident identity in Issues first', recorded_context_changed: 'Recorded identity or R-year context changed',
+  recorded_period_changed: 'Saved resident decision overlaps a changed or incomplete period',
   not_present_in_this_import: 'Not present in this import',
 }
 export const reasonLabel = (reason: string) => reviewReasons[reason] || reason.replaceAll('_', ' ')
@@ -140,9 +141,13 @@ export function historyStatusLabel(status: string): string {
   return labels[status] || status.replaceAll('_', ' ')
 }
 
+export function resolvedCatalogueTarget(review: HistoryEntry['review']): CatalogueEntry | null {
+  return ['automatic_match', 'reviewed', 'label_confirmed', 'credit_review_required'].includes(review.status) ? review.target : null
+}
+
 export function matchesHistoryFilter(entry: HistoryEntry, filter: string, query: string): boolean {
   const status = entry.review.status
-  const labelResolved = !!entry.review.target && ['automatic_match', 'reviewed', 'label_confirmed', 'credit_review_required'].includes(status)
+  const labelResolved = !!resolvedCatalogueTarget(entry.review)
   return (filter === 'all' || (filter === 'reviewed' ? status === 'reviewed' : !labelResolved))
     && `${entry.name || ''} ${entry.mcr || ''} ${entry.months[0].value}`.toLowerCase().includes(query.trim().toLowerCase())
 }

@@ -1,11 +1,10 @@
-﻿# Historical Posting Review
+# Historical Posting Review
 
 ## Scope
 
 - Recognize catalogue posting labels, not completed training requirements.
 - Preserve original labels, recorded R-years, monthly statuses and workbook sources.
 - Do not calculate duration credit, completion, progression or outstanding requirements.
-- The timetable still uses original workbook wording; a standardized view is not implemented.
 
 ## Automatic matching rules
 
@@ -25,7 +24,7 @@
 
 ## Review table and decisions
 
-- Show historical tabs before the selected planning year, with original labels, months, recorded years, candidates and reasons.
+- Show original labels, months, recorded years, candidates and review reasons.
 - Group consecutive months only when MCR, identity, label and recorded-year context agree, including across tabs. Keep unsafe identities and separated periods apart; exclude LOA and blanks.
 - **Needs review:** unresolved labels and invalid saved decisions only.
 - **All entries:** also show automatic and manually confirmed labels, including open requirement years and remediation credit review.
@@ -44,6 +43,6 @@
 - Export/import review JSON for backup or transfer. It contains resident identifiers and history, so handle it like the workbook.
 - Identify resident decisions by normalized MCR, exact labels and calendar months; check name and recorded-year context separately.
 - Identify catalogue targets by category, year and full label; also check relevant notes, duration and limits. Row positions are not identifiers, so reordering rows or moving sheets preserves compatible decisions.
-- Changed context/catalogue content, missing targets and conflicts need review. Absent periods stay saved for later imports.
+- Changed context/catalogue content, missing targets and conflicts need review. Absent periods stay saved for later imports. Existing decisions made for a shorter cutoff-period may overlap a newly combined full run; keep them unapplied with a changed-period reason until reviewed. Never broaden them automatically.
 - Validate JSON version, fields and scopes before saving. Conflicting scopes reject the whole import; remove the existing decision before importing its replacement. The inline editor can replace its own scope.
 - Storage failures preserve previous decisions and keep the editor open. Unreadable saved data blocks saving until the user explicitly starts new review data.

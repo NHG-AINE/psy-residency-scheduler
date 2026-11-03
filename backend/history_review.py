@@ -98,18 +98,19 @@ def consecutive(left, right):
     return right == f"{year + month // 12:04d}-{month % 12 + 1:02d}"
 
 
-def historical_entries(workbook):
+def posting_entries(workbook, scope: Literal["history", "timetable"] = "history"):
     """Only safe identities may join across sheets; separated runs stay separate."""
     blocked = set()
     for issue in workbook.get("issues", []):
         if issue["code"] in {"missing_mcr", "missing_name", "duplicate_mcr", "conflicting_identity"}:
             blocked.update((r["source"]["sheet"], r["source"]["row"]) for r in issue.get("records", []))
     groups = defaultdict(list)
-    for history in workbook["histories"]:
+    annual = [{"residents": workbook["residents"]}] if scope == "timetable" else workbook.get("annual_sheets", workbook["histories"])
+    for history in annual:
         for resident in history["residents"]:
             ref = resident["source"]
             safe = bool(mcr_key(resident.get("mcr")) and normalized_label(resident.get("name"))
-                        and resident.get("match_status") != "ambiguous"
+                        and ("annual_sheets" in workbook or resident.get("match_status") != "ambiguous")
                         and (ref["sheet"], ref["row"]) not in blocked)
             identity = [mcr_key(resident.get("mcr")), normalized_label(resident.get("name")),
                         normalized_label(resident.get("residency_year"))]
@@ -143,12 +144,12 @@ def historical_entries(workbook):
     return entries
 
 
-def evaluate_review(workbook, store):
+def evaluate_review(workbook, store, scope: Literal["history", "timetable"] = "history"):
     catalogue = catalogue_entries(workbook["postings"])
     targets = defaultdict(list)
     for candidate in catalogue:
         targets[candidate["key"]].append(candidate)
-    entries = historical_entries(workbook)
+    entries = posting_entries(workbook, scope)
     decisions = [d.model_dump() for d in store.decisions]
     by_key = defaultdict(list)
     for decision in decisions:
@@ -178,8 +179,13 @@ def evaluate_review(workbook, store):
         applicable = []
         for state in states:
             decision = state["decision"]
+            period_changed = False
             if decision["kind"] == "resident":
                 relevant = state["key"] == entry["key"]
+                if not relevant and mcr_key(decision["context"]["mcr"]) == mcr_key(entry["mcr"]):
+                    period_changed = bool({m["month"] for m in decision["context"]["months"]}
+                                          & {m["month"] for m in entry["months"]})
+                    relevant = period_changed
                 context_ok = (decision["context"]["name"] == entry["context"]["name"]
                               and decision["context"]["recorded_year"] == entry["context"]["recorded_year"])
                 safe = entry["identity_safe"]
@@ -193,6 +199,8 @@ def evaluate_review(workbook, store):
             if not relevant:
                 continue
             errors = list(state["_base_reasons"])
+            if period_changed:
+                errors.append("recorded_period_changed")
             if not safe:
                 errors.append("identity_review_required")
             if not context_ok:

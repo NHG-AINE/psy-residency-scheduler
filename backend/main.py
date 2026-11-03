@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from typing import Literal
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
@@ -36,11 +37,12 @@ async def import_workbook(file: UploadFile = File(...), target_year: int = Form(
 class HistoryReviewRequest(BaseModel):
     workbook: dict
     store: ReviewStore
+    scope: Literal["history", "timetable"] = "history"
 
 
 @app.post("/api/history-review")
 async def history_review(request: HistoryReviewRequest):
     try:
-        return await run_in_threadpool(evaluate_review, request.workbook, request.store)
+        return await run_in_threadpool(evaluate_review, request.workbook, request.store, request.scope)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The workbook review data is incomplete. Import the workbook again.") from exc

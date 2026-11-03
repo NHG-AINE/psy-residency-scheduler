@@ -173,6 +173,40 @@ class WorkbookImportTests(unittest.TestCase):
         self.assertEqual(result["residents"][0]["postings"][0]["value"], " core EXAMPLE ")
         self.assertEqual(result["postings"]["core"][0]["posting"], "  Core Example  ")
 
+    def test_missing_reference_issue_uses_full_catalogue_without_conflating_year_or_credit_review(self):
+        values = [" SITE Core ", "SITE Elective(ELECTIVE)", "SITE Ambiguous", "SITE Future", "SITE Core (Remediation)",
+                  "SITE Missing (Elective)", "SITE Missing (Elective)", "SITE Missing (Remediation)", "LOA", None, "", " "]
+        def edit(w):
+            reference = w["Postings"]
+            for row, (year, label) in enumerate((("R2", "SITE Core"), ("R5", "SITE Core"),
+                                                 ("R1", "SITE Ambiguous"), ("R2", "SITE Ambiguous"), ("R5", "SITE Future")), 2):
+                reference.cell(row, 4, year)
+                reference.cell(row, 5, label)
+            reference["A2"], reference["A3"] = "SITE", "- Elective"
+            reference["B1"], reference["B2"], reference["B3"] = "R5 Electives", "SITE", "- Elective"
+            history = w["Jul 2026 - Jun 2027"]
+            history["D4"] = "R3"
+            for column, value in enumerate(values, 5):
+                history.cell(4, column).value = value
+            target = w["Jul 2027 - Jun 2028"]
+            for merged in list(target.merged_cells.ranges):
+                target.unmerge_cells(str(merged))
+            for column in range(7, 19):
+                target.cell(3, column).value = None
+        result = parse_workbook(workbook_bytes(edit))
+        postings = result["histories"][0]["residents"][0]["postings"]
+        self.assertTrue(all(posting["catalogue_match"]["candidates"] for posting in postings[:5]))
+        self.assertEqual(postings[2]["catalogue_match"]["status"], "ambiguous")
+        self.assertEqual(postings[3]["catalogue_match"]["status"], "needs_review")
+        self.assertIn("remediation_credit_review", postings[4]["catalogue_match"]["reasons"])
+        issue = next(issue for issue in result["issues"] if issue["code"] == "unmapped_posting")
+        self.assertEqual(issue["title"], "Posting labels without a catalogue reference")
+        self.assertIn("core or elective catalogue", issue["message"])
+        self.assertEqual(issue["values"], values[5:8])
+        self.assertEqual(issue["sources"], [posting["source"] for posting in postings[5:8]])
+        self.assertEqual(issue["source"], postings[5]["source"])
+        self.assertEqual([posting["value"] for posting in postings[:9]], values[:9])
+
     def test_unmapped_postings_retain_every_distinct_original_cell_source(self):
         def edit(w):
             w["Jul 2026 - Jun 2027"]["F4"] = " loa "
@@ -180,7 +214,7 @@ class WorkbookImportTests(unittest.TestCase):
         issue = next(i for i in result["issues"] if i["code"] == "unmapped_posting")
         reported = list(zip(issue["values"], issue["sources"]))
         expected = []
-        for resident in result["residents"] + result["histories"][0]["residents"]:
+        for resident in [resident for sheet in result["annual_sheets"] for resident in sheet["residents"]]:
             for posting in resident["postings"]:
                 pair = (posting["value"], posting["source"])
                 if posting["value"] and posting["value"].strip().casefold() != "loa" and pair not in expected:
@@ -425,7 +459,7 @@ class HistoricalPostingMatchTests(unittest.TestCase):
         self.assertEqual(posting["catalogue_match"]["status"], "matched")
         self.assertEqual(posting["catalogue_match"]["candidates"][0]["residency_year"], "R2")
         self.assertNotIn("completed", history)
-        self.assertIn(posting["value"], next(i for i in result["issues"] if i["code"] == "unmapped_posting")["values"])
+        self.assertNotIn(posting["value"], next(i for i in result["issues"] if i["code"] == "unmapped_posting")["values"])
 
 
 if __name__ == "__main__":
