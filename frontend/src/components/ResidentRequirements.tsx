@@ -4,7 +4,7 @@ import { monthLabel, sameSource, sourceLabel } from '../lib/workbook'
 import type { Resident, Workbook } from '../lib/workbook'
 import { readReviewStore, reasonLabel, STORAGE_KEY } from '../lib/history-review'
 import { evaluateRequirements, visibleRequirements } from '../lib/requirement-ledger'
-import type { LedgerMonth, RequirementLedger, ResidentLedger, RequirementFilter } from '../lib/requirement-ledger'
+import type { LedgerMonth, RequirementLedger, ResidentLedger, RequirementFilter, HistoricalNote } from '../lib/requirement-ledger'
 
 const explanation: Record<string, string> = {
   unsafe_identity: 'Resident identity needs review in Issues. No history has been allocated.',
@@ -24,6 +24,19 @@ function Evidence({ months }: { months: LedgerMonth[] }) {
   </li>)}</ul>
 }
 
+
+export function HistoricalNotes({ notes = [] }: { notes?: HistoricalNote[] }) {
+  if (!notes.length) return null
+  return <details className="historical-notes">
+    <summary><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25" /><path d="M10 9v4M10 6.5v.5" /></svg><span>Historical notes &middot; {notes.length}</span><span className="historical-notes-chevron" aria-hidden="true" /></summary>
+    <div className="historical-notes-content">{notes.map((note) => <article className="historical-note" key={`${note.code}-${note.start}-${note.posting}`}>
+      <h4>Historical warning</h4>
+      <p>Inpatient Psychiatry was recorded before the required R1 Medicine and Neurology months were complete.</p>
+      <p className="historical-note-period">{note.posting} &middot; {dateLabel(note.start)}{note.end !== note.start && ` \u2013 ${dateLabel(note.end)}`} &middot; {note.months} {note.months === 1 ? 'month' : 'months'}{Array.from(new Map(note.sources.map((source) => [JSON.stringify([source.sheet, source.row]), source])).values()).map((source) => <span className="historical-note-source" key={JSON.stringify([source.sheet, source.row])}> &middot; {source.sheet} &middot; row {source.row}</span>)}</p>
+    </article>)}</div>
+  </details>
+}
+
 export function RequirementContent({ ledger, cutoff, planningStart, onHistoryReview }: { ledger: ResidentLedger; cutoff: string; planningStart: string; onHistoryReview: () => void }) {
   const [filter, setFilter] = useState<RequirementFilter>('all')
   const requirements = visibleRequirements(ledger, filter)
@@ -35,6 +48,7 @@ export function RequirementContent({ ledger, cutoff, planningStart, onHistoryRev
     <div className="requirements-toolbar"><h3>Months through {dateLabel(cutoff)} - Planning {planningYear}/{String(planningYear + 1).slice(-2)}</h3>
       <label>Show requirements<select value={filter} onChange={(event) => setFilter(event.target.value as RequirementFilter)}><option value="all">All</option><option value="completed">Completed</option><option value="missing">Missing</option></select></label>
     </div>
+    <HistoricalNotes key={JSON.stringify(ledger.source)} notes={ledger.historical_notes} />
     {ledger.warnings.map((warning) => <p className="record-note" key={warning}>{explain(warning)}</p>)}
     {!ledger.identity_safe ? <p className="empty-note">Requirements cannot be allocated safely until identity issues are resolved.</p> : <>
       {!ledger.months.length && <p className="muted">No safely matched history before this planning period.</p>}

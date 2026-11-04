@@ -1,4 +1,4 @@
-import type { Source, Workbook } from './workbook'
+import type { Source, Workbook, WorkbookSource } from './workbook'
 import type { CatalogueEntry, ReviewStore } from './history-review'
 
 export type LedgerMonth = {
@@ -11,9 +11,13 @@ export type Requirement = {
   expected_months: number; remaining_months: number; evidence_status: 'not_evidenced' | 'partial' | 'supported'
   continuity_groups?: { institution: string; posting: string; start: string; end: string; expected_months: number }[]
 }
+export type HistoricalNote = {
+  code: 'historical_r1_timing_exception'; posting: string; start: string; end: string; months: number; sources: WorkbookSource[]
+}
 export type ResidentLedger = {
   name: string | null; mcr: string | null; recorded_year: string | null; source: Source
   identity_safe: boolean; warnings: string[]; months: LedgerMonth[]; requirements: Requirement[]
+  historical_notes?: HistoricalNote[]
   r1_routes: { requirement_ids: string[]; evidence_status: string }[]
 }
 export type RequirementLedger = {

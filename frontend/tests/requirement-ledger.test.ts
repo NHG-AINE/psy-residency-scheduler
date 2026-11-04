@@ -95,3 +95,26 @@ test('requirement filters exclude the unused R1 route and distinguish completed 
   resident.requirements.forEach((row) => { row.evidence_status = 'supported' })
   assert.deepEqual(visibleRequirements(resident, 'missing'), [])
 })
+
+test('Historical notes use a native collapsed disclosure and disappear when there are no notes', async () => {
+  const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  try {
+    const { HistoricalNotes, RequirementContent } = await vite.ssrLoadModule('/src/components/ResidentRequirements.tsx')
+    assert.equal(renderToStaticMarkup(createElement(HistoricalNotes, { notes: [] })), '')
+    const resident = person()
+    resident.historical_notes = [{ code: 'historical_r1_timing_exception', posting: 'IMH Inpatient Psychiatry',
+      start: '2027-01', end: '2027-06', months: 6, sources: [{ sheet: 'History', row: 81, column: 'L' }, { sheet: 'History', row: 81, column: 'M' }] }]
+    const html = renderToStaticMarkup(createElement(RequirementContent, { ledger: resident, cutoff: '2027-06', planningStart: '2027-07', onHistoryReview: () => {} }))
+    // Native details provides keyboard activation, expanded state and content visibility.
+    assert.match(html, /<details class="historical-notes"><summary>/)
+    assert.doesNotMatch(html, /<details class="historical-notes"[^>]*open/)
+    assert.match(html, /Historical notes \u00b7 1/)
+    assert.match(html, /<summary>.*?<\/summary><div class="historical-notes-content">/)
+    assert.match(html, /Historical warning/)
+    assert.match(html, /IMH Inpatient Psychiatry \u00b7 Jan 2027 \u2013 Jun 2027 \u00b7 6 months/)
+    assert.match(html, /History.*row 81/)
+    assert.equal((html.match(/row 81/g) || []).length, 1)
+    assert.doesNotMatch(html, /These months still count/)
+    assert.doesNotMatch(html, /Acknowledge|role="alert"/)
+  } finally { await vite.close() }
+})
