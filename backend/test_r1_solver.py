@@ -8,7 +8,7 @@ from ortools.sat.python import cp_model
 
 from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
-from r1_solver import draft_r1_schedule
+from r1_solver import draft_r1_schedule, _inpatient_targets, _solve_priorities, PREFERRED_INPATIENT_SITES
 from test_requirement_ledger import resident
 import test_workbook_import
 
@@ -74,6 +74,10 @@ class R1SolverTests(unittest.TestCase):
             self.check_resident(person)
             self.assertTrue(all(m["label"] in labels for m in person["months"]))
         self.assertEqual(result["soft_results"]["ratio_deviation"], 0)
+        self.assertEqual(result["soft_results"]["inpatient_counts"], {"IMH": 8, "TTSH": 4, "CGH": 4, "SGH": 4, "NUH": 4})
+        self.assertEqual(result["singletons"], [])
+        for person in result["residents"]:
+            self.assertIn(person["months"][-1]["target"]["institution"], PREFERRED_INPATIENT_SITES[person["route"]])
         self.assertEqual(workbook, original)
 
     def test_continuing_history_preserves_pairing_neuro_block_and_only_schedules_remaining(self):
@@ -165,6 +169,8 @@ class R1SolverTests(unittest.TestCase):
             row["max"] = "2" if row["posting"] == "TTSH General Medicine" else "1" if row["posting"] == "NNI Neurology" else "0" if "Inpatient" not in row["posting"] else None
         result = draft_r1_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
+        self.assertEqual(len(result["singletons"]), 6)
+        self.assertTrue(all(item["label"] == "NNI Neurology" for item in result["singletons"]))
         for month in range(6):
             counts = Counter(p["months"][month]["label"] for p in result["residents"])
             self.assertEqual(counts, {"TTSH General Medicine": 2, "NNI Neurology": 1})
@@ -197,6 +203,81 @@ class R1SolverTests(unittest.TestCase):
         self.assertIn(relaxed["status"], {"optimal", "feasible"})
         self.assertEqual(relaxed["soft_results"]["route_counts"]["NUH"], 0)
         self.assertGreater(relaxed["soft_results"]["distribution_deviation"], 0)
+
+    def test_weighted_inpatient_targets_and_small_cohorts(self):
+        sites = ["IMH", "TTSH", "CGH", "SGH", "NUH"]
+        for size, imh, other in ((0, 0, 0), (2, 2, 0), (18, 6, 3), (20, 8, 3),
+                                 (21, 9, 3), (22, 10, 3), (23, 11, 3), (24, 8, 4)):
+            with self.subTest(size=size):
+                self.assertEqual(_inpatient_targets(size, sites),
+                                 {site: imh if site == "IMH" else other for site in sites})
+        self.assertEqual(_inpatient_targets(6, ["IMH", "NUH"]), {"IMH": 4, "NUH": 2})
+        self.assertEqual(_inpatient_targets(6, ["NUH"]), {})
+
+    def test_allocation_overrides_destination_but_capacity_overrides_allocation(self):
+        book = r1_book()
+        draft = draft_r1_schedule(book, STORE)
+        self.assertEqual(draft["residents"][0]["route"], "TTSH/NNI")
+        self.assertEqual(draft["soft_results"]["inpatient_counts"]["IMH"], 1)
+        self.assertEqual(draft["soft_results"]["destination_deviation"], 1)
+        book = r1_book(6)
+        next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "1"
+        draft = draft_r1_schedule(book, STORE)
+        self.assertEqual(draft["status"], "optimal")
+        self.assertLessEqual(draft["soft_results"]["inpatient_counts"]["IMH"], 1)
+        self.assertGreater(draft["soft_results"]["inpatient_deviation"], 0)
+
+    def test_cluster_tiebreak_uses_history_and_only_actual_scheduled_months(self):
+        book = r1_book()
+        set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + [None] * 6)
+        next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        draft = draft_r1_schedule(book, STORE)
+        person = draft["residents"][0]
+        self.assertEqual(person["months"][0]["label"], "NUH Inpatient Psychiatry")
+        self.assertEqual(draft["soft_results"]["missing_clusters"], 0)
+        for month in book["residents"][0]["postings"]:
+            month.update(status="loa", value="LOA")
+        paused = draft_r1_schedule(book, STORE)
+        self.assertEqual(paused["soft_targets"]["inpatient_residents"], 0)
+        self.assertEqual(paused["soft_results"]["missing_clusters"], 1)
+
+    def test_priority_scores_are_locked_instead_of_summed(self):
+        model = cp_model.CpModel()
+        choice = model.new_bool_var("choice")
+        solver, status, stages, _ = _solve_priorities(
+            model, [("first", choice), ("second", 100 * (1 - choice))], [choice], 2)
+        self.assertEqual(status, "optimal")
+        self.assertEqual(solver.value(choice), 0)
+        self.assertEqual([s["score"] for s in stages], [0, 100])
+
+    def test_timeout_retains_solution_and_feasible_does_not_advance_priority(self):
+        solve = cp_model.CpSolver.solve
+        for interrupted_status, expected_stages in ((cp_model.FEASIBLE, 1), (cp_model.UNKNOWN, 2)):
+            model = cp_model.CpModel()
+            choice = model.new_bool_var("choice")
+            calls = []
+
+            def interrupted(solver, current_model):
+                calls.append(solver.parameters.max_time_in_seconds)
+                if interrupted_status == cp_model.UNKNOWN and len(calls) == 2:
+                    return cp_model.UNKNOWN
+                actual = solve(solver, current_model)
+                return cp_model.FEASIBLE if interrupted_status == cp_model.FEASIBLE else actual
+
+            with patch("r1_solver.cp_model.CpSolver.solve", new=interrupted), patch(
+                    "r1_solver.monotonic", side_effect=[0, 0, 0.5, 1]):
+                solver, status, stages, _ = _solve_priorities(
+                    model, [("first", choice), ("second", 1 - choice)], [choice], 2)
+            self.assertEqual(status, "feasible")
+            self.assertEqual(solver.value(choice), 0)
+            self.assertEqual(len(stages), expected_stages)
+            if len(calls) == 2:
+                self.assertLess(calls[1], calls[0])
+        with patch("r1_solver.monotonic", side_effect=[0, 0, 3, 3]):
+            solver, status, stages, _ = _solve_priorities(
+                model, [("first", choice), ("second", 1 - choice)], [choice], 2)
+        self.assertEqual(status, "feasible")
+        self.assertEqual(len(stages), 1)
 
     def test_blocked_unknown_and_model_invalid_never_return_fake_solution(self):
         workbook = r1_book()

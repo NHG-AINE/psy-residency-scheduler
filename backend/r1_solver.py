@@ -2,6 +2,7 @@
 from collections import Counter, defaultdict
 from copy import deepcopy
 from math import isfinite
+from time import monotonic
 
 from ortools.sat.python import cp_model
 
@@ -17,8 +18,31 @@ else:
     from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 
 
-ROUTES = ("TTSH/NNI", "SGH", "NUH")
+STANDARD_ROUTE_TARGETS = {"TTSH/NNI": 12, "SGH": 9, "NUH": 3}
+SHORT_COHORT_ROUTE_TARGETS = {"TTSH/NNI": 12, "SGH": 9, "NUH": 2}
+STANDARD_COHORT_SIZE = sum(STANDARD_ROUTE_TARGETS.values())
+SHORT_COHORT_SIZE = sum(SHORT_COHORT_ROUTE_TARGETS.values())
+ROUTES = tuple(STANDARD_ROUTE_TARGETS)
+PAIRED_ROUTES = ("TTSH/NNI", "SGH")
+MEDICINE_PER_NEUROLOGY = 2
+IMH_ALLOCATION_SHARES = 2
+PREFERRED_INPATIENT_SITES = {
+    "TTSH/NNI": {"SGH", "CGH", "NUH"},
+    "SGH": {"IMH", "TTSH", "NUH"},
+    "NUH": {"IMH", "TTSH", "SGH", "CGH"},
+}
+SOFT_PRIORITIES = (
+    "incoming_route_distribution", "monthly_medicine_neurology_ratio",
+    "singleton_months", "inpatient_allocation", "inpatient_destination", "missing_clusters",
+)
+
+DEFAULT_SOLVE_SECONDS = 10
+# Keep the search reproducible for a given set of inputs.
+SOLVER_WORKERS = 1
+SOLVER_RANDOM_SEED = 0
+
 R1 = PROGRAMME_REQUIREMENTS["R1"]
+R1_REQUIRED_MONTHS = R1["Medicine & Neurology"]["months"] + R1["Inpatient Psychiatry"]["months"]
 
 
 def _paths(person):
@@ -40,7 +64,7 @@ def _paths(person):
         tail = [(inpatient, site)] * remaining[inpatient]
         if paired_months == least_remaining:
             for route, medicine_site, neuro_site in (("TTSH/NNI", "TTSH", "NNI"), ("SGH", "SGH", "SGH")):
-                if preferred_route in ROUTES[:2] and preferred_route != route:
+                if preferred_route in PAIRED_ROUTES and preferred_route != route:
                     continue
                 for start in range(remaining[gm] + 1):
                     head = [(gm, medicine_site)] * start + [(neuro, neuro_site)] * remaining[neuro]
@@ -51,24 +75,67 @@ def _paths(person):
 
 
 def _targets(size):
-    if size == 23:
-        return dict(zip(ROUTES, (12, 9, 2)))
+    if size == SHORT_COHORT_SIZE:
+        return dict(SHORT_COHORT_ROUTE_TARGETS)
     # Largest remainder for other sizes, with stable route order breaking ties.
-    shares = [size * weight for weight in (12, 9, 3)]
-    targets = [share // 24 for share in shares]
-    for index in sorted(range(3), key=lambda i: -(shares[i] % 24))[:size - sum(targets)]:
+    shares = [size * weight for weight in STANDARD_ROUTE_TARGETS.values()]
+    targets = [share // STANDARD_COHORT_SIZE for share in shares]
+    for index in sorted(range(len(ROUTES)), key=lambda i: -(shares[i] % STANDARD_COHORT_SIZE))[:size - sum(targets)]:
         targets[index] += 1
     return dict(zip(ROUTES, targets))
 
 
-def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
+def _inpatient_targets(size, sites):
+    """IMH receives two shares and the rounding remainder; other sites one."""
+    if "IMH" not in sites:
+        return {}  # This preference only applies when IMH is eligible.
+    baseline = size // (len(sites) - 1 + IMH_ALLOCATION_SHARES)
+    return {site: size - (len(sites) - 1) * baseline if site == "IMH" else baseline
+            for site in sites}
+
+
+def _solve_priorities(model, objectives, variables, max_seconds):
+    """Lock proven scores, not assignments; retain the last valid solution."""
+    started = monotonic()
+    deadline = started + max_seconds
+    best = None
+    stages = []
+    status = cp_model.UNKNOWN
+    for name, objective in objectives:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        model.minimize(objective)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = remaining
+        solver.parameters.num_search_workers = SOLVER_WORKERS
+        solver.parameters.random_seed = SOLVER_RANDOM_SEED
+        status = solver.solve(model)
+        stages.append({"priority": name, "status": solver.status_name(status).lower()})
+        if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
+            break
+        best = solver
+        score = solver.value(objective)
+        stages[-1]["score"] = score
+        if status != cp_model.OPTIMAL:
+            break  # Never freeze an unproven score and optimise a lower priority.
+        model.add(objective == score)
+        model.clear_hints()
+        for variable in variables:
+            model.add_hint(variable, solver.value(variable))
+    complete = len(stages) == len(objectives) and status == cp_model.OPTIMAL
+    final_status = "optimal" if complete else "feasible" if best is not None else cp_model.CpSolver().status_name(status).lower()
+    return best, final_status, stages, monotonic() - started
+
+
+def draft_r1_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     """Solve only R1 portions, including known mixed-year continuing residents.
 
     Schedule outstanding Medicine/Neuro before outstanding inpatient; ledger
     credit is retained regardless of historical timing or order. LOA pauses
     future blocks. Every available month is used until R1 completion; unfinished
     requirements carry forward rather than forcing completion by June.
-    Soft priority: incoming institution distribution, then monthly 2:1 ratio.
+    Soft preferences follow SOFT_PRIORITIES with one shared solving budget.
     Requests and excluded residents are not scheduled. Shared finite capacity
     with excluded residents requires review rather than a false capacity claim.
     """
@@ -83,7 +150,7 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
               "limitations": ["R2-R5 portions are outside this draft", "Resident requests are not interpreted",
                               "Finite shared capacity with excluded residents requires review"],
-              "soft_priority": ["incoming_route_distribution", "monthly_medicine_neurology_ratio"]}
+              "soft_priority": list(SOFT_PRIORITIES)}
     blockers = result["blockers"]
     if not selected:
         blockers.append({"code": "no_r1_residents"})
@@ -92,7 +159,10 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
     for option in options:
         blockers.extend({"code": code, "source": option["source"]} for code in option["reasons"])
         remarks = option["remarks"]
-        expected_remark = "To be completed in the " + ("second" if option["requirement_id"] == R1["Inpatient Psychiatry"]["id"] else "first") + " 6 months of R1"
+        inpatient = option["requirement_id"] == R1["Inpatient Psychiatry"]["id"]
+        phase = "second" if inpatient else "first"
+        phase_months = R1["Inpatient Psychiatry" if inpatient else "Medicine & Neurology"]["months"]
+        expected_remark = f"To be completed in the {phase} {phase_months} months of R1"
         if remarks and remarks != expected_remark:
             blockers.append({"code": "unsupported_r1_remarks", "source": option["source"], "remarks": deepcopy(remarks)})
         key = (option["requirement_id"], option["institution"])
@@ -129,7 +199,7 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
                     schedule.append(by_key[remaining[consumed]])
                     consumed += 1
             choices.append({"route": route, "schedule": schedule, "carryforward": Counter(remaining[consumed:]),
-                            "credited_r1_months": 12 - len(remaining)})
+                            "credited_r1_months": R1_REQUIRED_MONTHS - len(remaining)})
         candidates.append(choices)
     if blockers:
         return result
@@ -142,9 +212,22 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
     occupancy = defaultdict(list)
     route_counts = defaultdict(list)
     ratio_counts = defaultdict(list)
+    inpatient_counts = defaultdict(list)
+    destination_penalties, cluster_penalties = [], []
+    inpatient_id = R1["Inpatient Psychiatry"]["id"]
     for i, choices in enumerate(candidates):
         for j, choice in enumerate(choices):
             variable = variables[i][j]
+            sites = {o["institution"] for o in choice["schedule"]
+                     if o and o["requirement_id"] == inpatient_id}
+            for site in sites:
+                inpatient_counts[site].append(variable)
+                if site not in PREFERRED_INPATIENT_SITES[choice["route"]]:
+                    destination_penalties.append(variable)
+            projected = cluster_coverage(selected[i]["months"] + [
+                {"status": "expected", "requirement_year": "R1", "institution": o["institution"]}
+                for o in choice["schedule"] if o])
+            cluster_penalties.append(len(projected["missing"]) * variable)
             if active_intake[i]:
                 route_counts[choice["route"]].append(variable)
             for month, option in enumerate(choice["schedule"]):
@@ -165,23 +248,37 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
         model.add_abs_equality(deviation, sum(route_counts[route]) - target)
         distribution_deviations.append(deviation)
     for month in range(len(prepared["planning_months"])):
-        for route in ROUTES[:2]:
-            deviation = model.new_int_var(0, 2 * len(selected), f"ratio_{month}_{route}")
-            model.add_abs_equality(deviation, sum(ratio_counts[(month, route, "medicine")]) - 2 * sum(ratio_counts[(month, route, "neuro")]))
+        for route in PAIRED_ROUTES:
+            deviation = model.new_int_var(0, MEDICINE_PER_NEUROLOGY * len(selected), f"ratio_{month}_{route}")
+            model.add_abs_equality(deviation, sum(ratio_counts[(month, route, "medicine")]) - MEDICINE_PER_NEUROLOGY * sum(ratio_counts[(month, route, "neuro")]))
             ratio_deviations.append(deviation)
-    # The ratio sum is at most 2 * residents * months, so this is exactly
-    # lexicographic priority, not a guessed preference weight.
-    ratio_bound = 2 * len(selected) * len(prepared["planning_months"])
-    model.minimize(sum(distribution_deviations) * (ratio_bound + 1) + sum(ratio_deviations))
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = float(max_seconds)
-    solver.parameters.num_search_workers = 1
-    solver.parameters.random_seed = 0
-    status = solver.solve(model)
-    result.update(status=solver.status_name(status).lower(), wall_time_seconds=solver.wall_time,
+    singletons = {}
+    for key, values in occupancy.items():
+        flag = model.new_bool_var(f"singleton_{key}")
+        model.add(sum(values) == 1).only_enforce_if(flag)
+        model.add(sum(values) != 1).only_enforce_if(flag.Not())
+        singletons[key] = flag
+    inpatient_size = sum(any(any(o and o["requirement_id"] == inpatient_id for o in c["schedule"])
+                             for c in choices) for choices in candidates)
+    eligible_sites = sorted({o["institution"] for o in options
+                             if o["requirement_id"] == inpatient_id and o["capacity"] != 0})
+    inpatient_targets = _inpatient_targets(inpatient_size, eligible_sites)
+    inpatient_deviations = []
+    for site, target in inpatient_targets.items():
+        deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
+        model.add_abs_equality(deviation, sum(inpatient_counts[site]) - target)
+        inpatient_deviations.append(deviation)
+    objectives = list(zip(SOFT_PRIORITIES, (
+        sum(distribution_deviations), sum(ratio_deviations), sum(singletons.values()),
+        sum(inpatient_deviations), sum(destination_penalties), sum(cluster_penalties),
+    )))
+    solver, status, stages, elapsed = _solve_priorities(
+        model, objectives, [v for choices in variables for v in choices], max_seconds)
+    result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": targets,
+                                "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
                                 "smaller_cohort_policy": "largest_remainder_12_9_3_except_23_is_12_9_2"})
-    if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
+    if solver is None:
         return result
     actual_routes = Counter()
     ratios = []
@@ -208,12 +305,28 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
                                     "carryforward": [{"requirement_id": requirement, "institution": institution, "months": months}
                                                      for (requirement, institution), months in choice["carryforward"].items()]})
     for month in range(len(prepared["planning_months"])):
-        for route in ROUTES[:2]:
+        for route in PAIRED_ROUTES:
             medicine = sum(solver.boolean_value(v) for v in ratio_counts[(month, route, "medicine")])
             neuro = sum(solver.boolean_value(v) for v in ratio_counts[(month, route, "neuro")])
             ratios.append({"month": prepared["planning_months"][month]["month"], "route": route,
-                           "medicine": medicine, "neurology": neuro, "deviation": abs(medicine - 2 * neuro)})
+                           "medicine": medicine, "neurology": neuro, "deviation": abs(medicine - MEDICINE_PER_NEUROLOGY * neuro)})
     result["soft_results"] = {"route_counts": {route: actual_routes[route] for route in ROUTES},
                               "distribution_deviation": sum(solver.value(d) for d in distribution_deviations),
-                              "monthly_ratios": ratios, "ratio_deviation": sum(item["deviation"] for item in ratios)}
+                              "monthly_ratios": ratios, "ratio_deviation": sum(item["deviation"] for item in ratios),
+                              "inpatient_counts": {site: sum(solver.value(v) for v in values)
+                                                   for site, values in inpatient_counts.items()},
+                              "inpatient_deviation": solver.value(sum(inpatient_deviations)),
+                              "destination_deviation": solver.value(sum(destination_penalties)),
+                              "missing_clusters": solver.value(sum(cluster_penalties))}
+    result["singletons"] = [
+        {"month": prepared["planning_months"][month]["month"],
+         "requirement_id": requirement, "institution": institution,
+         "label": by_key[(requirement, institution)]["label"],
+         "resident_source": deepcopy(person["source"])}
+        for (month, requirement, institution), flag in singletons.items() if solver.value(flag)
+        for person in result["residents"]
+        if person["months"][month]["target"] is not None
+        and (person["months"][month]["target"]["requirement_id"],
+             person["months"][month]["target"]["institution"]) == (requirement, institution)]
+    result["soft_results"]["singleton_months"] = len(result["singletons"])
     return result
