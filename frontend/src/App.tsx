@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Skeleton from './components/Skeleton'
+import ScrollToTop from './components/ScrollToTop'
+import { scrollToPosition } from './lib/scroll'
 import ResidentRequirements from './components/ResidentRequirements'
 import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
@@ -20,33 +22,8 @@ const linked = sameSource
 
 function revealElement(target: HTMLElement) {
   const rect = target.getBoundingClientRect()
-  const start = window.scrollY
   const offset = rect.height > window.innerHeight - 32 ? 16 : (window.innerHeight - rect.height) / 2
-  const end = Math.max(0, Math.min(start + rect.top - offset, document.documentElement.scrollHeight - window.innerHeight))
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    window.scrollTo({ top: end, behavior: 'instant' })
-    return
-  }
-  const started = performance.now()
-  let frame = 0
-  const cancel = () => {
-    cancelAnimationFrame(frame)
-    window.removeEventListener('wheel', cancel)
-    window.removeEventListener('touchstart', cancel)
-    window.removeEventListener('keydown', cancel)
-  }
-  const animate = (now: number) => {
-    const progress = Math.min((now - started) / 700, 1)
-    const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
-    window.scrollTo({ top: start + (end - start) * eased, behavior: 'instant' })
-    if (progress < 1) frame = requestAnimationFrame(animate)
-    else cancel()
-  }
-  window.addEventListener('wheel', cancel, { passive: true })
-  window.addEventListener('touchstart', cancel, { passive: true })
-  window.addEventListener('keydown', cancel)
-  frame = requestAnimationFrame(animate)
-  return cancel
+  return scrollToPosition(window.scrollY + rect.top - offset)
 }
 
 function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Resident; workbook: Workbook; onHistoryReview: () => void }) {
@@ -234,5 +211,6 @@ export default function App() {
         {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
     </main>
+    {workbook && !busy && ['Residents', 'Requests', 'Postings'].includes(view) && <ScrollToTop key={view} />}
   </>
 }
