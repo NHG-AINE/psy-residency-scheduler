@@ -1,12 +1,15 @@
 import { sameSource, sourceLabel, monthLabel } from './workbook.ts'
 import type { Resident, Source, Workbook } from './workbook.ts'
+import { reasonLabel, resolvedCatalogueTarget } from './history-review.ts'
+import { postingHistoryEntry } from './posting-blocks.ts'
+import type { HistoryEntry } from './history-review.ts'
 import type { ReviewStore } from './history-review.ts'
 
 export type DraftSchedule = {
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
-  residents: { source: Source; name: string | null; mcr: string | null
+  residents: { source: Source; name: string | null; mcr: string | null; route?: string
     months: { month: string; status: 'posting' | 'loa' | 'outside_r1_scope'; label: string | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
@@ -38,6 +41,35 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
       ? { ...posting, value: month.label, status: 'posting', draft: true } : posting
   })
+}
+
+// Display order only: recorded year first, then route within the R1 cohort.
+export function groupDraftResidents(residents: Resident[], draft: DraftSchedule | null, entries?: HistoryEntry[]): Resident[] {
+  const successfulDraft = draft && ['optimal', 'feasible'].includes(draft.status) ? draft : null
+  if (!successfulDraft && !entries) return residents
+  const routes = ['SGH', 'TTSH/NNI', 'NUH']
+  return residents.map((resident) => {
+    const years = [...new Set(Array.from((resident.residency_year || '').matchAll(/r\s*([1-5])\b/gi), (match) => match[1]))].sort().join(',') || 'unknown'
+    const route = successfulDraft?.residents.find((person) => sameSource(person.source, resident.source))?.route
+    const rank = routes.indexOf(route || '')
+    const reasons = entries ? draftPostings(resident, successfulDraft).flatMap((posting) => {
+      if (posting.status !== 'posting' || posting.draft) return []
+      const entry = postingHistoryEntry(posting, entries)
+      if (entry && resolvedCatalogueTarget(entry.review)) return []
+      const codes = entry ? (entry.review.reasons.length ? entry.review.reasons : entry.match.reasons) : []
+      return codes.length ? codes.map(reasonLabel) : ['No exact catalogue label']
+    }) : []
+    const unresolved = [...new Set(reasons)].sort((a, b) => a.localeCompare(b)).join('; ')
+    return { resident, years, unresolved, rank: years === '1' && rank >= 0 ? rank : routes.length }
+  }).sort((a, b) => {
+    if (!!a.unresolved !== !!b.unresolved) return a.unresolved ? 1 : -1
+    if (a.unresolved) return a.unresolved.localeCompare(b.unresolved)
+    if (a.years === b.years) return a.rank - b.rank
+    if (a.years === 'unknown') return 1
+    if (b.years === 'unknown') return -1
+    return a.years > b.years ? -1 : 1
+  })
+    .map((item) => item.resident)
 }
 
 export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): number {

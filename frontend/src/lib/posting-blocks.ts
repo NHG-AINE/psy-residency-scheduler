@@ -24,17 +24,21 @@ export function groupPostings(postings: Resident['postings']): PostingBlock[] {
 export type PostingLabelMode = 'original' | 'catalogue'
 export const DEFAULT_POSTING_LABEL_MODE: PostingLabelMode = 'catalogue'
 
+export function postingHistoryEntry(posting: Resident['postings'][number], entries: HistoryEntry[]) {
+  return entries.find((candidate) => candidate.months.some((month, index) => {
+      const source = candidate.sources[index]
+      return month.month === posting.month && month.value === posting.value
+        && source?.sheet === posting.source.sheet && source.row === posting.source.row && source.column === posting.source.column
+    }))
+}
+
 export function postingDisplay(block: PostingBlock, mode: PostingLabelMode = DEFAULT_POSTING_LABEL_MODE, entries: HistoryEntry[] = []) {
   const status = block[0].status
   const original = status === 'loa' ? 'LOA' : status === 'blank' ? 'Unallocated' : block[0].value || 'Unallocated'
   if (block.every((posting) => posting.draft)) return { label: original, canonical: true, markers: [] as string[] }
   if (mode === 'original' || status !== 'posting') return { label: original, canonical: false, markers: [] as string[] }
   const targets = block.map((posting) => {
-    const entry = entries.find((candidate) => candidate.months.some((month, index) => {
-      const source = candidate.sources[index]
-      return month.month === posting.month && month.value === posting.value
-        && source?.sheet === posting.source.sheet && source.row === posting.source.row && source.column === posting.source.column
-    }))
+    const entry = postingHistoryEntry(posting, entries)
     return entry ? resolvedCatalogueTarget(entry.review) : null
   })
   const target = targets[0]

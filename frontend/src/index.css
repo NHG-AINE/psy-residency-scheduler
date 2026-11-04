@@ -295,7 +295,6 @@
 @layer components {
   .draft-actions { @apply ml-auto flex items-center gap-3; }
   .draft-generate { min-width: 10rem; }
-  .draft-badge { @apply font-medium text-ink; }
   .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
   .draft-feedback:not(:empty), .draft-error { @apply mt-3 mb-4; }
   .draft-feedback ul { @apply mt-2 list-disc pl-5; }
