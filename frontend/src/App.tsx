@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
-import { draftBlockerLabel, draftPostings } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, groupDraftResidents } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import ScrollToTop from './components/ScrollToTop'
 import { scrollToPosition } from './lib/scroll'
@@ -123,7 +123,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
   const range = (block: PostingBlock) => block.length === 1 ? monthLabel(block[0].month) : `${monthLabel(block[0].month)} – ${monthLabel(block[block.length - 1].month)}`
   return <>
-    <div className="timetable-toolbar"><div className="year-navigation" role="group" aria-label="Timetable planning year"><button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button><span className="year-range">Jul {year} - Jun {year + 1}</span><button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button>{hasDraft && <span className="badge draft-badge">Draft</span>}</div><ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-dot legend-${kind}`} />{label}</li>)}</ul></div>
+    <div className="timetable-toolbar"><div className="year-navigation" role="group" aria-label="Timetable planning year"><button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button><span className="year-range">Jul {year} - Jun {year + 1}</span><button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button></div><ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-dot legend-${kind}`} />{label}</li>)}</ul></div>
     <div className="draft-feedback" aria-live="polite" role="status">
       {draft && !generating && !hasDraft && <><p>{draft.status === 'blocked' ? 'Draft blocked. Resolve the input issues below, then generate again.' : draft.status === 'infeasible' ? 'No feasible R1 draft meets the current constraints. Review availability and posting capacities.' : draft.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>{draft.blockers.length > 0 && <ul>{draft.blockers.map((blocker, index) => <li key={index}>{draftBlockerLabel(blocker, workbook)}</li>)}</ul>}</>}
     </div>
@@ -134,7 +134,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       <caption className="sr-only">{hasDraft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
-      <tbody>{residents.map((resident, index) => <tr key={index}>
+      <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident, index) => <tr key={index}>
         <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small></th>
         {groupPostings(draftPostings(resident, draft)).map((block) => {
           const status = block[0].status
