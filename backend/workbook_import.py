@@ -236,9 +236,49 @@ def review_import(result, yearly_sheets=None):
                        "records": [{"name": r.get("name"), "mcr": r.get("mcr"), "source": r["source"]}
                                    for r in records]})
 
+    # Placeholders are local to one explicitly recorded intake, never identities
+    # for linking history or requests. Missing/unclear intake remains unsafe.
+    placeholder_sources = set()
+    for sheet in sheets or []:
+        placeholders = defaultdict(list)
+        for record in sheet["residents"]:
+            record["is_intake_placeholder"] = bool(
+                not key(record) and normalized_label(record.get("residency_year")) == "r1"
+                and (record.get("intake") or "").strip() == str(sheet["year"])
+                and re.fullmatch(r"resident [1-9][0-9]*", name(record)))
+            if record["is_intake_placeholder"]:
+                placeholder_sources.add((record["source"]["sheet"], record["source"]["row"]))
+                placeholders[name(record)].append(record)
+        for repeated in placeholders.values():
+            if len(repeated) > 1:
+                issue("duplicate_intake_placeholder", "Duplicate intake placeholder",
+                      "This placeholder number appears more than once in the same annual worksheet.", repeated)
+
+    if result.get("months"):
+        intake_year = int(result["months"][0]["month"][:4])
+        cohort = []
+        for record in result["residents"]:
+            if normalized_label(record.get("residency_year")) != "r1":
+                continue
+            intake = (record.get("intake") or "").strip()
+            if not re.fullmatch(r"[0-9]{4}", intake) or int(intake) > intake_year:
+                issue("unclear_intake", "Incoming R1 intake needs review",
+                      "Confirm one four-digit intake year no later than the planning year to determine whether this R1 row belongs to the planning intake.", [record])
+            elif intake == str(intake_year):
+                cohort.append(record)
+        placeholder_count = sum(record.get("is_intake_placeholder", False) for record in cohort)
+        result["incoming_intake"] = {
+            "year": intake_year, "expected_size": 24, "total_count": len(cohort),
+            "named_count": sum(bool(name(record)) and not record.get("is_intake_placeholder", False) for record in cohort),
+            "placeholder_count": placeholder_count,
+            "resident_sources": [record["source"] for record in cohort]}
+        if len(cohort) > 24:
+            issue("excess_intake", "Incoming R1 intake exceeds 24",
+                  f"{len(cohort)} rows belong to the {intake_year} intake, including {placeholder_count} placeholders. Review duplicates or excess rows; none were removed.", cohort)
+
     for record in identities:
         mcr, resident_name = key(record), name(record)
-        if not mcr:
+        if not mcr and (record["source"]["sheet"], record["source"]["row"]) not in placeholder_sources:
             issue("missing_mcr", "Missing MCR", "This row cannot be matched by MCR.", [record])
         if not resident_name:
             issue("missing_name", "Missing resident name", "Confirm this row's identity in the workbook.", [record])

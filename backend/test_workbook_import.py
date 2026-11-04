@@ -327,6 +327,75 @@ class WorkbookImportTests(unittest.TestCase):
             self.assertEqual(client.post("/api/import", data={"target_year": "bad"}, files={"file": ("example.xlsx", workbook_bytes())}).status_code, 422)
 
 
+class IncomingIntakeTests(unittest.TestCase):
+    def parse(self, rows, history_placeholder=False):
+        def edit(w):
+            sheet = w["Jul 2027 - Jun 2028"]
+            sheet.title = "Jul planning"  # The month headings, not the title, define intake.
+            sheet["C2"] = "Residency Intake"
+            for row, (name, mcr, year, intake) in enumerate(rows, 3):
+                for column, value in zip((4, 5, 6, 3), (name, mcr, year, intake)):
+                    sheet.cell(row, column).value = value
+            if history_placeholder:
+                history = w["Jul 2026 - Jun 2027"]
+                history["A3"] = "Residency Intake"
+                history["A4"], history["B4"], history["C4"], history["D4"] = 2026, "Resident 1", None, "R1"
+        return parse_workbook(workbook_bytes(edit))
+
+    def test_named_residents_and_existing_placeholders_share_the_intake_count(self):
+        for named in (0, 1, 2):
+            with self.subTest(named=named):
+                rows = [(f"Named {n}", f"M{n}", "R1", 2027) for n in range(named)]
+                rows += [(f"Resident {n}", None, " r1 ", " 2027 ") for n in range(1, 25 - named)]
+                result = self.parse(rows, history_placeholder=True)
+                summary = result["incoming_intake"]
+                self.assertEqual((summary["year"], summary["total_count"], summary["named_count"], summary["placeholder_count"]),
+                                 (2027, 24, named, 24 - named))
+                self.assertEqual(len(summary["resident_sources"]), 24)
+                self.assertFalse(any(i["code"] == "missing_mcr" for i in result["issues"]))
+                placeholders = [r for r in result["residents"] if r["is_intake_placeholder"]]
+                self.assertTrue(all(r["match_status"] == "unmatched" and r["matched_resident_source"] is None for r in placeholders))
+                history = result["histories"][0]["residents"][0]
+                self.assertTrue(history["is_intake_placeholder"])
+                self.assertEqual(history["match_status"], "unmatched")
+                self.assertIsNone(history["matched_resident_source"])
+
+    def test_continuing_mixed_and_unclear_intakes_are_not_assumed_incoming(self):
+        rows = [("Named", "M1", "R1", 2027), ("Continuing", "M2", "R1", 2026),
+                ("Mixed", "M3", "R1,R2", 2027), ("Missing", "M4", "R1", None),
+                ("Conflicting", "M5", "R1", "2026/2027"), ("Malformed", "M6", "R1", "AY2027"), ("Future", "M7", "R1", 2028)]
+        result = self.parse(rows)
+        self.assertEqual(result["incoming_intake"]["total_count"], 1)
+        unclear = [i for i in result["issues"] if i["code"] == "unclear_intake"]
+        self.assertEqual([i["source"]["row"] for i in unclear], [6, 7, 8, 9])
+        self.assertEqual(len(result["residents"]), len(rows))
+
+    def test_ordinary_missing_mcr_and_unrecognized_placeholders_remain_unsafe(self):
+        rows = [("Named", None, "R1", 2027), ("Resident 0", None, "R1", 2027),
+                ("Resident 1", None, "R1,R2", 2027), ("Resident 2", None, "R1", None),
+                ("Resident 3", None, "R1", 2026)]
+        result = self.parse(rows)
+        self.assertEqual(len([i for i in result["issues"] if i["code"] == "missing_mcr"]), 5)
+        self.assertTrue(all(not r["is_intake_placeholder"] and r["match_status"] != "matched" for r in result["residents"]))
+
+    def test_duplicates_and_excess_are_reported_without_removing_rows(self):
+        rows = [(f"Resident {n}", None, "R1", 2027) for n in range(1, 25)]
+        rows += [("Named", "M1", "R1", 2027)]
+        boundary = self.parse(rows)
+        self.assertEqual(boundary["incoming_intake"]["total_count"], 25)
+        self.assertIn("excess_intake", {i["code"] for i in boundary["issues"]})
+        rows += [(" resident  1 ", None, "R1", 2027),
+                 ("Named", "M1", "R1", 2027), ("Resident 25", None, "R1", 2027)]
+        result = self.parse(rows)
+        self.assertEqual(result["incoming_intake"]["placeholder_count"], 26)
+        self.assertEqual(result["incoming_intake"]["total_count"], 28)
+        self.assertEqual(len(result["residents"]), 28)
+        self.assertTrue({"duplicate_intake_placeholder", "duplicate_mcr", "excess_intake"} <= {i["code"] for i in result["issues"]})
+        duplicate = next(i for i in result["issues"] if i["code"] == "duplicate_intake_placeholder")
+        self.assertEqual([r["source"]["row"] for r in duplicate["records"]], [3, 28])
+        self.assertTrue(all(r["match_status"] == "ambiguous" for r in result["residents"] if r["mcr"] == "M1"))
+
+
 class HistoricalPostingMatchTests(unittest.TestCase):
     def catalogue(self):
         core = [{"posting": label, "residency_year": year,

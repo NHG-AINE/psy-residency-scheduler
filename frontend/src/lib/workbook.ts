@@ -4,6 +4,7 @@ export type Resident = {
   name: string | null; mcr: string | null; residency_year: string | null
   intake: string | null; mom_number: string | null; email: string | null
   remarks: string | null; source: Source
+  is_intake_placeholder?: boolean
   match_status?: 'matched' | 'unmatched' | 'ambiguous'; matched_resident_source?: Source | null
   postings: { month: string; value: string | null; status: 'posting' | 'loa' | 'blank'; source: Source }[]
 }
@@ -24,6 +25,8 @@ export type Workbook = {
   target_sheet: string | null; months: Month[]; residents: Resident[]
   histories: AnnualSheet[]
   annual_sheets?: AnnualSheet[]
+  incoming_intake?: { year: number; expected_size: number; total_count: number
+    named_count: number; placeholder_count: number; resident_sources: Source[] }
   requests: Request[]
   postings: {
     core: { residency_year: string | null; posting: string | null; duration_months: string | null; max: string | null; remarks: string | null; source: Source }[]
