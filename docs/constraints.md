@@ -30,6 +30,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   one posting in NHG, SHS and NUHS by the end of R4. Count recognised posting
   history towards this cumulative requirement. See [cross-cluster.md](cross-cluster.md)
   for the institution mapping and examples.
+- **Do R4 Inpatient Psychiatry outside IMH after completing it at IMH in R1.**
+  If a resident completed R1 Inpatient Psychiatry at IMH, their R4 Inpatient
+  Psychiatry must be at TTSH, CGH, SGH or NUH. Determine the R1 posting from
+  recognised historical evidence.
 
 ## Soft constraints
 
@@ -45,16 +49,45 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   and 4 in NNI Neurology, and 6 in SGH General Medicine and 3 in SGH Neurology
   for the usual intake. Adjust the split for LOA or a smaller cohort; it is not
   an exact mandatory ratio. The NUH combined route is excluded from this split.
-- **Prefer postings in clusters not yet visited.** Use future assignments to
-  work towards the R1-R4 cross-cluster requirement. This does not prohibit a
-  repeat cluster before R4. See [cross-cluster.md](cross-cluster.md).
+- **Increase cluster-exposure priority as R4 completion approaches.** Treat
+  new exposure as a low-priority preference in R1-R2. In R3, prioritise missing
+  clusters over institution distribution targets. Secure exposure earlier if
+  no suitable later posting remains; completion by the end of R4 is mandatory.
+  Repeat clusters remain allowed while completion is still feasible. See
+  [cross-cluster.md](cross-cluster.md) for the urgency and review rules.
 - **Aim to post at least two residents together in the same month.** Prefer
   groups of two or more in the same posting at the same institution; groups
   need not have an even number. A lone resident
   is allowed when the preference cannot be met, including an odd-number
   allocation, but the system should highlight that singleton assignment.
-- **Prefer a larger allocation to IMH.** When a posting is offered at IMH
-  and other institutions, aim to allocate more residents to IMH than to each
-  other institution individually, not necessarily more than all others combined.
-  No fixed number or percentage is prescribed. Allow exceptions for capacity
-  limits, cross-cluster requirements, LOA, resident requests and peer grouping.
+- **Spread placements across institutions using a weighted IMH target.**
+  When a posting is offered at IMH and other eligible institutions, give IMH
+  two allocation shares and each other institution one share. For N residents
+  needing that posting and K eligible institutions including IMH, target
+  `floor(N / (K + 1))` residents at each non-IMH institution and assign the
+  remainder, `N - (K - 1) * floor(N / (K + 1))`, to IMH.
+  For five institutions, 24 residents gives IMH 8 and four at each other site;
+  22 residents gives IMH 10 and three at each other site.
+  These are soft draft targets, not mandatory quotas or a fixed percentage.
+  Allow deviations for capacity limits, cross-cluster requirements, LOA,
+  resident requests and peer grouping. Small cohorts need not populate every
+  institution. Apply the formula to the residents needing the posting, not
+  automatically to the full intake, and choose assignments together rather
+  than filling IMH first.
+
+## R1 draft preference priority
+
+Apply the following soft preferences in order, while satisfying all hard
+constraints. A lower-priority improvement must not worsen a higher-priority
+score; compare scores in order rather than adding them into a total.
+
+1. Usual R1 route distribution.
+2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
+3. Avoid singleton months for the same posting and institution.
+4. Weighted IMH institution allocation target.
+5. Preferred route-to-inpatient destination, as described in
+   [cross-cluster.md](cross-cluster.md).
+6. Additional cluster exposure as a tie-breaker.
+
+This order applies to the R1 draft. It does not set the priority of resident
+requests or replace the stronger cluster urgency for later R-years.

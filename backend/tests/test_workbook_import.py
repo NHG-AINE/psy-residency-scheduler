@@ -342,20 +342,22 @@ class IncomingIntakeTests(unittest.TestCase):
                 history["A4"], history["B4"], history["C4"], history["D4"] = 2026, "Resident 1", None, "R1"
         return parse_workbook(workbook_bytes(edit))
 
-    def test_vacancies_fill_to_24_without_changing_source_history(self):
-        for named, existing, generated in ((0, 0, 24), (1, 0, 23), (2, 10, 12)):
-            with self.subTest(named=named, existing=existing):
+    def test_intake_uses_only_workbook_rows_without_topping_up(self):
+        for named, last_slot in ((1, 24), (2, 15), (1, 23), (1, 1)):
+            with self.subTest(named=named, total=last_slot):
                 rows = [(f"Named {n}", f"M{n}", "R1", 2027) for n in range(named)]
-                rows += [(f"Resident {n}", None, "R1", 2027) for n in range(2, existing + 2)]
+                rows += [(f"Resident {n}", None, "R1", 2027) for n in range(named + 1, last_slot + 1)]
+                rows += [("Continuing", "OLD", "R1,R2", 2026)]
                 result = self.parse(rows)
-                app = [r for r in result["residents"] if r["source"].get("kind")]
-                self.assertEqual(len(app), generated)
-                self.assertEqual(result["incoming_intake"]["generated_count"], generated)
-                self.assertEqual(len({r["slot_id"] for r in result["residents"] if r.get("slot_id")}), existing + generated)
-                self.assertTrue(all(len(r["postings"]) == 12 and all(p["status"] == "blank" for p in r["postings"]) for r in app))
-                self.assertTrue(all("row" not in r["source"] and "sheet" not in r["source"] for r in app))
+                self.assertEqual(result["incoming_intake"]["total_count"], last_slot)
+                self.assertEqual(len(result["residents"]), len(rows))
+                self.assertEqual([r["name"] for r in result["residents"]], [r[0] for r in rows])
+                self.assertFalse(any(r["source"].get("kind") for r in result["residents"]))
                 self.assertFalse(any(r.get("slot_id") for sheet in result["annual_sheets"] for r in sheet["residents"]))
-                self.assertFalse(any(r["source"].get("kind") for sheet in result["annual_sheets"] for r in sheet["residents"]))
+        for rows in ([("Continuing", "OLD", "R1,R2", 2026)], []):
+            result = self.parse(rows)
+            self.assertEqual(result["incoming_intake"]["total_count"], 0)
+            self.assertFalse(any(r.get("is_intake_placeholder") for r in result["residents"]))
 
     def test_slot_ids_survive_reupload_reordering_and_planning_year_switch(self):
         rows = [("Named", "M1", "R1", 2027), ("Resident 2", None, "R1", 2027), ("Resident 9", None, "R1", 2027)]
@@ -367,30 +369,17 @@ class IncomingIntakeTests(unittest.TestCase):
         def edit_previous(w):
             sheet = w["Jul 2026 - Jun 2027"]
             sheet["A3"] = "Residency Intake"
-            sheet["A4"], sheet["B4"], sheet["C4"], sheet["D4"] = 2026, "Incoming 2026", "M2026", "R1"
+            sheet["A4"], sheet["B4"], sheet["C4"], sheet["D4"] = 2026, "Resident 2", None, "R1"
         content = workbook_bytes(edit_previous)
         other = parse_workbook(content, 2026)
         other_slots = {r["slot_id"] for r in other["residents"] if r.get("slot_id")}
-        self.assertEqual(len(other_slots), 23)
+        self.assertEqual(other_slots, {"intake-2026-slot-02"})
         self.assertTrue(all(slot.startswith("intake-2026-") for slot in other_slots))
         self.assertFalse(other_slots & set(baseline.values()))
         parse_workbook(content, 2027)
         self.assertEqual(other_slots, {r["slot_id"] for r in parse_workbook(content, 2026)["residents"] if r.get("slot_id")})
         self.assertEqual(baseline, slots(self.parse(rows)))
         self.assertEqual(baseline["Resident 2"], "intake-2027-slot-02")
-
-    def test_ambiguous_cohort_blocks_filling_instead_of_confirming_unsafe_rows(self):
-        cases = [[("Missing MCR", None, "R1", 2027)],
-                 [("Resident 1", None, "R1", 2027)] * 2,
-                 [("Unclear", "M1", "R1", None)],
-                 [("Alex", "M1", "R1", 2027), ("Other", "M1", "R2", 2026)]]
-        for rows in cases:
-            with self.subTest(rows=rows):
-                result = self.parse(rows)
-                self.assertTrue(result["incoming_intake"]["fill_blocked"])
-                self.assertEqual(result["incoming_intake"]["generated_count"], 0)
-                self.assertEqual(len(result["residents"]), len(rows))
-                self.assertIn("intake_fill_blocked", {i["code"] for i in result["issues"]})
 
     def test_named_residents_and_existing_placeholders_share_the_intake_count(self):
         for named in (0, 1, 2):

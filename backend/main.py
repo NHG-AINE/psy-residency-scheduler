@@ -4,12 +4,12 @@ from typing import Literal
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
-    from .r1_solver import draft_r1_schedule
+    from .scheduler import draft_schedule
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 else:
-    from r1_solver import draft_r1_schedule
+    from scheduler import draft_schedule
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
@@ -68,6 +68,6 @@ async def requirement_ledger(request: RequirementLedgerRequest):
 @app.post("/api/draft-r1")
 async def generate_draft(request: RequirementLedgerRequest):
     try:
-        return await run_in_threadpool(draft_r1_schedule, request.workbook, request.store)
+        return await run_in_threadpool(draft_schedule, request.workbook, request.store)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The draft inputs are incomplete. Re-import the workbook for the selected planning year and review saved decisions.") from exc
