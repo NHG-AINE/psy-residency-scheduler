@@ -26,6 +26,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   Pair TTSH General Medicine with NNI Neurology, and SGH General Medicine with
   SGH Neurology. Do not mix these pairings for a resident. The six-month NUH
   Medicine & Neurology posting is a separate combined route.
+- **Visit all three clusters during R1-R4.** Each resident must have at least
+  one posting in NHG, SHS and NUHS by the end of R4. Count recognised posting
+  history towards this cumulative requirement. See [cross-cluster.md](cross-cluster.md)
+  for the institution mapping and examples.
 
 ## Soft constraints
 
@@ -41,3 +45,16 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   and 4 in NNI Neurology, and 6 in SGH General Medicine and 3 in SGH Neurology
   for the usual intake. Adjust the split for LOA or a smaller cohort; it is not
   an exact mandatory ratio. The NUH combined route is excluded from this split.
+- **Prefer postings in clusters not yet visited.** Use future assignments to
+  work towards the R1-R4 cross-cluster requirement. This does not prohibit a
+  repeat cluster before R4. See [cross-cluster.md](cross-cluster.md).
+- **Aim to post at least two residents together in the same month.** Prefer
+  groups of two or more in the same posting at the same institution; groups
+  need not have an even number. A lone resident
+  is allowed when the preference cannot be met, including an odd-number
+  allocation, but the system should highlight that singleton assignment.
+- **Prefer a larger allocation to IMH.** When a posting is offered at IMH
+  and other institutions, aim to allocate more residents to IMH than to each
+  other institution individually, not necessarily more than all others combined.
+  No fixed number or percentage is prescribed. Allow exceptions for capacity
+  limits, cross-cluster requirements, LOA, resident requests and peer grouping.
