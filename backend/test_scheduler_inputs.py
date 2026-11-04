@@ -27,8 +27,9 @@ class SchedulerInputsTests(unittest.TestCase):
     def test_composes_named_and_imported_slots_with_dynamic_period_and_full_ledger(self):
         workbook = planning_book([resident([("2026-05", "TTSH General Medicine")]),
                                   resident([("2026-06", "IMH Continuity Clinic")], "R3", "Clinic")], "2026-07")
-        imported = test_workbook_import.IncomingIntakeTests().parse([("Named Incoming", "NEW", "R1", 2027)])
-        # Reuse importer-produced vacancies, in their actual intake/planning year.
+        imported = test_workbook_import.IncomingIntakeTests().parse([("Named Incoming", "NEW", "R1", 2027)]
+            + [(f"Resident {n}", None, "R1", 2027) for n in range(2, 25)])
+        # Reuse explicit workbook placeholders in their actual intake/planning year.
         workbook["target_year"], workbook["months"] = 2027, imported["months"]
         workbook["residents"][0]["postings"] = resident([(m["month"], None) for m in workbook["months"]], sheet="Planning")["postings"]
         workbook["residents"].extend(imported["residents"])

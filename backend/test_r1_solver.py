@@ -17,7 +17,8 @@ STORE = ReviewStore(version=1, decisions=[])
 
 
 def r1_book(size=1):
-    workbook = test_workbook_import.IncomingIntakeTests().parse([("New Resident", "NEW", "R1", 2027)])
+    workbook = test_workbook_import.IncomingIntakeTests().parse([("New Resident", "NEW", "R1", 2027)]
+        + [(f"Resident {n}", None, "R1", 2027) for n in range(2, size + 1)])
     workbook["residents"] = workbook["residents"][:size]
     for person in workbook["residents"]:
         for month in person["postings"]:

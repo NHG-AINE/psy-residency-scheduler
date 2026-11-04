@@ -50,7 +50,7 @@ class RequirementLedgerTests(unittest.TestCase):
             r1 = [r for r in person["requirements"] if r["requirement_year"] == "R1"]
             self.assertEqual({r["remaining_months"] for r in r1}, {2, 4, 6})
             self.assertTrue(all(r["expected_months"] == 0 for r in r1))
-        self.assertEqual(len(result["residents"]), 24)
+        self.assertEqual(len(result["residents"]), 1)
         entries = evaluate_review(workbook, ReviewStore(version=1, decisions=[]), "timetable")["entries"]
         self.assertTrue(all("kind" not in source for entry in entries for source in entry["sources"]))
         self.assertEqual(workbook, original)

@@ -27,7 +27,7 @@ export type Workbook = {
   histories: AnnualSheet[]
   annual_sheets?: AnnualSheet[]
   incoming_intake?: { year: number; expected_size: number; total_count: number
-    named_count: number; placeholder_count: number; resident_sources: Source[]; generated_count?: number; fill_blocked?: boolean }
+    named_count: number; placeholder_count: number; resident_sources: Source[] }
   requests: Request[]
   postings: {
     core: { residency_year: string | null; posting: string | null; duration_months: string | null; max: string | null; remarks: string | null; source: Source }[]
