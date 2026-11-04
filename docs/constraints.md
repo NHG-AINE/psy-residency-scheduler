@@ -49,9 +49,12 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   and 4 in NNI Neurology, and 6 in SGH General Medicine and 3 in SGH Neurology
   for the usual intake. Adjust the split for LOA or a smaller cohort; it is not
   an exact mandatory ratio. The NUH combined route is excluded from this split.
-- **Prefer postings in clusters not yet visited.** Use future assignments to
-  work towards the R1-R4 cross-cluster requirement. This does not prohibit a
-  repeat cluster before R4. See [cross-cluster.md](cross-cluster.md).
+- **Increase cluster-exposure priority as R4 completion approaches.** Treat
+  new exposure as a low-priority preference in R1-R2. In R3, prioritise missing
+  clusters over institution distribution targets. Secure exposure earlier if
+  no suitable later posting remains; completion by the end of R4 is mandatory.
+  Repeat clusters remain allowed while completion is still feasible. See
+  [cross-cluster.md](cross-cluster.md) for the urgency and review rules.
 - **Aim to post at least two residents together in the same month.** Prefer
   groups of two or more in the same posting at the same institution; groups
   need not have an even number. A lone resident
@@ -71,3 +74,20 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   institution. Apply the formula to the residents needing the posting, not
   automatically to the full intake, and choose assignments together rather
   than filling IMH first.
+
+## R1 draft preference priority
+
+Apply the following soft preferences in order, while satisfying all hard
+constraints. A lower-priority improvement must not worsen a higher-priority
+score; compare scores in order rather than adding them into a total.
+
+1. Usual R1 route distribution.
+2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
+3. Avoid singleton months for the same posting and institution.
+4. Weighted IMH institution allocation target.
+5. Preferred route-to-inpatient destination, as described in
+   [cross-cluster.md](cross-cluster.md).
+6. Additional cluster exposure as a tie-breaker.
+
+This order applies to the R1 draft. It does not set the priority of resident
+requests or replace the stronger cluster urgency for later R-years.
