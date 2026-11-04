@@ -1,4 +1,3 @@
-import type { IntakeLinkState } from './intake-links'
 export type WorkbookSource = { sheet: string; row: number; column?: string; kind?: never; slot_id?: never }
 export type Source = WorkbookSource | { kind: 'intake_placeholder'; slot_id: string; sheet?: never; row?: never; column?: never }
 export type Month = { month: string; date_range_text: string | null; source: Source }
@@ -27,7 +26,6 @@ export type Workbook = {
   target_sheet: string | null; months: Month[]; residents: Resident[]
   histories: AnnualSheet[]
   annual_sheets?: AnnualSheet[]
-  intake_links?: IntakeLinkState[]
   incoming_intake?: { year: number; expected_size: number; total_count: number
     named_count: number; placeholder_count: number; resident_sources: Source[]; generated_count?: number; fill_blocked?: boolean }
   requests: Request[]

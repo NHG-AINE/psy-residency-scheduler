@@ -1,4 +1,3 @@
-import { sameSource } from './workbook.ts'
 import type { Resident } from './workbook'
 import type { HistoryEntry } from './history-review.ts'
 import { resolvedCatalogueTarget } from './history-review.ts'
@@ -33,7 +32,7 @@ export function postingDisplay(block: PostingBlock, mode: PostingLabelMode = DEF
     const entry = entries.find((candidate) => candidate.months.some((month, index) => {
       const source = candidate.sources[index]
       return month.month === posting.month && month.value === posting.value
-        && !!source && sameSource(source, posting.source) && source.column === posting.source.column
+        && source?.sheet === posting.source.sheet && source.row === posting.source.row && source.column === posting.source.column
     }))
     return entry ? resolvedCatalogueTarget(entry.review) : null
   })
