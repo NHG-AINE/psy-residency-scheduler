@@ -19,9 +19,14 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Follow DESIGN.md when changing the interface.
 - Read .agents/context/COMMIT_STYLE.md when proposing or writing commit messages.
 - Read docs/programme-structure.md for R1-R5 postings, institutions and durations.
-- Read docs/constraints.md before changing posting interpretation, resident
-  progression or scheduling logic.
-- Keep confirmed requirements distinct from implemented constraints.
+- Read docs/constraints.md to understand the hard and soft scheduling rules,
+  posting interpretation and resident progression when reviewing, planning or
+  implementing scheduling work.
+- Read docs/cross-cluster.md to understand institution-to-cluster mappings,
+  cross-cluster credit and exposure requirements when reviewing, planning or
+  implementing scheduling work.
+- Keep constraint documents focused on scheduling rules, not temporary
+  implementation-status notes. Check the code to determine current support.
 
 ## Implementation plans
 
