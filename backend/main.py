@@ -4,10 +4,12 @@ from typing import Literal
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
+    from .intake_links import IntakeLinkStore, apply_intake_links
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 else:
+    from intake_links import IntakeLinkStore, apply_intake_links
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
@@ -61,3 +63,16 @@ async def requirement_ledger(request: RequirementLedgerRequest):
         return await run_in_threadpool(build_requirement_ledger, request.workbook, request.store)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The workbook or planning period is incomplete. Import the workbook again for the selected planning year.") from exc
+
+
+class IntakeLinksRequest(BaseModel):
+    workbook: dict
+    store: IntakeLinkStore
+
+
+@app.post("/api/intake-links")
+async def intake_links(request: IntakeLinksRequest):
+    try:
+        return await run_in_threadpool(apply_intake_links, request.workbook, request.store)
+    except (KeyError, StopIteration, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(422, "The intake data is incomplete. Re-import the workbook before reviewing links.") from exc

@@ -5,6 +5,9 @@ import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
 import HistoricalPostingReview from './components/HistoricalPostingReview'
 import SearchField from './components/SearchField'
+import IncomingIntake from './components/IncomingIntake'
+import { applyIntakeLinks, emptyIntakeStore, readIntakeStore, writeIntakeStore } from './lib/intake-links'
+import type { IntakeLinkStore } from './lib/intake-links'
 import { importWorkbook, monthLabel, sameSource, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
@@ -137,6 +140,10 @@ export default function App() {
   const revealAfterUpload = useRef(false)
   const [file, setFile] = useState<File | null>(null)
   const [workbook, setWorkbook] = useState<Workbook | null>(null)
+  const [rawWorkbook, setRawWorkbook] = useState<Workbook | null>(null)
+  const [intakeStore, setIntakeStore] = useState<IntakeLinkStore>(emptyIntakeStore)
+  const [intakeError, setIntakeError] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
   const [year, setYear] = useState(2027)
   const [busy, setBusy] = useState(false)
   const [loadingHeight, setLoadingHeight] = useState<number>()
@@ -186,7 +193,11 @@ export default function App() {
     setLoadingHeight(review.current?.getBoundingClientRect().height)
     setBusy(true); setError(''); setStatus(`Reading ${nextFile.name}…`)
     try {
-      const result = await importWorkbook(nextFile, nextYear)
+      const imported = await importWorkbook(nextFile, nextYear)
+      let saved = emptyIntakeStore(), savedError = ''
+      try { saved = readIntakeStore(window.localStorage) } catch (problem) { savedError = problem instanceof Error ? problem.message : 'Browser storage is unavailable.' }
+      const result = await applyIntakeLinks(imported, saved)
+      setRawWorkbook(imported); setIntakeStore(saved); setIntakeError(savedError)
       revealAfterUpload.current = reveal
       if (reveal) setView('Timetable')
       setWorkbook(result); setFile(nextFile); setYear(result.target_year); setQuery('')
@@ -197,13 +208,22 @@ export default function App() {
     } finally { setBusy(false) }
   }
   function choose(files: File[]) {
-    if (busy || !files.length) return
+    if (busy || linkBusy || !files.length) return
     const problem = workbookError(files)
     if (problem) { setError(problem); return }
     void load(files[0], year, true)
   }
   function selectYear(nextYear: number) {
-    if (file && !busy) void load(file, nextYear)
+    if (file && !busy && !linkBusy) void load(file, nextYear)
+  }
+  async function saveIntakeLinks(next: IntakeLinkStore, discardUnreadable = false) {
+    if (!rawWorkbook || busy || linkBusy) throw new Error('Wait for the workbook to finish loading, then retry.')
+    setLinkBusy(true)
+    try {
+      const result = await applyIntakeLinks(rawWorkbook, next)
+      writeIntakeStore(window.localStorage, next, intakeStore, discardUnreadable)
+      setIntakeStore(next); setIntakeError(''); setWorkbook(result)
+    } finally { setLinkBusy(false) }
   }
   const years = [...new Set(workbook?.available_years.map((item) => item.year) || [year])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
@@ -215,14 +235,16 @@ export default function App() {
       <section className="workspace-panel" aria-labelledby="import-title">
         <div className="panel-heading"><h2 id="import-title">Workbook import</h2><span className="badge">Current session only</span></div>
         <div className={`workbook-chooser ${dragging ? 'is-dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false) }} onDrop={(event) => { event.preventDefault(); setDragging(false); choose(Array.from(event.dataTransfer.files)) }}>
-          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Review imported records before planning. Refreshing this page clears the import. Historical review decisions are saved separately in this browser.</p></div>
-          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={() => { setFile(null); setWorkbook(null); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
+          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Review imported records before planning. Refreshing this page clears the import. Historical review decisions and intake links are saved separately in this browser.</p></div>
+          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy || linkBusy} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy || linkBusy} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy || linkBusy} onClick={() => { setFile(null); setWorkbook(null); setRawWorkbook(null); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
         </div>
         <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
-        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
-        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
+        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy || linkBusy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
+        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy || linkBusy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy || linkBusy} onChange={setQuery} />{workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
+        {view === 'Residents' && workbook && <IncomingIntake workbook={workbook} store={intakeStore} storageError={intakeError} busy={busy || linkBusy} onSave={saveIntakeLinks} onIssues={() => setView('Issues')} />}
+        {intakeError && view !== 'Residents' && <p role="alert" className="error-message review-content">Saved intake links could not be read. Open Residents to review recovery options.</p>}
         {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
     </main>
