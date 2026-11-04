@@ -6,10 +6,12 @@ from math import isfinite
 from ortools.sat.python import cp_model
 
 if __package__:
+    from .cluster_coverage import cluster_coverage
     from .programme_requirements import PROGRAMME_REQUIREMENTS
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
+    from cluster_coverage import cluster_coverage
     from programme_requirements import PROGRAMME_REQUIREMENTS
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
@@ -195,6 +197,13 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source")}) if option else None})
         result["residents"].append({**deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
                                     "route": choice["route"], "months": months,
+                                    "cluster_coverage": {
+                                        "historical": deepcopy(person["cluster_coverage"]),
+                                        "projected": cluster_coverage(person["months"] + [
+                                            {"status": "expected", "requirement_year": option["residency_year"],
+                                             "institution": option["institution"]}
+                                            for option in choice["schedule"] if option is not None]),
+                                    },
                                     "credited_r1_months": choice["credited_r1_months"],
                                     "carryforward": [{"requirement_id": requirement, "institution": institution, "months": months}
                                                      for (requirement, institution), months in choice["carryforward"].items()]})

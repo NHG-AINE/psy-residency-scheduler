@@ -3,10 +3,12 @@ from collections import defaultdict
 from datetime import date
 
 if __package__:
+    from .cluster_coverage import cluster_coverage
     from .history_review import evaluate_review, mcr_key
     from .programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
     from .workbook_import import intake_slot_id, normalized_label, recorded_years
 else:
+    from cluster_coverage import cluster_coverage
     from history_review import evaluate_review, mcr_key
     from programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
     from workbook_import import intake_slot_id, normalized_label, recorded_years
@@ -112,6 +114,7 @@ def build_requirement_ledger(workbook, store):
                           "warnings": (["unsafe_identity"] if not identity_safe else [])
                           + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else []),
                           "months": months, "requirements": summaries, "r1_routes": routes,
+                          "cluster_coverage": cluster_coverage(months),
                           "historical_notes": _historical_notes(resident, months)
                           if identity_safe and identity not in unsafe_history else []})
     return {"planning_start": start, "cutoff": cutoff, "basis": "projected_expected_not_certified", "residents": residents}
