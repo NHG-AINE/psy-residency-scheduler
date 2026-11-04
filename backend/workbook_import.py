@@ -214,6 +214,56 @@ def match_posting(posting, residency_year, catalogue):
     return {"status": status, "reasons": reasons, "candidates": candidates, "selected_candidate": selected}
 
 
+def intake_slot_id(record, year):
+    """A vacancy number identifies a slot in one intake, never a person."""
+    number = re.fullmatch(r"resident ([1-9][0-9]*)", normalized_label(record.get("name")))
+    if (number and not normalized_label(record.get("mcr"))
+            and normalized_label(record.get("residency_year")) == "r1"
+            and (record.get("intake") or "").strip() == str(year)):
+        return f"intake-{year}-slot-{int(number[1]):02d}"
+    return None
+
+
+def fill_intake_vacancies(result):
+    summary = result.get("incoming_intake")
+    if summary is None:
+        return result
+    year = summary["year"]
+    # Copy planning rows; generated slots must never enter annual source history.
+    result["residents"] = [dict(r, slot_id=slot) if (slot := intake_slot_id(r, year)) else r
+                           for r in result["residents"]]
+    cohort_sources = summary["resident_sources"]
+    blockers = [issue for issue in result["issues"]
+                if issue["code"] == "unclear_intake" or (
+                    issue["code"] in {"missing_mcr", "missing_name", "duplicate_mcr", "conflicting_identity",
+                                      "duplicate_intake_placeholder", "excess_intake"}
+                    and any(record["source"] in cohort_sources for record in issue.get("records", [])))]
+    summary["generated_count"] = 0
+    summary["fill_blocked"] = bool(blockers)
+    if blockers:
+        result["issues"].append({"code": "intake_fill_blocked", "severity": "warning",
+            "title": "Incoming R1 vacancies were not filled",
+            "message": "Resolve the incoming intake or identity issues in the workbook and import it again before filling vacancies.",
+            "source": blockers[0]["source"]})
+        return result
+    used = {r["slot_id"] for r in result["residents"] if r.get("slot_id")}
+    number = 1
+    for _ in range(max(0, summary["expected_size"] - summary["total_count"])):
+        while (slot := f"intake-{year}-slot-{number:02d}") in used:
+            number += 1
+        ref = {"kind": "intake_placeholder", "slot_id": slot}
+        result["residents"].append({"name": f"Resident {number}", "mcr": None,
+            "residency_year": "R1", "intake": str(year), "mom_number": None, "email": None,
+            "remarks": None, "source": ref, "slot_id": slot, "is_intake_placeholder": True,
+            "match_status": "unmatched", "matched_resident_source": None,
+            "postings": [{"month": m["month"], "value": None, "status": "blank", "source": ref}
+                         for m in result["months"]]})
+        used.add(slot)
+        summary["generated_count"] += 1
+        number += 1
+    return result
+
+
 def review_import(result, yearly_sheets=None):
     """Link source records conservatively, retaining every raw value for review."""
     issues = []
@@ -391,11 +441,11 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
         rows = [{"source": source(postings, row[0].row),
                  "cells": {c.column_letter: text(c.value) for c in row if c.value is not None}}
                 for row in postings if any(c.value is not None for c in row)]
-        return review_import({"target_year": target_year, "target_sheet": target["sheet"],
+        return fill_intake_vacancies(review_import({"target_year": target_year, "target_sheet": target["sheet"],
                 "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
                 "months": target["months"], "residents": target["residents"],
                 "histories": [s for s in years if s["year"] < target_year], "annual_sheets": years, "requests": requests,
-                "postings": {"core": core, "electives": elective_catalogue(postings, posting_row, posting_columns), "rows": rows}, "warnings": []}, yearly_sheets=years)
+                "postings": {"core": core, "electives": elective_catalogue(postings, posting_row, posting_columns), "rows": rows}, "warnings": []}, yearly_sheets=years))
     finally:
         workbook.close()
 

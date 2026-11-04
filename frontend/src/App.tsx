@@ -5,7 +5,7 @@ import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
 import HistoricalPostingReview from './components/HistoricalPostingReview'
 import SearchField from './components/SearchField'
-import { importWorkbook, monthLabel, sourceLabel, workbookError } from './lib/workbook'
+import { importWorkbook, monthLabel, sameSource, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
 import { evaluateHistory, readReviewStore, STORAGE_KEY } from './lib/history-review'
@@ -16,7 +16,7 @@ type View = 'Timetable' | 'Residents' | 'Requests' | 'Postings' | 'History revie
 const views: View[] = ['Timetable', 'Residents', 'Requests', 'Postings', 'History review', 'Issues']
 const show = (value: string | null | undefined) => value || '—'
 const source = (value: Source) => <small className="source">{sourceLabel(value)}</small>
-const linked = (a: Source, b: Source | null | undefined) => a.sheet === b?.sheet && a.row === b?.row
+const linked = sameSource
 
 function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Resident; workbook: Workbook; onHistoryReview: () => void }) {
   const [tab, setTab] = useState('history')

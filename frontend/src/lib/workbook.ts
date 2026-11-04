@@ -1,10 +1,11 @@
-export type Source = { sheet: string; row: number; column?: string }
+export type WorkbookSource = { sheet: string; row: number; column?: string; kind?: never; slot_id?: never }
+export type Source = WorkbookSource | { kind: 'intake_placeholder'; slot_id: string; sheet?: never; row?: never; column?: never }
 export type Month = { month: string; date_range_text: string | null; source: Source }
 export type Resident = {
   name: string | null; mcr: string | null; residency_year: string | null
   intake: string | null; mom_number: string | null; email: string | null
   remarks: string | null; source: Source
-  is_intake_placeholder?: boolean
+  is_intake_placeholder?: boolean; slot_id?: string
   match_status?: 'matched' | 'unmatched' | 'ambiguous'; matched_resident_source?: Source | null
   postings: { month: string; value: string | null; status: 'posting' | 'loa' | 'blank'; source: Source }[]
 }
@@ -26,13 +27,13 @@ export type Workbook = {
   histories: AnnualSheet[]
   annual_sheets?: AnnualSheet[]
   incoming_intake?: { year: number; expected_size: number; total_count: number
-    named_count: number; placeholder_count: number; resident_sources: Source[] }
+    named_count: number; placeholder_count: number; resident_sources: Source[]; generated_count?: number; fill_blocked?: boolean }
   requests: Request[]
   postings: {
     core: { residency_year: string | null; posting: string | null; duration_months: string | null; max: string | null; remarks: string | null; source: Source }[]
     electives?: { residency_year: string; institution: string; elective: string
-      remarks: { text: string; source: Source }[]; source: Source
-      residency_year_source: Source; institution_source: Source }[]
+      remarks: { text: string; source: WorkbookSource }[]; source: WorkbookSource
+      residency_year_source: WorkbookSource; institution_source: WorkbookSource }[]
     rows: { source: Source; cells: Record<string, string | null> }[]
   }
   warnings: string[]
@@ -78,7 +79,14 @@ export async function importWorkbook(file: File, year: number): Promise<Workbook
   return result as Workbook
 }
 
+export function sameSource(a: Source, b: Source | null | undefined): boolean {
+  if (!b) return false
+  if (a.kind || b.kind) return a.kind === b.kind && a.slot_id === b.slot_id
+  return a.sheet === b.sheet && a.row === b.row
+}
+
 export function sourceLabel(source: Source): string {
+  if (source.kind === 'intake_placeholder') return `App placeholder - ${source.slot_id}`
   return `${source.sheet} · ${source.column ? `${source.column}${source.row}` : `row ${source.row}`}`
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Skeleton from './Skeleton'
-import { monthLabel, sourceLabel } from '../lib/workbook'
+import { monthLabel, sameSource, sourceLabel } from '../lib/workbook'
 import type { Resident, Workbook } from '../lib/workbook'
 import { readReviewStore, reasonLabel, STORAGE_KEY } from '../lib/history-review'
 import { evaluateRequirements, visibleRequirements } from '../lib/requirement-ledger'
@@ -73,7 +73,7 @@ export default function ResidentRequirements({ resident, workbook, onHistoryRevi
   }, [workbook, attempt])
   const data = loaded?.workbook === workbook && loaded.attempt === attempt ? loaded.data : null
   const error = failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
-  const selected = data?.residents.find((person) => person.source.sheet === resident.source.sheet && person.source.row === resident.source.row)
+  const selected = data?.residents.find((person) => sameSource(person.source, resident.source))
   return <div aria-busy={!data && !error}>
     {error ? <div role="alert"><p>{error}</p><button type="button" className="button button-secondary" onClick={() => setAttempt((value) => value + 1)}>Retry requirements</button></div>
       : !data ? <><span role="status" className="sr-only">Loading requirements</span><Skeleton variant="requirements" /></>

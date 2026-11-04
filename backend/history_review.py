@@ -108,6 +108,8 @@ def posting_entries(workbook, scope: Literal["history", "timetable"] = "history"
     annual = [{"residents": workbook["residents"]}] if scope == "timetable" else workbook.get("annual_sheets", workbook["histories"])
     for history in annual:
         for resident in history["residents"]:
+            if resident["source"].get("kind") == "intake_placeholder":
+                continue
             ref = resident["source"]
             safe = bool(mcr_key(resident.get("mcr")) and normalized_label(resident.get("name"))
                         and ("annual_sheets" in workbook or resident.get("match_status") != "ambiguous")
