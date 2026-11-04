@@ -21,6 +21,7 @@ export type HistoryEntry = {
   review: { status: string; reasons: string[]; target: CatalogueEntry | null; requirement_year: string | null }
 }
 export type HistoryReview = { entries: HistoryEntry[]; catalogue: CatalogueEntry[]; decisions: DecisionState[] }
+export const REVIEW_CHANGED = 'psy-review-changed'
 export const STORAGE_KEY = 'psy-history-review-v1'
 export const emptyStore = (): ReviewStore => ({ version: 1, decisions: [] })
 const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase()
@@ -100,6 +101,7 @@ export function writeReviewStore(storage: Pick<Storage, 'setItem'>, store: Revie
   try { storage.setItem(STORAGE_KEY, JSON.stringify(store)) } catch {
     throw new Error('The browser could not save review data. Storage may be full or disabled. The decision was not saved. Your previous decisions are unchanged. Retry from the review form when storage is available.')
   }
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(REVIEW_CHANGED))
 }
 
 export async function evaluateHistory(workbook: Workbook, store: ReviewStore, signal?: AbortSignal, scope: 'history' | 'timetable' = 'history'): Promise<HistoryReview> {
