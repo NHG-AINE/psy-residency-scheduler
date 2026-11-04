@@ -5,11 +5,11 @@ from datetime import date
 if __package__:
     from .history_review import evaluate_review, mcr_key
     from .programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
-    from .workbook_import import normalized_label, recorded_years
+    from .workbook_import import intake_slot_id, normalized_label, recorded_years
 else:
     from history_review import evaluate_review, mcr_key
     from programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
-    from workbook_import import normalized_label, recorded_years
+    from workbook_import import intake_slot_id, normalized_label, recorded_years
 
 
 BLOCKED_IDENTITIES = {"missing_mcr", "missing_name", "duplicate_mcr", "conflicting_identity"}
@@ -45,8 +45,15 @@ def build_requirement_ledger(workbook, store):
                for issue in workbook.get("issues", []) if issue.get("code") in BLOCKED_IDENTITIES
                for record in issue.get("records", [])}
 
+    placeholder_blocked = blocked | {
+        source_key(record.get("source", {}))[:2]
+        for issue in workbook.get("issues", [])
+        if issue.get("code") in {"duplicate_intake_placeholder", "unclear_intake", "excess_intake"}
+        for record in issue.get("records", [])}
+
     def safe(resident):
-        return bool(mcr_key(resident.get("mcr")) and normalized_label(resident.get("name"))
+        return bool(resident.get("source", {}).get("kind") != "intake_placeholder"
+                    and mcr_key(resident.get("mcr")) and normalized_label(resident.get("name"))
                     and source_key(resident.get("source", {}))[:2] not in blocked
                     and ("annual_sheets" in workbook or resident.get("match_status") != "ambiguous"))
 
@@ -81,9 +88,14 @@ def build_requirement_ledger(workbook, store):
     residents = []
     for resident in workbook.get("residents", []):
         identity = (mcr_key(resident.get("mcr")), normalized_label(resident.get("name")))
-        identity_safe = safe(resident)
+        slot = intake_slot_id(resident, int(start[:4]))
+        placeholder = bool(slot and resident.get("slot_id") == slot
+                           and source_key(resident["source"])[:2] not in placeholder_blocked
+                           and (resident["source"].get("kind") != "intake_placeholder"
+                                or resident["source"].get("slot_id") == slot))
+        identity_safe = safe(resident) or placeholder
         months = []
-        for month, values in sorted(raw[identity].items()) if identity_safe else []:
+        for month, values in sorted(raw[identity].items()) if identity_safe and not placeholder else []:
             outcomes = [outcome for _, outcome in values]
             outcome = outcomes[0] if all(item == outcomes[0] for item in outcomes) else {
                 "status": "pending", "reasons": ["conflicting_month_evidence"]}
@@ -95,10 +107,10 @@ def build_requirement_ledger(workbook, store):
                    else "partial" if any(by_id[key]["expected_months"] for key in route) else "not_evidenced"}
                   for route in R1_COMPLETION_ROUTES]
         residents.append({"name": resident.get("name"), "mcr": resident.get("mcr"),
-                          "recorded_year": resident.get("residency_year"), "source": resident["source"],
+                          "recorded_year": resident.get("residency_year"), "source": resident["source"], "slot_id": resident.get("slot_id"),
                           "identity_safe": identity_safe,
                           "warnings": (["unsafe_identity"] if not identity_safe else [])
-                          + (["unsafe_historical_identity_evidence_excluded"] if identity in unsafe_history else []),
+                          + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else []),
                           "months": months, "requirements": summaries, "r1_routes": routes})
     return {"planning_start": start, "cutoff": cutoff, "basis": "projected_expected_not_certified", "residents": residents}
 

@@ -38,6 +38,33 @@ def requirement(result, key):
 
 
 class RequirementLedgerTests(unittest.TestCase):
+    def test_intake_slots_have_full_r1_requirements_without_historical_credit(self):
+        from test_workbook_import import IncomingIntakeTests
+        workbook = IncomingIntakeTests().parse([("Resident 1", None, "R1", 2027)], history_placeholder=True)
+        original = deepcopy(workbook)
+        result = ledger(workbook)
+        for person in result["residents"]:
+            self.assertTrue(person["identity_safe"])
+            self.assertEqual(person["warnings"], [])
+            self.assertEqual(person["months"], [])
+            r1 = [r for r in person["requirements"] if r["requirement_year"] == "R1"]
+            self.assertEqual({r["remaining_months"] for r in r1}, {2, 4, 6})
+            self.assertTrue(all(r["expected_months"] == 0 for r in r1))
+        self.assertEqual(len(result["residents"]), 24)
+        entries = evaluate_review(workbook, ReviewStore(version=1, decisions=[]), "timetable")["entries"]
+        self.assertTrue(all("kind" not in source for entry in entries for source in entry["sources"]))
+        self.assertEqual(workbook, original)
+        duplicate = IncomingIntakeTests().parse([("Resident 1", None, "R1", 2027)] * 2)
+        self.assertTrue(all(not p["identity_safe"] for p in ledger(duplicate)["residents"]))
+        forged = deepcopy(workbook)
+        forged["residents"][0]["slot_id"] = "intake-2026-slot-01"
+        self.assertFalse(ledger(forged)["residents"][0]["identity_safe"])
+        known = book([resident([("2026-06", "TTSH General Medicine")])])
+        for code in ("unclear_intake", "excess_intake"):
+            known["issues"] = [{"code": code, "records": [{"source": known["residents"][0]["source"]}]}]
+            self.assertTrue(ledger(known)["residents"][0]["identity_safe"])
+            self.assertEqual(requirement(ledger(known), "r1.general_medicine")["expected_months"], 1)
+
     def test_endpoint_uses_workbook_context_serializes_evidence_and_validates_requests(self):
         workbook = book([resident([("2026-06", "TTSH General Medicine")])], "2026-07")
         original = deepcopy(workbook)

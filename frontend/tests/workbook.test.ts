@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupIssuePostings, importWorkbook, matchesPostingReference, postingReferenceYears, workbookError } from '../src/lib/workbook.ts'
+import { groupIssuePostings, importWorkbook, matchesPostingReference, postingReferenceYears, sameSource, sourceLabel, workbookError } from '../src/lib/workbook.ts'
 
 test('validates one nonempty XLSX at the exact 10 MiB boundary', () => {
   assert.match(workbookError([]), /one workbook/)
@@ -101,4 +101,16 @@ test('accepts optional all-year review data and rejects a malformed annual-sheet
   assert.deepEqual(await importWorkbook(new File(['x'], 'example.xlsx'), 2027), result)
   t.mock.method(globalThis, 'fetch', async () => Response.json({ ...result, annual_sheets: {} }))
   await assert.rejects(importWorkbook(new File(['x'], 'example.xlsx'), 2027), /unexpected workbook/)
+})
+
+
+test('app placeholder sources stay distinct from workbook rows and other intake slots', () => {
+  const first = { kind: 'intake_placeholder' as const, slot_id: 'intake-2027-slot-01' }
+  const second = { kind: 'intake_placeholder' as const, slot_id: 'intake-2027-slot-02' }
+  assert.equal(sameSource(first, { ...first }), true)
+  assert.equal(sameSource(first, second), false)
+  assert.equal(sameSource(first, { sheet: 'Year', row: 1 }), false)
+  assert.equal(sameSource(first, null), false)
+  assert.equal(sameSource({ sheet: 'Year', row: 1 }, { sheet: 'Year', row: 1 }), true)
+  assert.match(sourceLabel(first), /App placeholder.*intake-2027-slot-01/)
 })

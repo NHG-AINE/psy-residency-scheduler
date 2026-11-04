@@ -869,7 +869,10 @@ class AllYearReviewTests(unittest.TestCase):
             self.assertEqual(len({month["month"] for month in main["months"]}), 36)
             self.assertEqual(main["months"][0]["month"], "2026-07")
             self.assertEqual(main["months"][-1]["month"], "2029-06")
-            state = ([(entry["key"], entry["review"], entry["identity_safe"]) for entry in result["entries"]], book["issues"])
+            # Planning-intake warnings follow the selected year; shared identity
+            # and history review remain independent of that selection.
+            shared_issues = [issue for issue in book["issues"] if issue["code"] not in {"unclear_intake", "excess_intake", "intake_fill_blocked"}]
+            state = ([(entry["key"], entry["review"], entry["identity_safe"]) for entry in result["entries"]], shared_issues)
             if baseline is None:
                 baseline = state
             self.assertEqual(state, baseline)
