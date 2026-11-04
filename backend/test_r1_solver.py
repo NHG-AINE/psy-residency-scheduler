@@ -84,11 +84,56 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(result["status"], "optimal")
         person = result["residents"][0]
         self.assertEqual(person["route"], "TTSH/NNI")
-        self.assertEqual(person["historical_training_months"], 9)
+        self.assertEqual(person["credited_r1_months"], 9)
         self.assertEqual([m["label"] for m in person["months"][:3]], ["IMH Inpatient Psychiatry"] * 3)
         self.assertTrue(all(m["status"] == "outside_r1_scope" for m in person["months"][3:]))
         self.assertEqual(person["carryforward"], [])
         self.assertEqual(result["soft_targets"]["active_incoming_cohort_size"], 0)
+        # Past timing exceptions and blank/missing calendar months do not undo credit.
+        for gap in (False, True):
+            with self.subTest(historical_gap=gap):
+                exceptional = r1_book()
+                values = ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6
+                if gap:
+                    values[1] = None
+                history = set_history(exceptional, values)
+                if gap:
+                    history["postings"].pop(2)
+                    exceptional["residents"][0]["intake"] = None
+                original = deepcopy(exceptional)
+                draft = draft_r1_schedule(exceptional, STORE)
+                self.assertEqual(draft["status"], "optimal")
+                person = draft["residents"][0]
+                self.assertEqual(person["route"], "SGH")
+                self.assertEqual(person["credited_r1_months"], 7)
+                self.assertEqual(Counter(m["label"] for m in person["months"] if m["status"] == "posting"),
+                                 {"SGH General Medicine": 3, "SGH Neurology": 2})
+                self.assertEqual(sum(m["status"] == "outside_r1_scope" for m in person["months"]), 7)
+                self.assertEqual(exceptional, original)
+        # Cross-pair history still counts; future assignments form one valid pair.
+        exceptional = r1_book()
+        set_history(exceptional, ["TTSH General Medicine", "SGH Neurology"] + ["IMH Inpatient Psychiatry"] * 6 + [None] * 4)
+        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        future = [m for m in person["months"] if m["status"] == "posting"]
+        self.assertEqual(Counter(m["target"]["requirement_id"] for m in future),
+                         {"r1.general_medicine": 3, "r1.neurology": 1})
+        self.assertIn({m["target"]["institution"] for m in future}, ({"TTSH", "NNI"}, {"SGH"}))
+        # Excess credited months and split inpatient sites never create negative remainders.
+        exceptional = r1_book()
+        set_history(exceptional, ["TTSH General Medicine"] * 5 + ["SGH Neurology"] * 3
+                    + ["IMH Inpatient Psychiatry"] * 2 + ["SGH Inpatient Psychiatry"] * 2)
+        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        self.assertEqual(person["credited_r1_months"], 10)
+        self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
+                         {"r1.inpatient_psychiatry": 2})
+        self.assertEqual(person["carryforward"], [])
+        # A completed combined route beats unused alternative requirements.
+        exceptional = r1_book()
+        set_history(exceptional, ["NUH Medicine & Neurology"] * 6 + ["TTSH General Medicine"] + [None] * 5)
+        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        self.assertEqual(person["route"], "NUH")
+        self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
+                         {"r1.inpatient_psychiatry": 6})
 
     def test_loa_pauses_training_and_unfinished_requirements_carry_past_june(self):
         workbook = r1_book()
@@ -168,16 +213,17 @@ class R1SolverTests(unittest.TestCase):
             invalid = draft_r1_schedule(workbook, STORE)
         self.assertEqual(invalid["status"], "model_invalid")
         self.assertEqual(invalid["residents"], [])
-        for change, expected in (("remarks", "unsupported_r1_remarks"), ("history", "historical_r1_path_conflict"),
-                                 ("baseline", "r1_training_baseline_unknown"), ("identity", "unsafe_identity")):
+        for change, expected in (("remarks", "unsupported_r1_remarks"), ("history", "unresolved_history"),
+                                 ("unsafe_history", "unsafe_historical_identity_evidence_excluded"), ("identity", "unsafe_identity")):
             with self.subTest(change=change):
                 changed = deepcopy(workbook)
                 if change == "remarks":
                     changed["postings"]["core"][0]["remarks"] = "Compulsory unimplemented restriction"
                 elif change == "history":
-                    set_history(changed, ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6)
-                elif change == "baseline":
-                    set_history(changed, [None] * 12)
+                    set_history(changed, ["Unknown department"] + ["LOA"] * 11)
+                elif change == "unsafe_history":
+                    history = set_history(changed, ["SGH General Medicine"] + [None] * 11)
+                    changed["issues"] = [{"code": "duplicate_mcr", "records": [{"source": history["source"]}]}]
                 else:
                     changed["issues"] = [{"code": "duplicate_mcr", "records": [{"source": changed["residents"][0]["source"]}]}]
                 blocked = draft_r1_schedule(changed, STORE)

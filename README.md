@@ -49,14 +49,21 @@ residents with a supported R1 history. Other residents and months after R1
 completion are explicitly outside scope. Upload values and review decisions are
 unchanged; current postings may be rescheduled. Requests are not interpreted.
 
-LOA pauses the training clock. Medicine and Neurology occupy the first six
-training months, with one two-month Neurology block within its paired route;
-Inpatient Psychiatry occupies the next six at one institution. Unfinished months
-carry forward beyond June. Continuing residents need a complete, consistent
-history from July of their recorded intake. Missing evidence, conflicting phase
-history, or history already extending into R2 requires review. Unknown R1 posting
-remarks also block the draft. Finite capacity shared with excluded residents
-requires review; this draft does not validate a whole-programme timetable.
+History contributes ledger credit by requirement, regardless of past timing,
+ordering, institutional exceptions, or blank/missing calendar months. Completed
+requirements are not repeated: one credited Medicine month plus six inpatient
+months leaves three Medicine and two Neurology months. Unresolved posting or
+unsafe identity evidence still requires review.
+
+Future assignments finish outstanding Medicine/Neurology before outstanding
+Inpatient Psychiatry. LOA pauses future posting blocks; unfinished months carry
+forward beyond June. Among alternative R1 routes, the solver keeps those with
+least first-phase work remaining. An unambiguous historical pair is preserved;
+conflicting historical pair evidence allows either valid future pair. Remaining
+inpatient months stay at one site, preserving a single historical site when
+known; split historical sites retain their full credit. Unknown R1 posting
+remarks and finite capacity shared with excluded residents require review.
+This draft does not validate a whole-programme timetable.
 
 Soft priorities are incoming route distribution first, monthly Medicine-to-
 Neurology ratio second. Targets are 12/9/3 for 24 active incoming residents and

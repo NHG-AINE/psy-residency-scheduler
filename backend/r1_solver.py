@@ -7,12 +7,10 @@ from ortools.sat.python import cp_model
 
 if __package__:
     from .programme_requirements import PROGRAMME_REQUIREMENTS
-    from .requirement_ledger import month_number
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
     from programme_requirements import PROGRAMME_REQUIREMENTS
-    from requirement_ledger import month_number
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 
@@ -21,50 +19,33 @@ ROUTES = ("TTSH/NNI", "SGH", "NUH")
 R1 = PROGRAMME_REQUIREMENTS["R1"]
 
 
-def _paths():
-    """One two-month Neuro block, possibly between two Medicine blocks; LOA pauses."""
+def _paths(person):
+    """Use ledger credit, never validate the order of historical exceptions."""
     gm, neuro, combined, inpatient = [R1[name]["id"] for name in (
         "General Medicine", "Neurology", "Medicine & Neurology", "Inpatient Psychiatry")]
-    for site in R1["Inpatient Psychiatry"]["institutions"]:
-        tail = [(inpatient, site)] * R1["Inpatient Psychiatry"]["months"]
-        for route, medicine_site, neuro_site in (("TTSH/NNI", "TTSH", "NNI"), ("SGH", "SGH", "SGH")):
-            for start in range(R1["General Medicine"]["months"] + 1):
-                head = [(gm, medicine_site)] * start + [(neuro, neuro_site)] * R1["Neurology"]["months"]
-                head += [(gm, medicine_site)] * (R1["General Medicine"]["months"] - start)
-                yield route, head + tail
-        yield "NUH", [(combined, "NUH")] * R1["Medicine & Neurology"]["months"] + tail
-
-
-def _history(person, planning_start):
-    """Require a known training baseline; ledger remains the source of credit."""
-    intake = person.get("intake") or ""
-    if not isinstance(intake, str) or len(intake.strip()) != 4 or not intake.strip().isdigit():
-        return [], [{"code": "r1_training_baseline_unknown", "source": person["source"]}]
-    try:
-        baseline = month_number(intake.strip() + "-07")
-    except ValueError:
-        return [], [{"code": "r1_training_baseline_unknown", "source": person["source"]}]
-    start = month_number(planning_start)
-    history = {month["month"]: month for month in person["months"]}
-    if baseline > start:
-        return [], [{"code": "r1_training_baseline_in_future", "source": person["source"]}]
-    prefix, blockers = [], []
-    for number in range(baseline, start):
-        label = f"{number // 12:04d}-{number % 12 + 1:02d}"
-        evidence = history.get(label)
-        if evidence is None or evidence["status"] not in {"loa", "expected"}:
-            blockers.append({"code": "r1_training_baseline_unknown", "month": label,
-                             "sources": [item["source"] for item in evidence["evidence"]] if evidence else [person["source"]]})
-        elif evidence["status"] == "expected":
-            prefix.append((evidence["requirement_id"], evidence["institution"]))
-    # Credit before the claimed baseline makes the baseline unsafe as well.
-    if any(month_number(m["month"]) < baseline and m["status"] == "expected"
-           and m["requirement_id"].startswith("r1.") for m in person["months"]):
-        blockers.append({"code": "r1_training_baseline_conflict", "source": person["source"]})
-    if not blockers and not any(path[:len(prefix)] == prefix for _, path in _paths()):
-        blockers.append({"code": "historical_r1_path_conflict", "source": person["source"],
-                         "sources": [item["source"] for m in person["months"] for item in m["evidence"]]})
-    return prefix, blockers
+    remaining = {item["requirement_id"]: item["remaining_months"] for item in person["requirements"]}
+    history = [month for month in person["months"] if month["status"] == "expected"]
+    route_evidence = {route for month in history for route, key in (
+        ("TTSH/NNI", (gm, "TTSH")), ("TTSH/NNI", (neuro, "NNI")),
+        ("SGH", (gm, "SGH")), ("SGH", (neuro, "SGH")), ("NUH", (combined, "NUH")))
+        if (month["requirement_id"], month["institution"]) == key}
+    preferred_route = next(iter(route_evidence)) if len(route_evidence) == 1 else None
+    paired_months = remaining[gm] + remaining[neuro]
+    least_remaining = min(paired_months, remaining[combined])
+    inpatient_sites = {month["institution"] for month in history if month["requirement_id"] == inpatient}
+    sites = sorted(inpatient_sites) if len(inpatient_sites) == 1 else R1["Inpatient Psychiatry"]["institutions"]
+    for site in sites:
+        tail = [(inpatient, site)] * remaining[inpatient]
+        if paired_months == least_remaining:
+            for route, medicine_site, neuro_site in (("TTSH/NNI", "TTSH", "NNI"), ("SGH", "SGH", "SGH")):
+                if preferred_route in ROUTES[:2] and preferred_route != route:
+                    continue
+                for start in range(remaining[gm] + 1):
+                    head = [(gm, medicine_site)] * start + [(neuro, neuro_site)] * remaining[neuro]
+                    head += [(gm, medicine_site)] * (remaining[gm] - start)
+                    yield route, head + tail
+        if remaining[combined] == least_remaining:
+            yield "NUH", [(combined, "NUH")] * remaining[combined] + tail
 
 
 def _targets(size):
@@ -81,9 +62,10 @@ def _targets(size):
 def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
     """Solve only R1 portions, including known mixed-year continuing residents.
 
-    Medicine/Neuro occupy training months 1-6; inpatient occupies 7-12. LOA
-    pauses that clock. Every available month is used until R1 completion;
-    unfinished suffixes carry forward rather than forcing completion by June.
+    Schedule outstanding Medicine/Neuro before outstanding inpatient; ledger
+    credit is retained regardless of historical timing or order. LOA pauses
+    future blocks. Every available month is used until R1 completion; unfinished
+    requirements carry forward rather than forcing completion by June.
     Soft priority: incoming institution distribution, then monthly 2:1 ratio.
     Requests and excluded residents are not scheduled. Shared finite capacity
     with excluded residents requires review rather than a false capacity claim.
@@ -131,15 +113,12 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
     candidates, active_intake = [], []
     for person in selected:
         blockers.extend(deepcopy(person["blockers"]))
-        prefix, history_blockers = _history(person, prepared["planning_start"])
-        blockers.extend(history_blockers)
         incoming = person["recorded_years"] == ["r1"] and (person.get("intake") or "").strip() == prepared["planning_start"][:4]
         active_intake.append(incoming and any(m["available"] for m in person["availability"]))
         choices = []
-        for route, path in _paths():
-            if path[:len(prefix)] != prefix or any(key not in by_key for key in path[len(prefix):]):
+        for route, remaining in _paths(person):
+            if any(key not in by_key for key in remaining):
                 continue
-            remaining = path[len(prefix):]
             schedule, consumed = [], 0
             for month in person["availability"]:
                 if not month["available"] or consumed >= len(remaining):
@@ -148,7 +127,7 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
                     schedule.append(by_key[remaining[consumed]])
                     consumed += 1
             choices.append({"route": route, "schedule": schedule, "carryforward": Counter(remaining[consumed:]),
-                            "historical_training_months": len(prefix)})
+                            "credited_r1_months": 12 - len(remaining)})
         candidates.append(choices)
     if blockers:
         return result
@@ -216,7 +195,7 @@ def draft_r1_schedule(workbook, reviewstore, max_seconds=10):
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source")}) if option else None})
         result["residents"].append({**deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
                                     "route": choice["route"], "months": months,
-                                    "historical_training_months": choice["historical_training_months"],
+                                    "credited_r1_months": choice["credited_r1_months"],
                                     "carryforward": [{"requirement_id": requirement, "institution": institution, "months": months}
                                                      for (requirement, institution), months in choice["carryforward"].items()]})
     for month in range(len(prepared["planning_months"])):
