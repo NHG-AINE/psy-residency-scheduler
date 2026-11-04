@@ -111,8 +111,48 @@ def build_requirement_ledger(workbook, store):
                           "identity_safe": identity_safe,
                           "warnings": (["unsafe_identity"] if not identity_safe else [])
                           + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else []),
-                          "months": months, "requirements": summaries, "r1_routes": routes})
+                          "months": months, "requirements": summaries, "r1_routes": routes,
+                          "historical_notes": _historical_notes(resident, months)
+                          if identity_safe and identity not in unsafe_history else []})
     return {"planning_start": start, "cutoff": cutoff, "basis": "projected_expected_not_certified", "residents": residents}
+
+
+
+def _historical_notes(resident, months):
+    """Describe proven timing exceptions only; never change credit or readiness."""
+    intake = (resident.get("intake") or "").strip()
+    if len(intake) != 4 or not intake.isdigit() or not 1 <= int(intake) <= 9999:
+        return []
+    expected_number = month_number(intake + "-07")
+    counts, notes = defaultdict(int), []
+    medicine, neurology, combined = (PROGRAMME_REQUIREMENTS["R1"][name] for name in
+                                     ("General Medicine", "Neurology", "Medicine & Neurology"))
+    previous = None
+    for month in months:
+        number = month_number(month["month"])
+        if number != expected_number or month["status"] not in {"expected", "loa"}:
+            break  # Missing or unresolved baseline evidence cannot prove an exception.
+        expected_number += 1
+        if month["status"] == "loa":
+            previous = None
+            continue
+        completed_phase = (counts[medicine["id"]] >= medicine["months"] and counts[neurology["id"]] >= neurology["months"]
+                           or counts[combined["id"]] >= combined["months"])
+        if month["requirement_id"] == "r1.inpatient_psychiatry" and not completed_phase:
+            label = month["target"]["label"]
+            if previous is None or previous["posting"] != label:
+                previous = {"code": "historical_r1_timing_exception", "posting": label,
+                            "start": month["month"], "end": month["month"], "months": 0, "sources": []}
+                notes.append(previous)
+            previous["end"] = month["month"]
+            previous["months"] += 1
+            for evidence in month["evidence"]:
+                if evidence["source"] not in previous["sources"]:
+                    previous["sources"].append(dict(evidence["source"]))
+        else:
+            previous = None
+        counts[month["requirement_id"]] += 1
+    return notes
 
 
 def _allocation(entry, workbook):

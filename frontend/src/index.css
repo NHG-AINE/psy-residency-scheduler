@@ -257,3 +257,18 @@
 .requirements-toolbar label { min-width: 150px; }
 .requirements-table .requirement-missing > th, .requirements-table .requirement-missing > td { background: #fff1dc; color: #0c0a09; }
 .requirements-pending { margin-top: 24px; }
+
+.historical-notes { margin-bottom: 16px; }
+.historical-notes > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--color-hairline-strong); border-radius: 999px; color: var(--color-body); font-size: 13px; font-weight: 500; cursor: pointer; list-style: none; outline-offset: 4px; }
+.historical-notes > summary::-webkit-details-marker { display: none; }
+.historical-notes > summary:hover, .historical-notes > summary:active { background: var(--color-surface-strong); }
+.historical-notes > summary svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linecap: round; }
+.historical-notes-chevron { width: 6px; height: 6px; margin: 0 2px 3px 4px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.historical-notes[open] .historical-notes-chevron { margin-top: 4px; transform: rotate(225deg); }
+.historical-notes-content { margin-top: 8px; padding: 16px; border: 1px solid var(--color-hairline); border-radius: 12px; background: var(--color-surface-soft); }
+.historical-note + .historical-note { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-hairline); }
+.historical-note h4 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+.historical-note p { max-width: none; margin: 8px 0 0; color: var(--color-body); line-height: 1.6; }
+.historical-note .historical-note-period { margin-top: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.historical-note-source { color: var(--color-muted); overflow-wrap: anywhere; }
+@media (pointer: coarse) { .historical-notes > summary { min-height: 44px; } }

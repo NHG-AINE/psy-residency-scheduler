@@ -65,6 +65,45 @@ class RequirementLedgerTests(unittest.TestCase):
             self.assertTrue(ledger(known)["residents"][0]["identity_safe"])
             self.assertEqual(requirement(ledger(known), "r1.general_medicine")["expected_months"], 1)
 
+    def test_historical_timing_notes_group_proven_exceptions_without_changing_credit_or_readiness(self):
+        from test_r1_solver import r1_book, set_history
+        from r1_solver import draft_r1_schedule
+        workbook = r1_book()
+        history = set_history(workbook, ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6)
+        # A merged source can support several months; display each reference once.
+        for posting in history["postings"][6:]:
+            posting["source"] = {"sheet": "History", "row": 3, "column": "J"}
+        original = deepcopy(workbook)
+        result = ledger(workbook)
+        person = result["residents"][0]
+        self.assertEqual(person["historical_notes"], [{"code": "historical_r1_timing_exception",
+            "posting": "IMH Inpatient Psychiatry", "start": "2027-01", "end": "2027-06", "months": 6,
+            "sources": [{"sheet": "History", "row": 3, "column": "J"}]}])
+        self.assertEqual(person["warnings"], [])
+        self.assertEqual(requirement(result, "r1.general_medicine")["remaining_months"], 3)
+        self.assertEqual(requirement(result, "r1.inpatient_psychiatry")["remaining_months"], 0)
+        self.assertEqual(draft_r1_schedule(workbook, ReviewStore(version=1, decisions=[]))["status"], "optimal")
+        self.assertEqual(workbook, original)
+        for uncertainty in ("missing_intake", "missing_month", "blank_month", "unresolved_month", "pre_intake_credit", "unsafe_history"):
+            with self.subTest(uncertainty=uncertainty):
+                changed = deepcopy(workbook)
+                raw_history = changed["annual_sheets"][0]["residents"][0]
+                if uncertainty == "missing_intake":
+                    changed["residents"][0]["intake"] = None
+                elif uncertainty == "missing_month":
+                    raw_history["postings"].pop(1)
+                elif uncertainty in {"blank_month", "unresolved_month"}:
+                    raw_history["postings"][1].update(status="blank" if uncertainty == "blank_month" else "posting",
+                                                      value=None if uncertainty == "blank_month" else "Unknown posting")
+                elif uncertainty == "pre_intake_credit":
+                    changed["residents"][0]["intake"] = "2027"
+                else:
+                    changed["issues"] = [{"code": "duplicate_mcr", "records": [{"source": raw_history["source"]}]}]
+                self.assertEqual(ledger(changed)["residents"][0]["historical_notes"], [])
+        normal = r1_book()
+        set_history(normal, ["SGH General Medicine"] * 4 + ["SGH Neurology"] * 2 + ["IMH Inpatient Psychiatry"] * 6)
+        self.assertEqual(ledger(normal)["residents"][0]["historical_notes"], [])
+
     def test_endpoint_uses_workbook_context_serializes_evidence_and_validates_requests(self):
         workbook = book([resident([("2026-06", "TTSH General Medicine")])], "2026-07")
         original = deepcopy(workbook)

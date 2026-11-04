@@ -18,12 +18,47 @@ const show = (value: string | null | undefined) => value || '—'
 const source = (value: Source) => <small className="source">{sourceLabel(value)}</small>
 const linked = sameSource
 
+function revealElement(target: HTMLElement) {
+  const rect = target.getBoundingClientRect()
+  const start = window.scrollY
+  const offset = rect.height > window.innerHeight - 32 ? 16 : (window.innerHeight - rect.height) / 2
+  const end = Math.max(0, Math.min(start + rect.top - offset, document.documentElement.scrollHeight - window.innerHeight))
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    window.scrollTo({ top: end, behavior: 'instant' })
+    return
+  }
+  const started = performance.now()
+  let frame = 0
+  const cancel = () => {
+    cancelAnimationFrame(frame)
+    window.removeEventListener('wheel', cancel)
+    window.removeEventListener('touchstart', cancel)
+    window.removeEventListener('keydown', cancel)
+  }
+  const animate = (now: number) => {
+    const progress = Math.min((now - started) / 700, 1)
+    const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
+    window.scrollTo({ top: start + (end - start) * eased, behavior: 'instant' })
+    if (progress < 1) frame = requestAnimationFrame(animate)
+    else cancel()
+  }
+  window.addEventListener('wheel', cancel, { passive: true })
+  window.addEventListener('touchstart', cancel, { passive: true })
+  window.addEventListener('keydown', cancel)
+  frame = requestAnimationFrame(animate)
+  return cancel
+}
+
 function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Resident; workbook: Workbook; onHistoryReview: () => void }) {
   const [tab, setTab] = useState('history')
   const [open, setOpen] = useState(false)
+  const detail = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (open && detail.current) return revealElement(detail.current)
+  }, [open])
   const requests = workbook.requests.filter((request) => request.posting_request?.trim() && linked(resident.source, request.matched_resident_source))
   const histories = workbook.histories.map((history) => ({ ...history, residents: history.residents.filter((person) => linked(resident.source, person.matched_resident_source)) })).filter((history) => history.residents.length)
-  return <details className="resident-detail" onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <details ref={detail} name="resident-reviews" className="resident-detail" onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>Review {resident.name || resident.mcr || 'resident'}</summary>
     <div className="resident-content">
       <dl className="resident-facts">
@@ -64,7 +99,7 @@ function Review({ workbook, view, query, year, years, onYearChange, onHistoryRev
   }
   if (view === 'Timetable') return <Timetable residents={residents} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
-  return <div className="resident-list">{residents.map((resident, index) => <ResidentDetail key={index} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
+  return <div className="resident-list">{residents.map((resident) => <ResidentDetail key={JSON.stringify(resident.source)} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
 const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
@@ -152,34 +187,7 @@ export default function App() {
     revealAfterUpload.current = false
     const target = review.current?.querySelector<HTMLElement>('.timetable') || review.current
     if (!target) return
-    const rect = target.getBoundingClientRect()
-    const start = window.scrollY
-    const offset = rect.height > window.innerHeight - 32 ? 16 : (window.innerHeight - rect.height) / 2
-    const end = Math.max(0, Math.min(start + rect.top - offset, document.documentElement.scrollHeight - window.innerHeight))
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      window.scrollTo({ top: end, behavior: 'instant' })
-      return
-    }
-    const started = performance.now()
-    let frame = 0
-    const cancel = () => {
-      cancelAnimationFrame(frame)
-      window.removeEventListener('wheel', cancel)
-      window.removeEventListener('touchstart', cancel)
-      window.removeEventListener('keydown', cancel)
-    }
-    const animate = (now: number) => {
-      const progress = Math.min((now - started) / 700, 1)
-      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
-      window.scrollTo({ top: start + (end - start) * eased, behavior: 'instant' })
-      if (progress < 1) frame = requestAnimationFrame(animate)
-      else cancel()
-    }
-    window.addEventListener('wheel', cancel, { passive: true })
-    window.addEventListener('touchstart', cancel, { passive: true })
-    window.addEventListener('keydown', cancel)
-    frame = requestAnimationFrame(animate)
-    return cancel
+    return revealElement(target)
   }, [busy, workbook])
 
   async function load(nextFile: File, nextYear: number, reveal = false) {
