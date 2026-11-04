@@ -2,3 +2,4 @@ fastapi==0.162.0
 uvicorn==0.54.0
 openpyxl==3.1.5
 python-multipart==0.0.33
+ortools==9.15.6755
