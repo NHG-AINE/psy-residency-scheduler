@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from main import app
 from history_review import ReviewStore, evaluate_review
 from workbook_import import parse_workbook
-from test_workbook_import import workbook_bytes
+from tests.test_workbook_import import workbook_bytes
 
 
 def workbook():

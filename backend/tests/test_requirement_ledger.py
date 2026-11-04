@@ -39,7 +39,7 @@ def requirement(result, key):
 
 class RequirementLedgerTests(unittest.TestCase):
     def test_intake_slots_have_full_r1_requirements_without_historical_credit(self):
-        from test_workbook_import import IncomingIntakeTests
+        from tests.test_workbook_import import IncomingIntakeTests
         workbook = IncomingIntakeTests().parse([("Resident 1", None, "R1", 2027)], history_placeholder=True)
         original = deepcopy(workbook)
         result = ledger(workbook)
@@ -66,8 +66,8 @@ class RequirementLedgerTests(unittest.TestCase):
             self.assertEqual(requirement(ledger(known), "r1.general_medicine")["expected_months"], 1)
 
     def test_historical_timing_notes_group_proven_exceptions_without_changing_credit_or_readiness(self):
-        from test_r1_solver import r1_book, set_history
-        from r1_solver import draft_r1_schedule
+        from tests.test_r1_solver import r1_book, set_history
+        from scheduler import draft_schedule
         workbook = r1_book()
         history = set_history(workbook, ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6)
         # A merged source can support several months; display each reference once.
@@ -82,7 +82,7 @@ class RequirementLedgerTests(unittest.TestCase):
         self.assertEqual(person["warnings"], [])
         self.assertEqual(requirement(result, "r1.general_medicine")["remaining_months"], 3)
         self.assertEqual(requirement(result, "r1.inpatient_psychiatry")["remaining_months"], 0)
-        self.assertEqual(draft_r1_schedule(workbook, ReviewStore(version=1, decisions=[]))["status"], "optimal")
+        self.assertEqual(draft_schedule(workbook, ReviewStore(version=1, decisions=[]))["status"], "optimal")
         self.assertEqual(workbook, original)
         for uncertainty in ("missing_intake", "missing_month", "blank_month", "unresolved_month", "pre_intake_credit", "unsafe_history"):
             with self.subTest(uncertainty=uncertainty):

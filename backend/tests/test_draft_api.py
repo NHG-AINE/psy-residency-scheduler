@@ -3,14 +3,14 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from main import app
-from test_r1_solver import r1_book
+from tests.test_r1_solver import r1_book
 
 
 class DraftApiTests(unittest.TestCase):
     def test_supplied_workbook_and_review_store_reach_solver_without_overrides(self):
         workbook = r1_book()
         store = {"version": 1, "decisions": []}
-        with TestClient(app) as client, patch("main.draft_r1_schedule") as solve:
+        with TestClient(app) as client, patch("main.draft_schedule") as solve:
             for status in ("blocked", "infeasible", "unknown", "model_invalid", "feasible", "optimal"):
                 solve.return_value = {"status": status, "residents": [], "blockers": []}
                 response = client.post("/api/draft-r1", json={"workbook": workbook, "store": store})

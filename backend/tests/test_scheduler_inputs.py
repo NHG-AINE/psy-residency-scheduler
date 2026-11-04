@@ -5,8 +5,8 @@ from history_review import ReviewStore
 from programme_requirements import validate_posting
 from requirement_ledger import build_requirement_ledger
 from scheduler_inputs import prepare_scheduler_inputs
-from test_requirement_ledger import book, resident
-import test_workbook_import
+from tests.test_requirement_ledger import book, resident
+from tests import test_workbook_import
 
 
 STORE = ReviewStore(version=1, decisions=[])

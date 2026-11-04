@@ -8,9 +8,10 @@ from ortools.sat.python import cp_model
 
 from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
-from r1_solver import draft_r1_schedule, _inpatient_targets, _solve_priorities, PREFERRED_INPATIENT_SITES
-from test_requirement_ledger import resident
-import test_workbook_import
+from scheduler import draft_schedule, _allocation_targets, _solve_priorities
+from rules.r1_rules import PREFERRED_INPATIENT_SITES
+from tests.test_requirement_ledger import resident
+from tests import test_workbook_import
 
 
 STORE = ReviewStore(version=1, decisions=[])
@@ -67,7 +68,7 @@ class R1SolverTests(unittest.TestCase):
     def test_full_routes_have_exact_duration_training_windows_pairing_and_labels(self):
         workbook = r1_book(24)
         original = deepcopy(workbook)
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"})
         self.assertEqual({p["route"] for p in result["residents"]}, {"TTSH/NNI", "SGH", "NUH"})
         labels = {r["posting"] for r in workbook["postings"]["core"]}
@@ -85,7 +86,7 @@ class R1SolverTests(unittest.TestCase):
         workbook = r1_book()
         set_history(workbook, ["TTSH General Medicine"] * 2 + ["NNI Neurology"] * 2 + ["TTSH General Medicine"] * 2
                     + ["LOA"] * 3 + ["IMH Inpatient Psychiatry"] * 3)
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         person = result["residents"][0]
         self.assertEqual(person["route"], "TTSH/NNI")
@@ -106,7 +107,7 @@ class R1SolverTests(unittest.TestCase):
                     history["postings"].pop(2)
                     exceptional["residents"][0]["intake"] = None
                 original = deepcopy(exceptional)
-                draft = draft_r1_schedule(exceptional, STORE)
+                draft = draft_schedule(exceptional, STORE)
                 self.assertEqual(draft["status"], "optimal")
                 person = draft["residents"][0]
                 self.assertEqual(person["route"], "SGH")
@@ -118,7 +119,7 @@ class R1SolverTests(unittest.TestCase):
         # Cross-pair history still counts; future assignments form one valid pair.
         exceptional = r1_book()
         set_history(exceptional, ["TTSH General Medicine", "SGH Neurology"] + ["IMH Inpatient Psychiatry"] * 6 + [None] * 4)
-        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        person = draft_schedule(exceptional, STORE)["residents"][0]
         future = [m for m in person["months"] if m["status"] == "posting"]
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in future),
                          {"r1.general_medicine": 3, "r1.neurology": 1})
@@ -127,7 +128,7 @@ class R1SolverTests(unittest.TestCase):
         exceptional = r1_book()
         set_history(exceptional, ["TTSH General Medicine"] * 5 + ["SGH Neurology"] * 3
                     + ["IMH Inpatient Psychiatry"] * 2 + ["SGH Inpatient Psychiatry"] * 2)
-        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        person = draft_schedule(exceptional, STORE)["residents"][0]
         self.assertEqual(person["credited_r1_months"], 10)
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
                          {"r1.inpatient_psychiatry": 2})
@@ -135,7 +136,7 @@ class R1SolverTests(unittest.TestCase):
         # A completed combined route beats unused alternative requirements.
         exceptional = r1_book()
         set_history(exceptional, ["NUH Medicine & Neurology"] * 6 + ["TTSH General Medicine"] + [None] * 5)
-        person = draft_r1_schedule(exceptional, STORE)["residents"][0]
+        person = draft_schedule(exceptional, STORE)["residents"][0]
         self.assertEqual(person["route"], "NUH")
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
                          {"r1.inpatient_psychiatry": 6})
@@ -145,7 +146,7 @@ class R1SolverTests(unittest.TestCase):
         for month in workbook["residents"][0]["postings"][:3]:
             month.update(status="loa", value="LOA")
         original = deepcopy(workbook)
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         person = result["residents"][0]
         self.assertTrue(all(m["status"] == "loa" and m["label"] is None for m in person["months"][:3]))
@@ -157,7 +158,7 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(workbook, original)
         for month in workbook["residents"][0]["postings"]:
             month.update(status="loa", value="LOA")
-        paused = draft_r1_schedule(workbook, STORE)
+        paused = draft_schedule(workbook, STORE)
         self.assertEqual(paused["status"], "optimal")
         self.assertEqual(paused["soft_targets"]["active_incoming_cohort_size"], 0)
         self.assertEqual(sum(item["months"] for item in paused["residents"][0]["carryforward"]), 12)
@@ -165,10 +166,10 @@ class R1SolverTests(unittest.TestCase):
 
     def test_capacity_blank_zero_and_monthly_limits_are_hard_constraints(self):
         workbook = r1_book(3)
-        self.assertEqual(draft_r1_schedule(workbook, STORE)["status"], "optimal")
+        self.assertEqual(draft_schedule(workbook, STORE)["status"], "optimal")
         for row in workbook["postings"]["core"]:
             row["max"] = "2" if row["posting"] == "TTSH General Medicine" else "1" if row["posting"] == "NNI Neurology" else "0" if "Inpatient" not in row["posting"] else None
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         self.assertEqual(len(result["singletons"]), 6)
         self.assertTrue(all(item["label"] == "NNI Neurology" for item in result["singletons"]))
@@ -178,14 +179,14 @@ class R1SolverTests(unittest.TestCase):
         for row in workbook["postings"]["core"]:
             if "Inpatient" not in row["posting"]:
                 row["max"] = "0"
-        impossible = draft_r1_schedule(workbook, STORE)
+        impossible = draft_schedule(workbook, STORE)
         self.assertEqual(impossible["status"], "infeasible")
         self.assertEqual(impossible["residents"], [])
         shared = r1_book()
         next(row for row in shared["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "1"
         outside = resident([(m["month"], "IMH Inpatient Psychiatry") for m in shared["months"]], "R4", "Planning", 100)
         shared["residents"].append(outside)
-        blocked = draft_r1_schedule(shared, STORE)
+        blocked = draft_schedule(shared, STORE)
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(len(blocked["excluded_residents"]), 1)
         self.assertIn({"code": "shared_capacity_outside_r1_scope", "source": outside["postings"][0]["source"]}, blocked["blockers"])
@@ -193,14 +194,14 @@ class R1SolverTests(unittest.TestCase):
     def test_incoming_targets_24_23_are_soft_and_relax_under_capacity(self):
         for size, targets in ((24, {"TTSH/NNI": 12, "SGH": 9, "NUH": 3}), (23, {"TTSH/NNI": 12, "SGH": 9, "NUH": 2})):
             with self.subTest(size=size):
-                result = draft_r1_schedule(r1_book(size), STORE)
+                result = draft_schedule(r1_book(size), STORE)
                 self.assertIn(result["status"], {"optimal", "feasible"})
                 self.assertEqual(result["soft_targets"]["routes"], targets)
                 self.assertEqual(result["soft_results"]["route_counts"], targets)
                 self.assertEqual(result["soft_results"]["distribution_deviation"], 0)
         workbook = r1_book(23)
         next(row for row in workbook["postings"]["core"] if row["posting"] == "NUH Medicine & Neurology")["max"] = "0"
-        relaxed = draft_r1_schedule(workbook, STORE)
+        relaxed = draft_schedule(workbook, STORE)
         self.assertIn(relaxed["status"], {"optimal", "feasible"})
         self.assertEqual(relaxed["soft_results"]["route_counts"]["NUH"], 0)
         self.assertGreater(relaxed["soft_results"]["distribution_deviation"], 0)
@@ -210,20 +211,20 @@ class R1SolverTests(unittest.TestCase):
         for size, imh, other in ((0, 0, 0), (2, 2, 0), (18, 6, 3), (20, 8, 3),
                                  (21, 9, 3), (22, 10, 3), (23, 11, 3), (24, 8, 4)):
             with self.subTest(size=size):
-                self.assertEqual(_inpatient_targets(size, sites),
+                self.assertEqual(_allocation_targets(size, sites),
                                  {site: imh if site == "IMH" else other for site in sites})
-        self.assertEqual(_inpatient_targets(6, ["IMH", "NUH"]), {"IMH": 4, "NUH": 2})
-        self.assertEqual(_inpatient_targets(6, ["NUH"]), {})
+        self.assertEqual(_allocation_targets(6, ["IMH", "NUH"]), {"IMH": 4, "NUH": 2})
+        self.assertEqual(_allocation_targets(6, ["NUH"]), {})
 
     def test_allocation_overrides_destination_but_capacity_overrides_allocation(self):
         book = r1_book()
-        draft = draft_r1_schedule(book, STORE)
+        draft = draft_schedule(book, STORE)
         self.assertEqual(draft["residents"][0]["route"], "TTSH/NNI")
         self.assertEqual(draft["soft_results"]["inpatient_counts"]["IMH"], 1)
         self.assertEqual(draft["soft_results"]["destination_deviation"], 1)
         book = r1_book(6)
         next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "1"
-        draft = draft_r1_schedule(book, STORE)
+        draft = draft_schedule(book, STORE)
         self.assertEqual(draft["status"], "optimal")
         self.assertLessEqual(draft["soft_results"]["inpatient_counts"]["IMH"], 1)
         self.assertGreater(draft["soft_results"]["inpatient_deviation"], 0)
@@ -232,13 +233,13 @@ class R1SolverTests(unittest.TestCase):
         book = r1_book()
         set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + [None] * 6)
         next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
-        draft = draft_r1_schedule(book, STORE)
+        draft = draft_schedule(book, STORE)
         person = draft["residents"][0]
         self.assertEqual(person["months"][0]["label"], "NUH Inpatient Psychiatry")
         self.assertEqual(draft["soft_results"]["missing_clusters"], 0)
         for month in book["residents"][0]["postings"]:
             month.update(status="loa", value="LOA")
-        paused = draft_r1_schedule(book, STORE)
+        paused = draft_schedule(book, STORE)
         self.assertEqual(paused["soft_targets"]["inpatient_residents"], 0)
         self.assertEqual(paused["soft_results"]["missing_clusters"], 1)
 
@@ -265,8 +266,8 @@ class R1SolverTests(unittest.TestCase):
                 actual = solve(solver, current_model)
                 return cp_model.FEASIBLE if interrupted_status == cp_model.FEASIBLE else actual
 
-            with patch("r1_solver.cp_model.CpSolver.solve", new=interrupted), patch(
-                    "r1_solver.monotonic", side_effect=[0, 0, 0.5, 1]):
+            with patch("scheduler.cp_model.CpSolver.solve", new=interrupted), patch(
+                    "scheduler.monotonic", side_effect=[0, 0, 0.5, 1]):
                 solver, status, stages, _ = _solve_priorities(
                     model, [("first", choice), ("second", 1 - choice)], [choice], 2)
             self.assertEqual(status, "feasible")
@@ -274,7 +275,7 @@ class R1SolverTests(unittest.TestCase):
             self.assertEqual(len(stages), expected_stages)
             if len(calls) == 2:
                 self.assertLess(calls[1], calls[0])
-        with patch("r1_solver.monotonic", side_effect=[0, 0, 3, 3]):
+        with patch("scheduler.monotonic", side_effect=[0, 0, 3, 3]):
             solver, status, stages, _ = _solve_priorities(
                 model, [("first", choice), ("second", 1 - choice)], [choice], 2)
         self.assertEqual(status, "feasible")
@@ -282,7 +283,7 @@ class R1SolverTests(unittest.TestCase):
 
     def test_blocked_unknown_and_model_invalid_never_return_fake_solution(self):
         workbook = r1_book()
-        unknown = draft_r1_schedule(workbook, STORE, max_seconds=0)
+        unknown = draft_schedule(workbook, STORE, max_seconds=0)
         self.assertEqual(unknown["status"], "unknown")
         self.assertEqual(unknown["residents"], [])
         solve = cp_model.CpSolver.solve
@@ -291,8 +292,8 @@ class R1SolverTests(unittest.TestCase):
             model.new_int_var(1, 0, "invalid_domain")
             return solve(solver, model)
 
-        with patch("r1_solver.cp_model.CpSolver.solve", new=invalid_model):
-            invalid = draft_r1_schedule(workbook, STORE)
+        with patch("scheduler.cp_model.CpSolver.solve", new=invalid_model):
+            invalid = draft_schedule(workbook, STORE)
         self.assertEqual(invalid["status"], "model_invalid")
         self.assertEqual(invalid["residents"], [])
         for change, expected in (("remarks", "unsupported_r1_remarks"), ("history", "unresolved_history"),
@@ -308,7 +309,7 @@ class R1SolverTests(unittest.TestCase):
                     changed["issues"] = [{"code": "duplicate_mcr", "records": [{"source": history["source"]}]}]
                 else:
                     changed["issues"] = [{"code": "duplicate_mcr", "records": [{"source": changed["residents"][0]["source"]}]}]
-                blocked = draft_r1_schedule(changed, STORE)
+                blocked = draft_schedule(changed, STORE)
                 self.assertEqual(blocked["status"], "blocked")
                 self.assertEqual(blocked["residents"], [])
                 self.assertIn(expected, {b["code"] for b in blocked["blockers"]})
@@ -316,7 +317,7 @@ class R1SolverTests(unittest.TestCase):
         unrelated = deepcopy(workbook)
         unrelated["postings"]["electives"] = [{"residency_year": "R2", "institution": "IMH", "elective": "ANDS",
             "source": {"sheet": "Postings", "row": 100}, "remarks": [{"text": "Unimplemented elective restriction", "source": {"sheet": "Postings", "row": 101}}]}]
-        self.assertEqual(draft_r1_schedule(unrelated, STORE)["status"], "optimal")
+        self.assertEqual(draft_schedule(unrelated, STORE)["status"], "optimal")
 
 
 if __name__ == "__main__":

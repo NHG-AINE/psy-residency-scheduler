@@ -4,9 +4,9 @@ from copy import deepcopy
 from cluster_coverage import cluster_coverage
 from requirement_ledger import build_requirement_ledger
 from scheduler_inputs import prepare_scheduler_inputs
-from r1_solver import draft_r1_schedule
-from test_requirement_ledger import book, resident
-from test_r1_solver import STORE, r1_book, set_history
+from scheduler import draft_schedule
+from tests.test_requirement_ledger import book, resident
+from tests.test_r1_solver import STORE, r1_book, set_history
 
 
 class ClusterCoverageTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class ClusterCoverageTests(unittest.TestCase):
                 posting["max"] = "0"
         original = deepcopy(workbook)
         historical = {"visited": ["NHG", "SHS"], "missing": ["NUHS"]}
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         coverage = result["residents"][0]["cluster_coverage"]
         self.assertEqual(coverage["historical"], historical)
@@ -57,7 +57,7 @@ class ClusterCoverageTests(unittest.TestCase):
         self.assertEqual(workbook, original)
         for month in workbook["residents"][0]["postings"]:
             month.update(status="loa", value="LOA")
-        result = draft_r1_schedule(workbook, STORE)
+        result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         self.assertTrue(result["residents"][0]["carryforward"])
         self.assertEqual(result["residents"][0]["cluster_coverage"]["projected"], historical)
