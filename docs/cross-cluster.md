@@ -19,23 +19,27 @@
   clusters in every year. R5 postings are outside this requirement's window.
 - Example: IMH, SGH and AH postings during R1-R4 cover NHG, SHS and NUHS.
 
-## Planning preference
+## Planning preferences
 
 - Prefer an unvisited cluster when choosing between otherwise suitable postings,
-  while respecting hard constraints.
-- Example: after SGH General Medicine and Neurology, prefer R1 Inpatient
-  Psychiatry in NHG or NUHS. Returning to SHS is not itself a hard violation,
-  provided all three clusters are covered by the end of R4.
+  while respecting hard constraints. Do not require all clusters to be completed
+  in R1 or send everyone to one institution solely to gain a new cluster.
+- For R1 Inpatient Psychiatry after the first-phase route:
+  - TTSH/NNI: prefer spreading residents across SHS and NUHS institutions.
+  - SGH: prefer institutions outside SHS, in NHG or NUHS.
+  - NUH: prefer institutions outside NUHS, in NHG or SHS.
+- These are preferences, not mandatory route-to-inpatient pairings. Repeating
+  a cluster is allowed provided the cumulative R1-R4 requirement is met.
 
 ## NNI special case
 
 - NNI belongs to SHS and NNI Neurology counts towards SHS cluster credit.
 - In R1, NNI Neurology remains paired with TTSH General Medicine because of
   their proximity. This pairing does not change NNI's cluster.
-- Prefer SHS Inpatient Psychiatry after the TTSH/NNI route for further SHS
-  exposure, even though NNI already provides SHS credit. This is a planning
-  preference, not an additional condition for awarding SHS credit.
+- SHS Inpatient Psychiatry remains a preferred option after TTSH/NNI for
+  further exposure, alongside NUHS. NNI already provides SHS credit; a second
+  SHS posting is not required to award that credit.
 - A resident who completes TTSH General Medicine and NNI Neurology has NHG
   and SHS coverage, and still needs NUHS coverage by the end of R4.
-- The relative priority between this SHS inpatient preference and the general
-  preference for an unvisited cluster is not yet specified.
+- The relative priority of allocation preferences remains to be agreed before
+  changing the scheduler objective.

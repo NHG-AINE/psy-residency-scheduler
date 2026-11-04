@@ -30,6 +30,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   one posting in NHG, SHS and NUHS by the end of R4. Count recognised posting
   history towards this cumulative requirement. See [cross-cluster.md](cross-cluster.md)
   for the institution mapping and examples.
+- **Do R4 Inpatient Psychiatry outside IMH after completing it at IMH in R1.**
+  If a resident completed R1 Inpatient Psychiatry at IMH, their R4 Inpatient
+  Psychiatry must be at TTSH, CGH, SGH or NUH. Determine the R1 posting from
+  recognised historical evidence.
 
 ## Soft constraints
 
@@ -53,8 +57,17 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   need not have an even number. A lone resident
   is allowed when the preference cannot be met, including an odd-number
   allocation, but the system should highlight that singleton assignment.
-- **Prefer a larger allocation to IMH.** When a posting is offered at IMH
-  and other institutions, aim to allocate more residents to IMH than to each
-  other institution individually, not necessarily more than all others combined.
-  No fixed number or percentage is prescribed. Allow exceptions for capacity
-  limits, cross-cluster requirements, LOA, resident requests and peer grouping.
+- **Spread placements across institutions using a weighted IMH target.**
+  When a posting is offered at IMH and other eligible institutions, give IMH
+  two allocation shares and each other institution one share. For N residents
+  needing that posting and K eligible institutions including IMH, target
+  `floor(N / (K + 1))` residents at each non-IMH institution and assign the
+  remainder, `N - (K - 1) * floor(N / (K + 1))`, to IMH.
+  For five institutions, 24 residents gives IMH 8 and four at each other site;
+  22 residents gives IMH 10 and three at each other site.
+  These are soft draft targets, not mandatory quotas or a fixed percentage.
+  Allow deviations for capacity limits, cross-cluster requirements, LOA,
+  resident requests and peer grouping. Small cohorts need not populate every
+  institution. Apply the formula to the residents needing the posting, not
+  automatically to the full intake, and choose assignments together rather
+  than filling IMH first.
