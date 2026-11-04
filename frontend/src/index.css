@@ -93,6 +93,7 @@
   tbody th { @apply font-medium; }
   th small, td small { @apply mt-1 block text-xs font-normal leading-relaxed text-muted; }
   .timetable { max-height: 65vh; overflow: auto; }
+  .timetable-skeleton { overflow: hidden; }
   .timetable table { table-layout: fixed; min-width: 760px; }
   .timetable .resident-column { width: 180px; }
   .timetable th, .timetable td { min-width: 0; padding: 12px 4px; }
@@ -289,4 +290,14 @@
   .scroll-to-top.is-visible { transition-delay: 0s; }
   .scroll-to-top button, .scroll-to-top svg { transition: background-color 100ms ease-out; }
   .scroll-to-top button:active, .scroll-to-top button:hover svg { transform: none; }
+}
+
+@layer components {
+  .draft-actions { @apply ml-auto flex items-center gap-3; }
+  .draft-generate { min-width: 10rem; }
+  .draft-badge { @apply font-medium text-ink; }
+  .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
+  .draft-feedback:not(:empty), .draft-error { @apply mt-3 mb-4; }
+  .draft-feedback ul { @apply mt-2 list-disc pl-5; }
+  .draft-error { color: #9f352e; }
 }
