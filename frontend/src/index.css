@@ -38,7 +38,7 @@
   button, a, [tabindex] { outline-offset: 4px; }
   :focus-visible { outline: 2px solid var(--color-focus); }
   button { cursor: pointer; }
-  button:disabled { cursor: wait; }
+  button:disabled { cursor: not-allowed; }
   ::selection { background: #c8b8e0; color: var(--color-ink); }
   a { text-underline-offset: 4px; }
 }
