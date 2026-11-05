@@ -60,6 +60,12 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   need not have an even number. A lone resident
   is allowed when the preference cannot be met, including an odd-number
   allocation, but the system should highlight that singleton assignment.
+- **Balance residents across posting requirements over time.** Each month,
+  aim to spread residents as evenly as practical across the posting requirements
+  they are eligible for and still need. Adjust for different posting durations,
+  LOA, capacity and remaining requirements. This is a preference, not a fixed
+  quota; residents must still complete their required postings. Balance posting
+  types separately from the distribution of residents across institutions.
 - **Spread placements across institutions using a weighted IMH target.**
   When a posting is offered at IMH and other eligible institutions, give IMH
   two allocation shares and each other institution one share. For N residents
