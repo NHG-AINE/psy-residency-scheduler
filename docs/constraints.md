@@ -20,7 +20,7 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   its remaining months at the same posting and institution. Flag conflicting
   or unclear partial history for review rather than choosing automatically.
   Separate completed blocks, including remediation, may be at different
-  institutions. Apply each posting?s specific duration and timing rules,
+  institutions. Apply each posting's specific duration and timing rules,
   including any permitted division into separate blocks.
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
@@ -74,6 +74,8 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   LOA, capacity and remaining requirements. This is a preference, not a fixed
   quota; residents must still complete their required postings. Balance posting
   types separately from the distribution of residents across institutions.
+  Posting balance takes priority over peer grouping, which takes priority over
+  the weighted institution allocation target, across all R-years.
 - **Spread placements across institutions using a weighted IMH target.**
   When a posting is offered at IMH and other eligible institutions, give IMH
   two allocation shares and each other institution one share. For N residents
