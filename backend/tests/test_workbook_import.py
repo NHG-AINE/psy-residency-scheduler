@@ -98,7 +98,6 @@ class WorkbookImportTests(unittest.TestCase):
             (lambda w: setattr(w["Jul 2027 - Jun 2028"]["E3"], "value", None), "missing_mcr"),
             (duplicate, "duplicate_mcr"),
             (lambda w: setattr(w["Jul 2026 - Jun 2027"]["B4"], "value", "Different Name"), "conflicting_identity"),
-            (lambda w: setattr(w["Jul 2026 - Jun 2027"]["C4"], "value", "MP1234A"), "conflicting_identity"),
             (lambda w: setattr(w["Jul 2026 - Jun 2027"]["C4"], "value", None), "missing_mcr"),
         ]
         for edit, code in cases:
@@ -118,16 +117,18 @@ class WorkbookImportTests(unittest.TestCase):
         requests = [record("Alex Example", "M001", "Request", 7)]
         result = review_import({"residents": current, "histories": [{"residents": history}], "requests": requests, "postings": {"core": []}})
         conflicts = [i for i in result["issues"] if i["code"] == "conflicting_identity"]
-        self.assertEqual(len(conflicts), 2)
-        self.assertEqual([len(i["records"]) for i in conflicts], [3, 2])
-        originals = current + history + requests
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual([len(i["records"]) for i in conflicts], [3])
+        originals = [current[0], history[0], requests[0]]
         reported = [r for issue in conflicts for r in issue["records"]]
         self.assertCountEqual(reported, [{"name": r["name"], "mcr": r["mcr"], "source": r["source"]} for r in originals])
         self.assertEqual(reported[0]["mcr"], " M001 ")
         self.assertEqual(len(current) + len(history) + len(requests), 5)
         # Parenthetical suffixes stay significant; grouping must not relax matching.
-        self.assertTrue(all(r["match_status"] == "ambiguous" for r in history + requests))
-        self.assertTrue(all(r["matched_resident_source"] is None for r in history + requests))
+        self.assertTrue(all(r["match_status"] == "ambiguous" for r in [history[0], *requests]))
+        self.assertEqual(history[1]["match_status"], "matched")
+        self.assertEqual(history[1]["matched_resident_source"], current[1]["source"])
+        self.assertTrue(all(r["matched_resident_source"] is None for r in [history[0], *requests]))
 
     def test_duplicates_are_grouped_per_mcr_per_annual_sheet_and_missing_rows_stay_visible(self):
         def record(name, mcr, sheet, row):

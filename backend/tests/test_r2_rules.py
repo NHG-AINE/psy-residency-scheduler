@@ -1,4 +1,4 @@
-﻿import unittest
+ï»¿import unittest
 
 from rules.r2_rules import partial_posting_identity
 
@@ -143,6 +143,52 @@ class R2SolverTests(unittest.TestCase):
         result=self.solve(book)
         self.assertEqual(len(result["residents"]),1)
         self.assertEqual(result["excluded_residents"][0]["source"],outside["source"])
+
+
+    def test_changed_mcr_retains_history_and_saved_review_credit_for_generation(self):
+        from history_review import ReviewStore, evaluate_review
+        from tests.test_history_review import personal
+        from workbook_import import review_import
+        book = r2_book()
+        history = book["annual_sheets"][0]["residents"][0]
+        history["name"] = "  ALEX   EXAMPLE  "
+        for month in history["postings"][6:]:
+            month["value"] = "Earlier inpatient ward"
+        review = evaluate_review(book, STORE)
+        entry_index = next(i for i,e in enumerate(review["entries"]) if e["months"][0]["value"] == "Earlier inpatient ward")
+        target_index = next(i for i,c in enumerate(review["catalogue"]) if c["label"] == "IMH Inpatient Psychiatry" and c["residency_year"] == "R1")
+        store = ReviewStore.model_validate({"version":1,"decisions":[personal(review, entry_index, "R1", target_index)]})
+        saved = store.model_dump()
+        book["residents"][0]["mcr"] = "NEW001"
+        review_import(book)
+        self.assertFalse(any(i["code"] == "conflicting_identity" for i in book["issues"]))
+        self.assertEqual(history["match_status"], "matched")
+        self.assertEqual(history["matched_resident_source"], book["residents"][0]["source"])
+        original = deepcopy(book)
+        result = draft_schedule(book, store)
+        self.assertIn(result["status"], {"optimal", "feasible"})
+        self.assertEqual(result["residents"][0]["credited_r1_months"], 12)
+        self.assertTrue(all(m["target"]["requirement_id"].startswith("r2.") for m in result["residents"][0]["months"]))
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(book, original)
+        self.assertEqual(store.model_dump(), saved)
+        self.assertEqual(history["mcr"], "M001")
+
+    def test_duplicate_names_in_one_year_do_not_merge_changed_mcr_history(self):
+        from workbook_import import review_import
+        from requirement_ledger import build_requirement_ledger
+        book = r2_book()
+        duplicate = deepcopy(book["residents"][0])
+        duplicate.update(mcr="OTHER001", source={"sheet":"Planning","row":200})
+        book["residents"].append(duplicate)
+        book["annual_sheets"][0]["residents"][0]["mcr"] = "OLD001"
+        review_import(book)
+        history = book["annual_sheets"][0]["residents"][0]
+        self.assertEqual(history["match_status"], "ambiguous")
+        self.assertIsNone(history["matched_resident_source"])
+        self.assertTrue(any(i["code"] == "conflicting_identity" for i in book["issues"]))
+        progress = build_requirement_ledger(book, STORE)
+        self.assertTrue(all(not p["identity_safe"] and p["months"] == [] for p in progress["residents"]))
 
 
 class R2BlockBoundaryTests(unittest.TestCase):
