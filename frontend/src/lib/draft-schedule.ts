@@ -9,6 +9,7 @@ export type DraftSchedule = {
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
+  skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
@@ -77,7 +78,7 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
-  no_schedulable_residents: 'No R1 or R2 residents in this planning year',
+  no_schedulable_residents: 'No R1 or R2 residents have usable scheduling inputs',
   conflicting_partial_r2_history: 'Review the partially completed R2 posting and institution',
   missing_r2_catalogue_option: 'No matching R2 catalogue option for the remaining requirement',
   unsupported_r2_remarks: 'Review unsupported R2 posting remarks',

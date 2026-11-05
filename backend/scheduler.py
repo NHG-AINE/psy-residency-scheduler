@@ -81,9 +81,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     prepared = prepare_scheduler_inputs(workbook, reviewstore)
     years = {"r1", "r2"}
     selected = [p for p in prepared["residents"] if years & set(p["recorded_years"])]
+    skipped = [deepcopy({**{key: p[key] for key in ("name", "mcr", "source", "recorded_year")},
+                         "reasons": p["blockers"]}) for p in selected if p["blockers"]]
+    selected = [p for p in selected if not p["blockers"]]
     excluded = [deepcopy({key: p[key] for key in ("name", "mcr", "source", "recorded_year")})
                 for p in prepared["residents"] if not years & set(p["recorded_years"])]
-    result = {"scope": "r1_r2", "status": "blocked", "residents": [], "excluded_residents": excluded,
+    result = {"scope": "r1_r2", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
               "limitations": ["R3-R5 portions are outside this draft", "Resident requests are not interpreted",
@@ -91,7 +94,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
     if not selected:
-        blockers.append({"code": "no_schedulable_residents"})
+        blockers.extend(reason for person in skipped for reason in person["reasons"])
+        if not skipped:
+            blockers.append({"code": "no_schedulable_residents"})
     options = [o for o in prepared["catalogue_options"] if "r1" in recorded_years(o["residency_year"])]
     by_key, candidates, active_intake = r1_rules.prepare_candidates(
         selected, options, prepared["planning_start"], blockers)
@@ -123,7 +128,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     catalogue = posting_catalogue(workbook["postings"])
     if finite:
         for person in workbook["residents"]:
-            if years & recorded_years(person.get("residency_year")):
+            if any(person["source"] == scheduled["source"] for scheduled in selected):
                 continue
             for posting in person["postings"]:
                 if posting["status"] != "posting":

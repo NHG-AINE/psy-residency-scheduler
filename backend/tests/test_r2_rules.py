@@ -1,4 +1,4 @@
-ï»¿import unittest
+﻿import unittest
 
 from rules.r2_rules import partial_posting_identity
 
@@ -143,6 +143,26 @@ class R2SolverTests(unittest.TestCase):
         result=self.solve(book)
         self.assertEqual(len(result["residents"]),1)
         self.assertEqual(result["excluded_residents"][0]["source"],outside["source"])
+
+
+    def test_resident_input_issues_do_not_block_other_residents_or_rewrite_evidence(self):
+        book = r2_book(2)
+        unsafe = book["residents"][1]
+        book["issues"] = [{"code": "duplicate_mcr", "records": [{"source": unsafe["source"]}]}]
+        before = deepcopy(book)
+        result = self.solve(book)
+        self.assertEqual(len(result["residents"]), 1)
+        self.assertEqual(result["residents"][0]["source"], book["residents"][0]["source"])
+        self.assertEqual(result["skipped_residents"][0]["source"], unsafe["source"])
+        self.assertIn("unsafe_identity", [r["code"] for r in result["skipped_residents"][0]["reasons"]])
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(book, before)
+        # All unsafe inputs produce an honest empty draft, not made-up credit.
+        book["issues"][0]["records"].append({"source": book["residents"][0]["source"]})
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["residents"], [])
+        self.assertEqual(len(result["skipped_residents"]), 2)
 
 
     def test_changed_mcr_retains_history_and_saved_review_credit_for_generation(self):
