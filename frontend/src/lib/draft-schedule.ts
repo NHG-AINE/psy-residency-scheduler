@@ -16,10 +16,13 @@ export type DraftSchedule = {
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
+// Allow time for the 40-second solver budget, input preparation and transport.
+const DRAFT_REQUEST_TIMEOUT_MS = 60_000
+
 export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal): Promise<DraftSchedule> {
   let response: Response
   try {
-    response = await fetch('/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
+    response = await fetch('/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_REQUEST_TIMEOUT_MS)]) })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('Draft generation timed out. Check the connection and retry.')
     throw new Error('Could not reach the backend to generate a draft. Check the connection and retry.')
