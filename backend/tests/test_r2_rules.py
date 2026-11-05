@@ -74,7 +74,12 @@ class R2SolverTests(unittest.TestCase):
         self.assertEqual(book, before)
 
     def test_mixed_year_finishes_r1_before_r2_and_carries_remainder(self):
-        result = self.solve(r2_book(mixed=True))
+        book = r2_book(mixed=True)
+        # The planning year is deliberately different; historical credit stays valid.
+        book["target_year"] += 4
+        for month in book["months"] + book["residents"][0]["postings"]:
+            month["month"] = str(int(month["month"][:4]) + 4) + month["month"][4:]
+        result = self.solve(book)
         self.assertEqual(len(result["residents"]), 1)
         person = result["residents"][0]
         self.assertTrue(all(m["target"]["requirement_id"] == "r1.inpatient_psychiatry" for m in person["months"][:6]))
@@ -261,3 +266,33 @@ class R2BlockBoundaryTests(unittest.TestCase):
                 solver.parameters.num_search_workers = 1
                 self.assertEqual(solver.solve(model, solutions), cp_model.OPTIMAL)
                 self.assertEqual(solutions.schedules, expected_schedules)
+
+
+class PostingBalanceBoundTests(unittest.TestCase):
+    def test_bound_matches_exhaustive_small_distributions(self):
+        from itertools import product
+        from ortools.sat.python import cp_model
+        from scheduler import _posting_balance
+        for total, groups in ((0, 0), (0, 4), (5, 1), (5, 2), (7, 3), (6, 4), (7, 4), (8, 4)):
+            with self.subTest(total=total, groups=groups):
+                expected = min(sum(abs(left-right) for i,left in enumerate(values) for right in values[i+1:])
+                               for values in product(range(total+1), repeat=groups) if sum(values)==total)
+                model = cp_model.CpModel()
+                counts = [model.new_int_var(0, total, f"count_{i}") for i in range(groups)]
+                objective = sum(_posting_balance(model, counts, total, 0))
+                model.minimize(objective)
+                solver = cp_model.CpSolver()
+                self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
+                self.assertEqual(solver.value(objective), expected)
+
+    def test_restricted_distribution_can_exceed_the_bound(self):
+        from ortools.sat.python import cp_model
+        from scheduler import _posting_balance
+        model = cp_model.CpModel()
+        counts = [model.new_int_var(0, 8, f"count_{i}") for i in range(4)]
+        model.add(counts[0] >= 6)  # Remaining requirements can force concentration.
+        objective = sum(_posting_balance(model, counts, 8, 0))
+        model.minimize(objective)
+        solver = cp_model.CpSolver()
+        self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
+        self.assertEqual(solver.value(objective), 18)  # 6/1/1/0, rather than 2/2/2/2.

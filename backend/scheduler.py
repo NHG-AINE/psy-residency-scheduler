@@ -35,6 +35,24 @@ def _allocation_targets(size, sites):
             for site in sites}
 
 
+def _posting_balance(model, counts, total, month):
+    """Pairwise imbalance with a valid lower bound, not an equal-split quota."""
+    model.add(sum(counts) == total)
+    deviations = []
+    for i, left in enumerate(counts):
+        for right in counts[i + 1:]:
+            deviation = model.new_int_var(0, total, f"balance_{month}_{len(deviations)}")
+            model.add_abs_equality(deviation, left - right)
+            deviations.append(deviation)
+    if counts:
+        # An even integer split has r larger groups and K-r smaller groups.
+        # Only those r*(K-r) pairs differ, by one each. Eligibility/capacity
+        # may force a higher score; this bound never forces the ideal split.
+        remainder = total % len(counts)
+        model.add(sum(deviations) >= remainder * (len(counts) - remainder))
+    return deviations
+
+
 def _solve_priorities(model, objectives, variables, max_seconds):
     """Lock proven scores, not assignments; retain the last valid solution."""
     started = monotonic()
@@ -160,10 +178,18 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
                     continue
                 occupancy[(month, option["requirement_id"], option["institution"], option["label"])].append(variable)
     placements = []
+    r2_monthly_totals = [0] * len(prepared["planning_months"])
     for i, person in enumerate(selected):
         remaining = {r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}
         assert len(remaining) <= 1, "R1 candidates must have equal remaining duration"
-        placements.append(r2_rules.add_blocks(model, person, blocks[i], next(iter(remaining), 0), i))
+        r1_months = next(iter(remaining), 0)
+        placements.append(r2_rules.add_blocks(model, person, blocks[i], r1_months, i))
+        # Every available training month is filled until remaining work ends.
+        # Thus R2 occupancy is fixed even though block order/site are choices.
+        active = [month for month, availability in enumerate(person["availability"]) if availability["available"]]
+        r2_months = sum(r["remaining_months"] for r, _, _ in blocks[i])
+        for month in active[r1_months:r1_months + r2_months]:
+            r2_monthly_totals[month] += 1
         for placement in placements[-1]:
             o = placement["option"]
             for month in placement["months"]:
@@ -204,11 +230,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     r2_ids = sorted({r["requirement_id"] for bs in blocks for r, _, _ in bs})
     for month in range(len(prepared["planning_months"])):
         counts = [sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in r2_ids]
-        for i, left in enumerate(counts):
-            for right in counts[i + 1:]:
-                d = model.new_int_var(0, len(selected), f"balance_{month}_{len(balance)}")
-                model.add_abs_equality(d, left - right)
-                balance.append(d)
+        balance.extend(_posting_balance(model, counts, r2_monthly_totals[month], month))
     # Allocation is per exact posting, not a shared bucket for all electives.
     allocation_groups = defaultdict(list)
     for ps in placements:
