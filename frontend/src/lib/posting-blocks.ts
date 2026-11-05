@@ -10,7 +10,7 @@ export function groupPostings(postings: Resident['postings']): PostingBlock[] {
   for (const posting of postings) {
     const block = blocks[blocks.length - 1]
     const previous = block?.[block.length - 1]
-    if (previous && previous.status === posting.status && previous.draft === posting.draft
+    if (previous && previous.status === posting.status && previous.draft === posting.draft && previous.draftCategory === posting.draftCategory
       && (posting.status !== 'posting' || previous.value === posting.value)
       && monthIndex(posting.month) === monthIndex(previous.month) + 1) {
       block.push(posting)
@@ -35,7 +35,7 @@ export function postingHistoryEntry(posting: Resident['postings'][number], entri
 export function postingDisplay(block: PostingBlock, mode: PostingLabelMode = DEFAULT_POSTING_LABEL_MODE, entries: HistoryEntry[] = []) {
   const status = block[0].status
   const original = status === 'loa' ? 'LOA' : status === 'blank' ? 'Unallocated' : block[0].value || 'Unallocated'
-  if (block.every((posting) => posting.draft)) return { label: original, canonical: true, markers: [] as string[] }
+  if (block.every((posting) => posting.draft)) return { label: original, canonical: true, markers: block[0].draftCategory === 'elective' ? ['Elective'] : [] as string[] }
   if (mode === 'original' || status !== 'posting') return { label: original, canonical: false, markers: [] as string[] }
   const targets = block.map((posting) => {
     const entry = postingHistoryEntry(posting, entries)

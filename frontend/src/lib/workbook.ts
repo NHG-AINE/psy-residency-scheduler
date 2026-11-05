@@ -7,7 +7,7 @@ export type Resident = {
   remarks: string | null; source: Source
   is_intake_placeholder?: boolean; slot_id?: string
   match_status?: 'matched' | 'unmatched' | 'ambiguous'; matched_resident_source?: Source | null
-  postings: { month: string; value: string | null; status: 'posting' | 'loa' | 'blank'; source: Source; draft?: true }[]
+  postings: { month: string; value: string | null; status: 'posting' | 'loa' | 'blank'; source: Source; draft?: true; draftCategory?: 'core' | 'elective' }[]
 }
 export type Request = {
   name: string | null; mcr: string | null; email: string | null; intake: string | null

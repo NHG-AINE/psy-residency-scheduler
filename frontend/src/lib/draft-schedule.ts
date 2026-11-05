@@ -10,7 +10,7 @@ export type DraftSchedule = {
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
-    months: { month: string; status: 'posting' | 'loa' | 'outside_r1_scope'; label: string | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_r1_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
@@ -18,7 +18,7 @@ export type DraftSchedule = {
 export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal): Promise<DraftSchedule> {
   let response: Response
   try {
-    response = await fetch('/api/draft-r1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
+    response = await fetch('/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('Draft generation timed out. Check the connection and retry.')
     throw new Error('Could not reach the backend to generate a draft. Check the connection and retry.')
@@ -39,7 +39,7 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
   return resident.postings.map((posting) => {
     const month = person.months.find((candidate) => candidate.month === posting.month)
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
-      ? { ...posting, value: month.label, status: 'posting', draft: true } : posting
+      ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core' } : posting
   })
 }
 
@@ -77,6 +77,11 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
+  no_schedulable_residents: 'No R1 or R2 residents in this planning year',
+  conflicting_partial_r2_history: 'Review the partially completed R2 posting and institution',
+  missing_r2_catalogue_option: 'No matching R2 catalogue option for the remaining requirement',
+  unsupported_r2_remarks: 'Review unsupported R2 posting remarks',
+  duplicate_r2_catalogue_option: 'Resolve duplicate R2 posting options',
   no_r1_residents: 'No R1 residents in this planning year', unsafe_identity: 'Resolve the resident identity in Issues',
   unresolved_history: 'Review unresolved historical postings', conflicting_month_evidence: 'Review conflicting records for this month',
   requirement_year_unconfirmed: 'Confirm the historical requirement year', programme_duration_mismatch: 'Correct the posting duration to match the programme',

@@ -56,7 +56,7 @@ test('draft request sends the original workbook, saved decisions and cancellatio
   const workbook = { target_year: 2028 } as Workbook
   const store = { version: 1 as const, decisions: [] }
   context.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
-    assert.equal(url, '/api/draft-r1')
+    assert.equal(url, '/api/draft')
     assert.deepEqual(JSON.parse(String(options.body)), { workbook, store })
     assert.ok(options.signal instanceof AbortSignal)
     controller.abort()
@@ -107,4 +107,22 @@ test('unresolved labels sort last by readable reason groups, excluding LOA, blan
   assert.equal(groupDraftResidents(people, generated, entries)[0], people[0])
   entries[0].review = { ...entries[0].review, status: 'reviewed', target: { key: 'confirmed' } as NonNullable<HistoryEntry['review']['target']> }
   assert.equal(groupDraftResidents(people, null, entries)[0], people[0])
+})
+
+
+test('R2 elective display retains exact labels and separates matching core labels', () => {
+  const result = structuredClone(draft)
+  result.residents[0].months = resident.postings.map((posting, index) => ({
+    month: posting.month, status: 'posting', label: 'IMH Addiction Medicine',
+    target: { category: index === 3 ? 'elective' : 'core' },
+  }))
+  const postings = draftPostings(resident, result)
+  const blocks = groupPostings(postings)
+  assert.equal(blocks.length, 4)
+  const display = postingDisplay(blocks[3])
+  assert.equal(display.label, 'IMH Addiction Medicine')
+  assert.deepEqual(display.markers, ['Elective'])
+  assert.equal(postingCategory(display, 'posting'), 'elective')
+  assert.equal(postingCategory(postingDisplay(blocks[2]), 'posting'), 'core')
+  assert.equal(postings[1], resident.postings[1], 'LOA remains unchanged')
 })
