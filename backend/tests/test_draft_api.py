@@ -11,23 +11,22 @@ class DraftApiTests(unittest.TestCase):
         workbook = r1_book()
         store = {"version": 1, "decisions": []}
         with TestClient(app) as client, patch("main.draft_schedule") as solve:
-            for endpoint, kwargs in (("/api/draft-r1", {}), ("/api/draft", {"include_r2": True})):
-                for status in ("blocked", "infeasible", "unknown", "model_invalid", "feasible", "optimal"):
-                    solve.return_value = {"status": status, "residents": [], "blockers": []}
-                    response = client.post(endpoint, json={"workbook": workbook, "store": store})
-                    self.assertEqual(response.status_code, 200)
-                    self.assertEqual(response.json()["status"], status)
-                    passed_workbook, passed_store = solve.call_args.args
-                    self.assertEqual(passed_workbook, workbook)
-                    self.assertEqual(passed_store.model_dump(), store)
-                    self.assertEqual(solve.call_args.kwargs, kwargs)
+            for status in ("blocked", "infeasible", "unknown", "model_invalid", "feasible", "optimal"):
+                solve.return_value = {"status": status, "residents": [], "blockers": []}
+                response = client.post("/api/draft", json={"workbook": workbook, "store": store})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["status"], status)
+                passed_workbook, passed_store = solve.call_args.args
+                self.assertEqual(passed_workbook, workbook)
+                self.assertEqual(passed_store.model_dump(), store)
+                self.assertEqual(solve.call_args.kwargs, {})
 
     def test_invalid_inputs_and_invalid_review_data_are_actionable(self):
         with TestClient(app) as client:
-            response = client.post("/api/draft-r1", json={"workbook": {}, "store": {"version": 1, "decisions": []}})
+            response = client.post("/api/draft", json={"workbook": {}, "store": {"version": 1, "decisions": []}})
             self.assertEqual(response.status_code, 422)
             self.assertIn("Re-import", response.json()["detail"])
-            response = client.post("/api/draft-r1", json={"workbook": r1_book(), "store": {"version": 2, "decisions": []}})
+            response = client.post("/api/draft", json={"workbook": r1_book(), "store": {"version": 2, "decisions": []}})
             self.assertEqual(response.status_code, 422)
 
 

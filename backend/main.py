@@ -65,17 +65,9 @@ async def requirement_ledger(request: RequirementLedgerRequest):
         raise HTTPException(422, "The workbook or planning period is incomplete. Import the workbook again for the selected planning year.") from exc
 
 
-@app.post("/api/draft-r1")
+@app.post("/api/draft")
 async def generate_draft(request: RequirementLedgerRequest):
     try:
         return await run_in_threadpool(draft_schedule, request.workbook, request.store)
-    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
-        raise HTTPException(422, "The draft inputs are incomplete. Re-import the workbook for the selected planning year and review saved decisions.") from exc
-
-
-@app.post("/api/draft")
-async def generate_combined_draft(request: RequirementLedgerRequest):
-    try:
-        return await run_in_threadpool(draft_schedule, request.workbook, request.store, include_r2=True)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The draft inputs are incomplete. Re-import the workbook and review saved decisions.") from exc

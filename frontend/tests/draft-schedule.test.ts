@@ -13,7 +13,7 @@ const resident: Resident = {
 }
 const draft: DraftSchedule = {
   status: 'feasible', cutoff: '2027-06', blockers: [], residents: [{ source: resident.source, name: resident.name, mcr: resident.mcr, carryforward: [],
-    months: resident.postings.map((posting, index) => ({ month: posting.month, status: index === 2 ? 'outside_r1_scope' : 'posting', label: 'IMH Inpatient Psychiatry' })) }],
+    months: resident.postings.map((posting, index) => ({ month: posting.month, status: index === 2 ? 'outside_draft_scope' : 'posting', label: 'IMH Inpatient Psychiatry' })) }],
 }
 
 test('overlay changes only solver posting months, preserves evidence and discard restores original cells', () => {

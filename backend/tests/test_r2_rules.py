@@ -56,7 +56,7 @@ def r2_book(size=1, mixed=False):
 
 class R2SolverTests(unittest.TestCase):
     def solve(self, book):
-        result = draft_schedule(book, STORE, include_r2=True)
+        result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result.get("blockers"))
         return result
 
@@ -109,7 +109,7 @@ class R2SolverTests(unittest.TestCase):
         self.assertEqual({p["months"][0]["label"] for p in result["residents"]}, {"IMH ANDS", "IMH Addiction Medicine"})
         for elective in book["postings"]["electives"]:
             elective["max"] = 0
-        self.assertEqual(draft_schedule(book,STORE,include_r2=True)["status"], "infeasible")
+        self.assertEqual(draft_schedule(book,STORE)["status"], "infeasible")
 
     def test_conflicting_partial_history_and_unsupported_remarks_block(self):
         for kind in ("partial", "remarks", "duplicate", "missing"):
@@ -127,7 +127,7 @@ class R2SolverTests(unittest.TestCase):
                 else:
                     book["postings"]["electives"]=[]
                     code="missing_r2_catalogue_option"
-                result=draft_schedule(book,STORE,include_r2=True)
+                result=draft_schedule(book,STORE)
                 self.assertEqual(result["status"],"blocked")
                 self.assertIn(code,[b["code"] for b in result["blockers"]])
 

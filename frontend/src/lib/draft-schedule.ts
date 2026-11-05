@@ -10,7 +10,7 @@ export type DraftSchedule = {
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
-    months: { month: string; status: 'posting' | 'loa' | 'outside_r1_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
@@ -82,12 +82,12 @@ const blockerLabels: Record<string, string> = {
   missing_r2_catalogue_option: 'No matching R2 catalogue option for the remaining requirement',
   unsupported_r2_remarks: 'Review unsupported R2 posting remarks',
   duplicate_r2_catalogue_option: 'Resolve duplicate R2 posting options',
-  no_r1_residents: 'No R1 residents in this planning year', unsafe_identity: 'Resolve the resident identity in Issues',
+  unsafe_identity: 'Resolve the resident identity in Issues',
   unresolved_history: 'Review unresolved historical postings', conflicting_month_evidence: 'Review conflicting records for this month',
   requirement_year_unconfirmed: 'Confirm the historical requirement year', programme_duration_mismatch: 'Correct the posting duration to match the programme',
   historical_progress_unknown: 'Review missing historical progress', pending_history_review: 'Review unresolved historical postings',
   conflicting_history: 'Review conflicting historical records', invalid_planning_month_evidence: 'Review conflicting planning month evidence',
-  shared_capacity_outside_r1_scope: 'Review capacity shared with residents outside this draft',
+  shared_capacity_outside_draft_scope: 'Review capacity shared with residents outside this draft',
   unsupported_r1_remarks: 'Review unsupported R1 posting remarks', duplicate_r1_catalogue_option: 'Resolve duplicate R1 posting options',
   invalid_capacity: 'Correct the posting capacity', invalid_duration: 'Correct the posting duration',
   unclear_intake: 'Review the unclear incoming intake', excess_intake: 'Review the excess incoming intake',

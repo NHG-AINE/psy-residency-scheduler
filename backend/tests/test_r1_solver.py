@@ -40,7 +40,7 @@ def r1_book(size=1):
 
 def set_history(workbook, values):
     person = workbook["residents"][0]
-    person.update(name="Alex Example", mcr="M001", intake="2026", residency_year="R1,R2")
+    person.update(name="Alex Example", mcr="M001", intake="2026", residency_year="R1")
     history = resident([(f"{2026 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}", value) for i, value in enumerate(values)], "R1")
     workbook["annual_sheets"].insert(0, {"residents": [history]})
     return history
@@ -92,7 +92,7 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(person["route"], "TTSH/NNI")
         self.assertEqual(person["credited_r1_months"], 9)
         self.assertEqual([m["label"] for m in person["months"][:3]], ["IMH Inpatient Psychiatry"] * 3)
-        self.assertTrue(all(m["status"] == "outside_r1_scope" for m in person["months"][3:]))
+        self.assertTrue(all(m["status"] == "outside_draft_scope" for m in person["months"][3:]))
         self.assertEqual(person["carryforward"], [])
         self.assertEqual(result["soft_targets"]["active_incoming_cohort_size"], 0)
         # Past timing exceptions and blank/missing calendar months do not undo credit.
@@ -114,7 +114,7 @@ class R1SolverTests(unittest.TestCase):
                 self.assertEqual(person["credited_r1_months"], 7)
                 self.assertEqual(Counter(m["label"] for m in person["months"] if m["status"] == "posting"),
                                  {"SGH General Medicine": 3, "SGH Neurology": 2})
-                self.assertEqual(sum(m["status"] == "outside_r1_scope" for m in person["months"]), 7)
+                self.assertEqual(sum(m["status"] == "outside_draft_scope" for m in person["months"]), 7)
                 self.assertEqual(exceptional, original)
         # Cross-pair history still counts; future assignments form one valid pair.
         exceptional = r1_book()
@@ -189,7 +189,7 @@ class R1SolverTests(unittest.TestCase):
         blocked = draft_schedule(shared, STORE)
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(len(blocked["excluded_residents"]), 1)
-        self.assertIn({"code": "shared_capacity_outside_r1_scope", "source": outside["postings"][0]["source"]}, blocked["blockers"])
+        self.assertIn({"code": "shared_capacity_outside_draft_scope", "source": outside["postings"][0]["source"]}, blocked["blockers"])
 
     def test_incoming_targets_24_23_are_soft_and_relax_under_capacity(self):
         for size, targets in ((24, {"TTSH/NNI": 12, "SGH": 9, "NUH": 3}), (23, {"TTSH/NNI": 12, "SGH": 9, "NUH": 2})):

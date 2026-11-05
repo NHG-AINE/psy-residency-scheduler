@@ -69,36 +69,36 @@ def _solve_priorities(model, objectives, variables, max_seconds):
     return best, final_status, stages, monotonic() - started
 
 
-def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, include_r2=False):
+def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     """Schedule remaining R1 work, then R2 for residents recorded in R2.
 
-    The legacy R1 endpoint keeps include_r2=False. Both years share capacity,
+    Both years share capacity,
     soft priorities and one solve budget. Historical credit is preserved, LOA
     pauses blocks, and unfinished requirements carry beyond the planning year.
     """
     if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) or not isfinite(max_seconds) or max_seconds < 0:
         raise ValueError("max_seconds must be a finite nonnegative number")
     prepared = prepare_scheduler_inputs(workbook, reviewstore)
-    years = {"r1", "r2"} if include_r2 else {"r1"}
+    years = {"r1", "r2"}
     selected = [p for p in prepared["residents"] if years & set(p["recorded_years"])]
     excluded = [deepcopy({key: p[key] for key in ("name", "mcr", "source", "recorded_year")})
                 for p in prepared["residents"] if not years & set(p["recorded_years"])]
-    result = {"scope": "r1_r2" if include_r2 else "r1_only", "status": "blocked", "residents": [], "excluded_residents": excluded,
+    result = {"scope": "r1_r2", "status": "blocked", "residents": [], "excluded_residents": excluded,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
-              "limitations": ["R2-R5 portions are outside this draft", "Resident requests are not interpreted",
+              "limitations": ["R3-R5 portions are outside this draft", "Resident requests are not interpreted",
                               "Finite shared capacity with excluded residents requires review"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
     if not selected:
-        blockers.append({"code": "no_schedulable_residents" if include_r2 else "no_r1_residents"})
+        blockers.append({"code": "no_schedulable_residents"})
     options = [o for o in prepared["catalogue_options"] if "r1" in recorded_years(o["residency_year"])]
     by_key, candidates, active_intake = r1_rules.prepare_candidates(
         selected, options, prepared["planning_start"], blockers)
-    r2_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R2"] if include_r2 else []
+    has_r2 = any("r2" in person["recorded_years"] for person in selected)
+    r2_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R2"] if has_r2 else []
     blocks = [[] for _ in selected]
-    if include_r2:
-        result["limitations"][0] = "R3-R5 portions are outside this draft"
+    if has_r2:
         seen_r2 = set()
         for o in r2_options:
             key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
@@ -131,7 +131,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
                 match = match_posting(posting, person.get("residency_year"), catalogue)
                 matches = [match["selected_candidate"]] if match.get("selected_candidate") else match["candidates"]
                 if not matches or any((c["category"], c["residency_year"], normalized_label(c["label"])) in finite for c in matches):
-                    blockers.append({"code": "shared_capacity_outside_r1_scope", "source": posting["source"]})
+                    blockers.append({"code": "shared_capacity_outside_draft_scope", "source": posting["source"]})
     if blockers:
         return result
 
@@ -142,7 +142,6 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
         model.add_exactly_one(choices)  # Empty candidates correctly produce INFEASIBLE.
     occupancy = defaultdict(list)
     inpatient_counts = defaultdict(list)
-    cluster_penalties = []
     inpatient_id = r1_rules.R1["Inpatient Psychiatry"]["id"]
     for i, choices in enumerate(candidates):
         for j, choice in enumerate(choices):
@@ -151,10 +150,6 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
                      if o and o["requirement_id"] == inpatient_id}
             for site in sites:
                 inpatient_counts[site].append(variable)
-            projected = cluster_coverage(selected[i]["months"] + [
-                {"status": "expected", "requirement_year": o["residency_year"], "institution": o["institution"]}
-                for o in choice["schedule"] if o])
-            cluster_penalties.append(len(projected["missing"]) * variable)
             for month, option in enumerate(choice["schedule"]):
                 if option is None:
                     continue
@@ -168,18 +163,17 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
             o = placement["option"]
             for month in placement["months"]:
                 occupancy[(month, o["requirement_id"], o["institution"], o["label"])].append(placement["variable"])
-    if include_r2:
-        cluster_penalties = []
-        for i, person in enumerate(selected):
-            for cluster, sites in CLUSTERS.items():
-                if cluster in person["cluster_coverage"]["visited"]:
-                    continue
-                visits = [variables[i][j] for j, c in enumerate(candidates[i]) if any(o and o["institution"] in sites for o in c["schedule"])]
-                visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["institution"] in sites]
-                missing = model.new_bool_var(f"missing_{i}_{cluster}")
-                model.add(sum(visits) == 0).only_enforce_if(missing)
-                model.add(sum(visits) >= 1).only_enforce_if(missing.Not())
-                cluster_penalties.append(missing)
+    cluster_penalties = []
+    for i, person in enumerate(selected):
+        for cluster, sites in CLUSTERS.items():
+            if cluster in person["cluster_coverage"]["visited"]:
+                continue
+            visits = [variables[i][j] for j, c in enumerate(candidates[i]) if any(o and o["institution"] in sites for o in c["schedule"])]
+            visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["institution"] in sites]
+            missing = model.new_bool_var(f"missing_{i}_{cluster}")
+            model.add(sum(visits) == 0).only_enforce_if(missing)
+            model.add(sum(visits) >= 1).only_enforce_if(missing.Not())
+            cluster_penalties.append(missing)
     for (month, requirement, institution, label), values in occupancy.items():
         capacity = by_key[(requirement, institution, label)]["capacity"]
         if capacity is not None:
@@ -234,9 +228,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
         preferences["distribution"], preferences["ratio"], sum(singletons.values()),
         sum(inpatient_deviations) + sum(allocation), preferences["destination"], sum(cluster_penalties),
     )))
-    if include_r2:
-        objectives.insert(2, ("posting_balance", sum(balance)))
-        result["soft_priority"] = [name for name, _ in objectives]
+    objectives.insert(2, ("posting_balance", sum(balance)))
+    result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
@@ -256,7 +249,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, inc
         months = []
         for availability, option in zip(person["availability"], choice["schedule"]):
             months.append({"month": availability["month"],
-                           "status": "loa" if not availability["available"] else "posting" if option else "outside_r1_scope",
+                           "status": "loa" if not availability["available"] else "posting" if option else "outside_draft_scope",
                            "label": option["label"] if option else None,
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
         result["residents"].append({**deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
