@@ -143,3 +143,55 @@ class R2SolverTests(unittest.TestCase):
         result=self.solve(book)
         self.assertEqual(len(result["residents"]),1)
         self.assertEqual(result["excluded_residents"][0]["source"],outside["source"])
+
+
+class R2BlockBoundaryTests(unittest.TestCase):
+    def test_candidates_and_feasible_schedules_match_complete_block_orders(self):
+        from itertools import permutations
+        from ortools.sat.python import cp_model
+        from rules.r2_rules import add_blocks
+
+        for lengths, partial, r1_months, loa in (
+                ([3, 3, 3, 3], None, 0, set()),
+                ([2, 3, 3, 3], 0, 0, set()),
+                ([3, 3, 3, 3], None, 6, set()),
+                ([2, 3, 3, 3], 0, 3, {1, 5})):
+            with self.subTest(lengths=lengths, partial=partial, r1_months=r1_months, loa=loa):
+                active = [i for i in range(12) if i not in loa]
+                blocks = [({"requirement_id": str(i), "remaining_months": length},
+                           [{"requirement_id": str(i)}], i == partial) for i, length in enumerate(lengths)]
+                expected_schedules, expected_candidates = set(), set()
+                # Independent reference: enumerate complete posting orders, not
+                # candidate start positions. There are at most 24 permutations.
+                for order in permutations(range(len(lengths))):
+                    if partial is not None and order[0] != partial:
+                        continue
+                    tick, schedule = r1_months, []
+                    for i in order:
+                        months = tuple(active[t] for t in range(tick, tick + lengths[i]) if t < len(active))
+                        placement = (str(i), months, lengths[i] - len(months))
+                        schedule.append(placement)
+                        expected_candidates.add(placement)
+                        tick += lengths[i]
+                    expected_schedules.add(tuple(sorted(schedule)))
+                model = cp_model.CpModel()
+                placements = add_blocks(model, {"availability": [{"available": i not in loa} for i in range(12)]}, blocks, r1_months, 0)
+
+                def signature(p):
+                    return (p["option"]["requirement_id"], tuple(p["months"]), p["remaining"])
+
+                self.assertEqual({signature(p) for p in placements}, expected_candidates)
+                class Solutions(cp_model.CpSolverSolutionCallback):
+                    def __init__(self):
+                        super().__init__()
+                        self.schedules = set()
+
+                    def on_solution_callback(self):
+                        self.schedules.add(tuple(sorted(signature(p) for p in placements if self.value(p["variable"]))))
+
+                solutions = Solutions()
+                solver = cp_model.CpSolver()
+                solver.parameters.enumerate_all_solutions = True
+                solver.parameters.num_search_workers = 1
+                self.assertEqual(solver.solve(model, solutions), cp_model.OPTIMAL)
+                self.assertEqual(solutions.schedules, expected_schedules)

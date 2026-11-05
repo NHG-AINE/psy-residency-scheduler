@@ -49,11 +49,20 @@ def add_blocks(model, person, blocks, r1_months, resident_index):
     end = r1_months + sum(r["remaining_months"] for r, _, _ in blocks)
     coverage = {tick: [] for tick in range(r1_months, end)}
     placements = []
+    partial_months = sum(r["remaining_months"] for r, _, partial in blocks if partial)
     for requirement, options, partial in blocks:
         length = requirement["remaining_months"]
         choices = []
-        starts = [r1_months] if partial else range(r1_months, end - length + 1)
-        for start in starts:
+        if partial:
+            starts = {r1_months}
+        else:
+            # Only whole remaining blocks can precede this one. A partial block
+            # must resume first; LOA is handled by the active-month mapping below.
+            starts = {r1_months + partial_months}
+            for other, _, other_partial in blocks:
+                if not other_partial and other["requirement_id"] != requirement["requirement_id"]:
+                    starts |= {start + other["remaining_months"] for start in starts}
+        for start in sorted(starts):
             for option in options:
                 variable = model.new_bool_var(f"r2_{resident_index}_{len(placements)}")
                 choices.append(variable)
