@@ -6,6 +6,7 @@ from programme_requirements import PROGRAMME_REQUIREMENTS
 from scheduler import draft_schedule
 from tests.test_r1_solver import STORE
 from tests.test_r3_rules import r3_book
+from tests.test_r2_rules import r2_book
 from tests.test_requirement_ledger import resident
 
 
@@ -76,13 +77,21 @@ class R4Tests(unittest.TestCase):
 
     def test_future_options_do_not_grant_projected_cluster_credit(self):
         book = r4_book()
+        # NUHS is available only in the unfinished R3 block, beyond the horizon.
+        book["annual_sheets"].pop()
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if o["residency_year"] != "R3" or o["posting"] == "NUH Continuity Clinic"]
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if o["residency_year"] != "R4" or o["posting"].split()[0] in {"IMH", "TTSH", "KTPH"}]
         for month in book["residents"][0]["postings"]:
             month.update(status="loa", value="LOA")
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         person = result["residents"][0]
         self.assertIn("NUHS", person["cluster_coverage"]["projected"]["missing"])
-        self.assertEqual(sum(item["months"] for item in person["carryforward"]), 12)
+        self.assertEqual(sum(item["months"] for item in person["carryforward"]), 24)
+        self.assertTrue(any(item["requirement_id"] == "r3.continuity_clinic" and item["institution"] == "NUH"
+                            for item in person["carryforward"]))
 
     def test_disconnected_partial_r4_is_flagged(self):
         book = r4_book()
@@ -107,6 +116,86 @@ class R4Tests(unittest.TestCase):
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         self.assertEqual([person["name"] for person in result["residents"]], ["Second Resident"])
         self.assertIn("conflicting_partial_r4_history", [reason["code"] for reason in result["skipped_residents"][0]["reasons"]])
+
+    def test_weighted_inpatient_and_even_cl_targets_with_cluster_priority(self):
+        book = r4_book()
+        for sheet in book["annual_sheets"]:
+            for past in sheet["residents"]:
+                if past is book["residents"][0]:
+                    continue
+                for month in past["postings"]:
+                    if month["value"] == "IMH Inpatient Psychiatry":
+                        month["value"] = "SGH Inpatient Psychiatry"
+                    if month["value"] == "TTSH Continuity Clinic":
+                        month["value"] = "NUH Continuity Clinic"
+        allowed = {"IMH Inpatient Psychiatry", "SGH Inpatient Psychiatry",
+                   "TTSH Consultation Liaison Psychiatry", "NUH Consultation Liaison Psychiatry"}
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if o["residency_year"] != "R4" or "Inpatient Psychiatry" not in o["posting"]
+            and "Consultation Liaison Psychiatry" not in o["posting"] or o["posting"] in allowed]
+        for sheet in book["annual_sheets"]:
+            for original in list(sheet["residents"]):
+                for i in range(1, 6):
+                    duplicate = deepcopy(original)
+                    duplicate.update(name=f"Resident {i}", mcr=f"NEW{i}", source={**original["source"], "row": i + 3})
+                    for month in duplicate["postings"]:
+                        month["source"]["row"] = i + 3
+                    sheet["residents"].append(duplicate)
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        people = result["residents"]
+        ip = Counter(next(m["label"] for m in p["months"] if m["target"]["requirement_id"] == "r4.inpatient_psychiatry") for p in people)
+        cl = Counter(next(m["label"] for m in p["months"] if m["target"]["requirement_id"] == "r4.consultation_liaison_psychiatry") for p in people)
+        self.assertEqual(ip, {"IMH Inpatient Psychiatry": 4, "SGH Inpatient Psychiatry": 2})
+        self.assertEqual(cl, {"TTSH Consultation Liaison Psychiatry": 3, "NUH Consultation Liaison Psychiatry": 3})
+        self.assertEqual(result["soft_results"]["r4_allocation_deviation"], 0)
+        # Without previous NUHS exposure, all six need NUH despite the CL target.
+        for past in book["annual_sheets"][-1]["residents"]:
+            for month in past["postings"]:
+                month["value"] = "TTSH Continuity Clinic"
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        self.assertTrue(all(any(m["label"] == "NUH Consultation Liaison Psychiatry" for m in p["months"]) for p in result["residents"]))
+        self.assertTrue(all(not p["cluster_coverage"]["projected"]["missing"] for p in result["residents"]))
+
+    def test_r2_and_r4_are_balanced_independently_each_month(self):
+        book = r4_book()
+        # Different cohort sizes expose accidental pooling of the two years.
+        for sheet in book["annual_sheets"]:
+            for original in list(sheet["residents"]):
+                for i in range(1, 4):
+                    duplicate = deepcopy(original)
+                    duplicate.update(name=f"R4 Resident {i}", mcr=f"R4-{i}", source={**original["source"], "row": i + 3})
+                    for month in duplicate["postings"]:
+                        month["source"]["row"] = i + 3
+                    sheet["residents"].append(duplicate)
+        r2 = r2_book(2)
+        for person in r2["residents"]:
+            person["name"] = "R2 " + person["name"]
+            person["mcr"] = "R2-" + person["mcr"]
+            person["source"]["sheet"] = "R2 Planning"
+            for month in person["postings"]:
+                month["source"]["sheet"] = "R2 Planning"
+        for sheet in r2["annual_sheets"]:
+            if any(person is r2["residents"][0] for person in sheet["residents"]):
+                continue
+            for person in sheet["residents"]:
+                person["name"] = "R2 " + person["name"]
+                person["mcr"] = "R2-" + person["mcr"]
+                person["source"]["sheet"] = "R2 History"
+                for month in person["postings"]:
+                    month["source"]["sheet"] = "R2 History"
+            book["annual_sheets"].append(sheet)
+        book["residents"].extend(r2["residents"])
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        for month in range(12):
+            for year, size in (("r2.", 2), ("r4.", 4)):
+                counts = Counter(p["months"][month]["target"]["requirement_id"] for p in result["residents"]
+                                 if p["months"][month]["target"]["requirement_id"].startswith(year))
+                self.assertEqual(len(counts), size)
+                self.assertEqual(set(counts.values()), {1})
+        self.assertEqual(result["soft_results"]["posting_balance"], 48)
 
     def test_missing_cluster_cannot_be_credited_by_impossible_site(self):
         book = r4_book()

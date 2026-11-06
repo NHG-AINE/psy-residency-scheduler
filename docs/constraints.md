@@ -75,9 +75,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   LOA, capacity and remaining requirements. This is a preference, not a fixed
   quota; residents must still complete their required postings. Balance posting
   types separately from the distribution of residents across institutions.
-  Posting balance takes priority over the weighted institution allocation
-  target, which takes priority over peer grouping, across all R-years.
-- **Spread placements across institutions using a weighted IMH target.**
+  Balance R2 and R4 posting requirements separately each month. Posting
+  balance takes priority over institution allocation, which takes priority over
+  peer grouping, across all R-years.
+- **Spread placements across institutions using allocation targets.**
   When a posting is offered at IMH and other eligible institutions, give IMH
   two allocation shares and each other institution one share. For N residents
   needing that posting and K eligible institutions including IMH, target
@@ -89,7 +90,8 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   Allow deviations for capacity limits, cross-cluster requirements, LOA
   and resident requests. Small cohorts need not populate every institution. Apply the formula to the residents needing the posting, not
   automatically to the full intake, and choose assignments together rather
-  than filling IMH first.
+  than filling IMH first. For R4 Consultation Liaison, which has no IMH option,
+  aim for an even distribution across eligible institutions.
 
 ## Draft preference priority
 
@@ -100,12 +102,13 @@ score; compare scores in order rather than adding them into a total.
 1. Usual R1 route distribution.
 2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
 3. Balance posting requirements over time.
-4. Weighted IMH institution allocation target.
+4. Institution allocation targets: weighted IMH where offered, even R4
+   Consultation Liaison allocation otherwise.
 5. Missing cluster exposure for residents whose draft reaches R3.
 6. Preferred route-to-inpatient destination, as described in
    [cross-cluster.md](cross-cluster.md).
 7. Additional R1-R2 cluster exposure.
 8. Avoid singleton months for the same posting and institution.
 
-This order applies across the R1-R3 draft. It does not set the priority of
+This order applies across the R1-R4 draft. It does not set the priority of
 resident requests or replace the hard R4 completion requirement.

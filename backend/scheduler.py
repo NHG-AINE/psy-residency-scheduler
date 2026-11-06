@@ -235,6 +235,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
                 occupancy[(month, option["requirement_id"], option["institution"], option["label"])].append(variable)
     placements = []
     r2_monthly_totals = [0] * len(prepared["planning_months"])
+    r4_monthly_totals = [0] * len(prepared["planning_months"])
     for i, person in enumerate(selected):
         remaining = {r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}
         assert len(remaining) <= 1, "R1 candidates must have equal remaining duration"
@@ -249,6 +250,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         placements[-1] += r2_rules.add_blocks(model, person, r4_blocks[i], r1_months + r2_months + r3_months, i)
         for month in active[r1_months:r1_months + r2_months]:
             r2_monthly_totals[month] += 1
+        r4_months = sum(r["remaining_months"] for r, _, _ in r4_blocks[i])
+        for month in active[r1_months + r2_months + r3_months:r1_months + r2_months + r3_months + r4_months]:
+            r4_monthly_totals[month] += 1
         for placement in placements[-1]:
             o = placement["option"]
             for month in placement["months"]:
@@ -262,11 +266,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             visits = [variables[i][j] for j, c in enumerate(candidates[i]) if any(o and o["institution"] in sites for o in c["schedule"])]
             visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["institution"] in sites]
             if "r4" in person["recorded_years"]:
-                # Future logical block choices witness feasibility only; they do
+                # Future R1-R4 choices witness feasibility only; they do
                 # not contribute projected credit or reserve future capacity.
-                future = [p["variable"] for p in placements[i]
-                          if not p["months"] and p["option"]["residency_year"] == "R4"
-                          and p["option"]["institution"] in sites]
+                future = [variables[i][j] for j, choice in enumerate(candidates[i])
+                          if any(institution in sites for (_, institution) in choice["carryforward"])]
+                future += [p["variable"] for p in placements[i]
+                           if not p["months"] and p["option"]["institution"] in sites]
                 model.add(sum(visits + future) >= 1)
             missing = model.new_bool_var(f"missing_{i}_{cluster}")
             model.add(sum(visits) == 0).only_enforce_if(missing)
@@ -296,11 +301,13 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
         model.add_abs_equality(deviation, sum(inpatient_counts[site]) - target)
         inpatient_deviations.append(deviation)
-    balance, allocation, r3_allocation = [], [], []
+    balance, allocation, r3_allocation, r4_allocation = [], [], [], []
     r2_ids = sorted({r["requirement_id"] for bs in blocks for r, _, _ in bs})
+    r4_ids = sorted({r["requirement_id"] for bs in r4_blocks for r, _, _ in bs})
     for month in range(len(prepared["planning_months"])):
-        counts = [sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in r2_ids]
-        balance.extend(_posting_balance(model, counts, r2_monthly_totals[month], month))
+        for year, ids, totals in (("r2", r2_ids, r2_monthly_totals), ("r4", r4_ids, r4_monthly_totals)):
+            counts = [sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in ids]
+            balance.extend(_posting_balance(model, counts, totals[month], f"{year}_{month}"))
     # Allocation is per exact posting, not a shared bucket for all electives.
     allocation_groups = defaultdict(list)
     for ps in placements:
@@ -309,8 +316,19 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
                 o = p["option"]
                 allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
     for group, ps in allocation_groups.items():
-        eligible = sorted({o["institution"] for o in r2_options + r3_options if (o["requirement_id"], normalized_label(o["posting"])) == group and o["capacity"] != 0})
+        eligible = sorted({o["institution"] for o in r2_options + r3_options + r4_options if (o["requirement_id"], normalized_label(o["posting"])) == group and o["capacity"] != 0})
+        if group[0].startswith("r4."):
+            eligible = sorted({p["option"]["institution"] for p in ps if p["option"]["capacity"] != 0})
+        if len(eligible) < 2:
+            continue
         if "IMH" not in eligible:
+            if group[0] == "r4.consultation_liaison_psychiatry":
+                counts = [sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible]
+                for left in range(len(counts)):
+                    for right in range(left + 1, len(counts)):
+                        d = model.new_int_var(0, len(selected), f"allocation_{group}_{left}_{right}")
+                        model.add_abs_equality(d, counts[left] - counts[right])
+                        r4_allocation.append(d)
             continue
         total = sum(p["variable"] for p in ps)
         baseline = model.new_int_var(0, len(selected), f"baseline_{group}")
@@ -320,12 +338,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             count = sum(p["variable"] for p in ps if p["option"]["institution"] == site)
             d = model.new_int_var(0, len(selected), f"allocation_{group}_{site}")
             model.add_abs_equality(d, count - target)
-            (r3_allocation if group[0].startswith("r3.") else allocation).append(d)
+            (r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation).append(d)
     objectives = [
         ("incoming_route_distribution", preferences["distribution"]),
         ("monthly_medicine_neurology_ratio", preferences["ratio"]),
         ("posting_balance", sum(balance)),
-        ("inpatient_allocation", sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation)),
+        ("inpatient_allocation", sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation) + sum(r4_allocation)),
         ("inpatient_destination", preferences["destination"]),
         ("missing_clusters", sum(cluster_penalties)),
         ("singleton_months", sum(singletons.values())),
@@ -381,6 +399,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         "r3_missing_clusters": solver.value(sum(r3_cluster_penalties)),
         "posting_balance": solver.value(sum(balance)), "r2_allocation_deviation": solver.value(sum(allocation)),
         "r3_allocation_deviation": solver.value(sum(r3_allocation)),
+        "r4_allocation_deviation": solver.value(sum(r4_allocation)),
     }
     result["singletons"] = [
         {"month": prepared["planning_months"][month]["month"],
