@@ -1,4 +1,4 @@
-"""Shared draft model and optimisation; R1 and R2 rules."""
+"""Shared draft model and optimisation for R1-R3."""
 from collections import defaultdict
 from copy import deepcopy
 from math import isfinite
@@ -8,12 +8,12 @@ from ortools.sat.python import cp_model
 
 if __package__:
     from .cluster_coverage import CLUSTERS, cluster_coverage
-    from .rules import r1_rules, r2_rules
+    from .rules import r1_rules, r2_rules, r3_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
     from cluster_coverage import CLUSTERS, cluster_coverage
-    from rules import r1_rules, r2_rules
+    from rules import r1_rules, r2_rules, r3_rules
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 
@@ -88,26 +88,26 @@ def _solve_priorities(model, objectives, variables, max_seconds):
 
 
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
-    """Schedule remaining R1 work, then R2 for residents recorded in R2.
+    """Schedule remaining R1, R2 and R3 work in progression order.
 
-    Both years share capacity,
+    All years share capacity,
     soft priorities and one solve budget. Historical credit is preserved, LOA
     pauses blocks, and unfinished requirements carry beyond the planning year.
     """
     if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) or not isfinite(max_seconds) or max_seconds < 0:
         raise ValueError("max_seconds must be a finite nonnegative number")
     prepared = prepare_scheduler_inputs(workbook, reviewstore)
-    years = {"r1", "r2"}
+    years = {"r1", "r2", "r3"}
     selected = [p for p in prepared["residents"] if years & set(p["recorded_years"])]
     skipped = [deepcopy({**{key: p[key] for key in ("name", "mcr", "source", "recorded_year")},
                          "reasons": p["blockers"]}) for p in selected if p["blockers"]]
     selected = [p for p in selected if not p["blockers"]]
     excluded = [deepcopy({key: p[key] for key in ("name", "mcr", "source", "recorded_year")})
                 for p in prepared["residents"] if not years & set(p["recorded_years"])]
-    result = {"scope": "r1_r2", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
+    result = {"scope": "r1_r2_r3", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
-              "limitations": ["R3-R5 portions are outside this draft", "Resident requests are not interpreted",
+              "limitations": ["R4-R5 portions are outside this draft", "Resident requests are not interpreted",
                               "Finite shared capacity with excluded residents requires review"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
@@ -118,7 +118,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     options = [o for o in prepared["catalogue_options"] if "r1" in recorded_years(o["residency_year"])]
     by_key, candidates, active_intake = r1_rules.prepare_candidates(
         selected, options, prepared["planning_start"], blockers)
-    has_r2 = any("r2" in person["recorded_years"] for person in selected)
+    has_r2 = any({"r2", "r3"} & set(person["recorded_years"]) for person in selected)
     r2_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R2"] if has_r2 else []
     blocks = [[] for _ in selected]
     if has_r2:
@@ -136,9 +136,27 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             if summary.get("residency_year") == "R2" and summary.get("remarks"):
                 blockers.append({"code": "unsupported_r2_remarks", "source": summary["source"]})
         for i, person in enumerate(selected):
-            if "r2" in person["recorded_years"]:
+            if {"r2", "r3"} & set(person["recorded_years"]):
                 blocks[i] = r2_rules.prepare_blocks(person, r2_options, blockers)
         options += r2_options
+    has_r3 = any("r3" in person["recorded_years"] for person in selected)
+    r3_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R3"] if has_r3 else []
+    r3_blocks = [[] for _ in selected]
+    seen_r3 = set()
+    for o in r3_options:
+        key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
+        if key in seen_r3:
+            blockers.append({"code": "duplicate_r3_catalogue_option", "source": o["source"]})
+        seen_r3.add(key)
+        blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+        if o["remarks"]:
+            blockers.append({"code": "unsupported_r3_remarks", "source": o["source"]})
+    for i, person in enumerate(selected):
+        if "r3" in person["recorded_years"]:
+            remaining = {r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}
+            earlier = next(iter(remaining), 0) + sum(r["remaining_months"] for r, _, _ in blocks[i])
+            r3_blocks[i] = r3_rules.prepare_block(person, r3_options, prepared["planning_start"], earlier, blockers)
+    options += r3_options
     by_key = {(o["requirement_id"], o["institution"], o["label"]): o for o in options}
     # No occupancy is silently reserved or ignored for residents outside this draft.
     finite = {(o["category"], o["residency_year"], normalized_label(o["label"]))
@@ -188,6 +206,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         # Thus R2 occupancy is fixed even though block order/site are choices.
         active = [month for month, availability in enumerate(person["availability"]) if availability["available"]]
         r2_months = sum(r["remaining_months"] for r, _, _ in blocks[i])
+        placements[-1] += r2_rules.add_blocks(model, person, r3_blocks[i], r1_months + r2_months, i)
         for month in active[r1_months:r1_months + r2_months]:
             r2_monthly_totals[month] += 1
         for placement in placements[-1]:
@@ -235,7 +254,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     allocation_groups = defaultdict(list)
     for ps in placements:
         for p in ps:
-            if p["months"]:
+            if p["months"] and p["option"]["residency_year"] == "R2":
                 o = p["option"]
                 allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
     for group, ps in allocation_groups.items():

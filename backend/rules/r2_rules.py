@@ -64,7 +64,7 @@ def add_blocks(model, person, blocks, r1_months, resident_index):
                     starts |= {start + other["remaining_months"] for start in starts}
         for start in sorted(starts):
             for option in options:
-                variable = model.new_bool_var(f"r2_{resident_index}_{len(placements)}")
+                variable = model.new_bool_var(f"{requirement['requirement_id']}_{resident_index}_{len(placements)}")
                 choices.append(variable)
                 for tick in range(start, start + length):
                     coverage[tick].append(variable)

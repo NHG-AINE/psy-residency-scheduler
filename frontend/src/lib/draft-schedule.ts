@@ -81,7 +81,11 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
-  no_schedulable_residents: 'No R1 or R2 residents have usable scheduling inputs',
+  no_schedulable_residents: 'No R1, R2 or R3 residents have usable scheduling inputs',
+  conflicting_partial_r3_history: 'Review the interrupted or conflicting Continuity Clinic history',
+  missing_r3_catalogue_option: 'No matching Continuity Clinic catalogue option',
+  unsupported_r3_remarks: 'Review unsupported R3 posting remarks',
+  duplicate_r3_catalogue_option: 'Resolve duplicate R3 posting options',
   conflicting_partial_r2_history: 'Review the partially completed R2 posting and institution',
   missing_r2_catalogue_option: 'No matching R2 catalogue option for the remaining requirement',
   unsupported_r2_remarks: 'Review unsupported R2 posting remarks',
