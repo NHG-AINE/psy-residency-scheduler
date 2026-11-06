@@ -27,14 +27,14 @@
 - Show original labels, months, recorded years, candidates and review reasons.
 - Group consecutive months only when MCR, identity, label and recorded-year context agree, including across tabs. Keep unsafe identities and separated periods apart; exclude LOA and blanks.
 - **Needs review:** unresolved labels and invalid saved decisions only.
-- **All entries:** also show automatic and manually confirmed labels, including open requirement years and remediation credit review.
-- A valid label match leaves Needs review even if its requirement year or remediation credit is still unconfirmed.
+- **All entries:** also show automatic and manually confirmed labels, including open requirement years and recognised remediation.
+- A valid label match leaves Needs review even if its requirement year has not been manually confirmed.
 - Automatic matching does not save a decision, assign a requirement year or award credit.
 - **Resident decision:** confirms a label for that resident and those months. Requirement year is optional, separate and must fit the catalogue entry; it never changes the recorded R-year.
 - **Shared mapping:** applies to the original label, recorded-year context and core/elective category. It confirms wording only, not other residents’ requirement years.
 - An explicit elective marker requires an elective target for manual decisions too.
 - Identity conflicts block resident-specific decisions and editor actions, but not shared wording mappings. Invalid saved resident decisions retain a visible reason.
-- Recognized remediation still needs separate credit review; matching or confirming its label does not establish completion.
+- Recognised remediation can count in the requirements ledger under the usual identity, requirement-year, institution and duration rules. There is no separate remediation credit approval step; label recognition alone does not establish completion.
 
 ## Saving and reuploading
 

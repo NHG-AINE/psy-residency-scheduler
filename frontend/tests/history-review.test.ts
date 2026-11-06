@@ -135,7 +135,7 @@ test('recognized remediation leaves the label queue but retains its credit statu
   assert.equal(matchesHistoryFilter(entry, 'open', ''), false)
   assert.equal(matchesHistoryFilter(entry, 'all', ''), true)
   assert.equal(matchesHistoryFilter(entry, 'reviewed', ''), false)
-  assert.equal(historyStatusLabel(entry.review.status), 'Remediation credit review')
+  assert.equal(historyStatusLabel(entry.review.status), 'Remediation recognised')
   assert.equal(entry.review.requirement_year, null)
   assert.match(entry.months[0].value, /Remediation/)
   assert.equal(entry.recorded_year, 'R2,R3')

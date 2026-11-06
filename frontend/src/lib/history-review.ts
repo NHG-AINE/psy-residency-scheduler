@@ -123,7 +123,7 @@ export const reviewReasons: Record<string, string> = {
   catalogue_alternatives: 'Other catalogue alternatives retained',
   earlier_year_fallback: 'Recognized in an earlier catalogue year',
   no_catalogue_match: 'No exact catalogue label', multiple_catalogue_candidates: 'Several catalogue matches',
-  remediation_credit_review: 'Remediation: separate credit review remains required',
+  remediation_credit_review: 'Remediation posting',
   no_earlier_year_context: 'No earlier residency year is available for remediation matching',
   conflicting_saved_decisions: 'Saved decisions conflict', catalogue_target_changed_or_missing: 'Catalogue target changed or is missing',
   incompatible_requirement_year: 'Requirement year does not match the chosen catalogue entry', incompatible_alias_category: 'Mapping category differs from the catalogue entry',
@@ -138,7 +138,7 @@ export function historyStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     unreviewed: 'Needs review', automatic_match: 'Automatically matched',
     label_confirmed: 'Label confirmed - year open', reviewed: 'Label and year confirmed',
-    needs_review: 'Saved decision needs review', credit_review_required: 'Remediation credit review',
+    needs_review: 'Saved decision needs review', credit_review_required: 'Remediation recognised',
   }
   return labels[status] || status.replaceAll('_', ' ')
 }

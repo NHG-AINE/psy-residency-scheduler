@@ -49,7 +49,7 @@ function DecisionEditor({ entry, catalogue, store, onSave, onCancel }: {
         {scope === 'alias' ? <p className="history-help">Shared scope: this original label, recorded R-year “{entry.recorded_year || 'blank'}”, and {target?.category || 'selected'} category. Requirement years must still be reviewed for each resident.</p> : <label>Requirement year — separate confirmation<select value={requirementYear} onChange={(event) => setRequirementYear(event.target.value)}><option value="">Leave unconfirmed</option>{[...new Set(years)].map((year) => <option key={year} value={year}>{year}</option>)}</select></label>}
       </div>
     </div>
-    {entry.match.reasons.includes('remediation_credit_review') && <p className="history-warning">Remediation remains subject to separate credit review after confirming the label and year.</p>}
+    {entry.match.reasons.includes('remediation_credit_review') && <p className="history-help">Recognised remediation can count towards requirements. See the resident’s requirements for counted months.</p>}
     {replacing && <p className="history-help">Saving replaces the existing decision for this exact scope.</p>}
     <button className="button" type="submit" disabled={!target || (scope === 'resident' && !entry.identity_safe)}>{replacing ? 'Replace saved decision' : 'Save decision'}</button>
   </form>
