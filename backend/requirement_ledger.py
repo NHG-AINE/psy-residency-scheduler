@@ -64,11 +64,20 @@ def build_requirement_ledger(workbook, store):
         for month, source in zip(entry["months"], entry["sources"]):
             resolved[(mcr_key(entry["mcr"]), normalized_label(entry["name"]), month["month"], source_key(source))].append(entry)
     annual = workbook.get("annual_sheets", workbook.get("histories", []) + [{"residents": workbook.get("residents", [])}])
+    roster_identities = {source_key(r["source"])[:2]:
+                         (mcr_key(r.get("mcr")), normalized_label(r.get("name")))
+                         for r in workbook.get("residents", [])}
+
+    def linked_identity(resident):
+        original = (mcr_key(resident.get("mcr")), normalized_label(resident.get("name")))
+        target = resident.get("matched_resident_source")
+        return roster_identities.get(source_key(target)[:2], original) if target else original
+
     raw = defaultdict(lambda: defaultdict(list))
     unsafe_history = set()
     for sheet in annual:
         for resident in sheet["residents"]:
-            identity = (mcr_key(resident.get("mcr")), normalized_label(resident.get("name")))
+            identity = linked_identity(resident)
             if not safe(resident):
                 if any(month_number(posting["month"]) < start_number for posting in resident["postings"]):
                     unsafe_history.add(identity)
@@ -82,7 +91,9 @@ def build_requirement_ledger(workbook, store):
                             "resident_source": resident["source"]}
                 outcome = {"status": posting["status"], "reasons": []}
                 if posting["status"] == "posting":
-                    entries = resolved.get((*identity, month, source_key(posting["source"])), [])
+                    # Review decisions remain keyed to original source identity.
+                    entries = resolved.get((mcr_key(resident.get("mcr")), normalized_label(resident.get("name")),
+                                            month, source_key(posting["source"])), [])
                     outcomes = [_allocation(entry, workbook) for entry in entries]
                     outcome = outcomes[0] if outcomes and all(item == outcomes[0] for item in outcomes) else {
                         "status": "pending", "reasons": ["unresolved_history"]}

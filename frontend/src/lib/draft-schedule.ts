@@ -9,16 +9,20 @@ export type DraftSchedule = {
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
+  skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
-    months: { month: string; status: 'posting' | 'loa' | 'outside_r1_scope'; label: string | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
+// Allow time for the 40-second solver budget, input preparation and transport.
+const DRAFT_REQUEST_TIMEOUT_MS = 60_000
+
 export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal): Promise<DraftSchedule> {
   let response: Response
   try {
-    response = await fetch('/api/draft-r1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) })
+    response = await fetch('/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_REQUEST_TIMEOUT_MS)]) })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('Draft generation timed out. Check the connection and retry.')
     throw new Error('Could not reach the backend to generate a draft. Check the connection and retry.')
@@ -39,7 +43,7 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
   return resident.postings.map((posting) => {
     const month = person.months.find((candidate) => candidate.month === posting.month)
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
-      ? { ...posting, value: month.label, status: 'posting', draft: true } : posting
+      ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core' } : posting
   })
 }
 
@@ -77,12 +81,17 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
-  no_r1_residents: 'No R1 residents in this planning year', unsafe_identity: 'Resolve the resident identity in Issues',
+  no_schedulable_residents: 'No R1 or R2 residents have usable scheduling inputs',
+  conflicting_partial_r2_history: 'Review the partially completed R2 posting and institution',
+  missing_r2_catalogue_option: 'No matching R2 catalogue option for the remaining requirement',
+  unsupported_r2_remarks: 'Review unsupported R2 posting remarks',
+  duplicate_r2_catalogue_option: 'Resolve duplicate R2 posting options',
+  unsafe_identity: 'Resolve the resident identity in Issues',
   unresolved_history: 'Review unresolved historical postings', conflicting_month_evidence: 'Review conflicting records for this month',
   requirement_year_unconfirmed: 'Confirm the historical requirement year', programme_duration_mismatch: 'Correct the posting duration to match the programme',
   historical_progress_unknown: 'Review missing historical progress', pending_history_review: 'Review unresolved historical postings',
   conflicting_history: 'Review conflicting historical records', invalid_planning_month_evidence: 'Review conflicting planning month evidence',
-  shared_capacity_outside_r1_scope: 'Review capacity shared with residents outside this draft',
+  shared_capacity_outside_draft_scope: 'Review capacity shared with residents outside this draft',
   unsupported_r1_remarks: 'Review unsupported R1 posting remarks', duplicate_r1_catalogue_option: 'Resolve duplicate R1 posting options',
   invalid_capacity: 'Correct the posting capacity', invalid_duration: 'Correct the posting duration',
   unclear_intake: 'Review the unclear incoming intake', excess_intake: 'Review the excess incoming intake',

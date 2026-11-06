@@ -242,7 +242,8 @@ def review_import(result, yearly_sheets=None):
     annual = ([s["residents"] for s in sheets] if sheets is not None else
               [result["residents"]] + [s["residents"] for s in result["histories"]])
     identities = [r for rows in annual for r in rows] + result["requests"]
-    names, mcrs = defaultdict(set), defaultdict(set)
+    mcrs = defaultdict(set)
+    ambiguous_names = set()
     duplicate_sources = set()
 
     def key(record):
@@ -304,7 +305,6 @@ def review_import(result, yearly_sheets=None):
         if not resident_name:
             issue("missing_name", "Missing resident name", "Confirm this row's identity in the workbook.", [record])
         if mcr and resident_name:
-            names[resident_name].add(mcr)
             mcrs[mcr].add(resident_name)
     for rows in annual:
         counts = defaultdict(list)
@@ -322,20 +322,32 @@ def review_import(result, yearly_sheets=None):
             issue("conflicting_identity", f"Different names for MCR {mcr}",
                   "The same MCR is recorded with different names.",
                   [r for r in identities if key(r) == mcr])
-    for resident_name, recorded_mcrs in names.items():
-        if len(recorded_mcrs) > 1:
-            related = [r for r in identities if name(r) == resident_name]
-            issue("conflicting_identity", f"Different MCRs for {related[0]['name']}",
-                  "The same name is recorded with different MCRs.", related)
+    # A name may acquire another MCR across years. Two records with that name
+    # in one annual sheet cannot establish which identity owns earlier history.
+    for rows in annual:
+        named = defaultdict(list)
+        for record in rows:
+            if name(record):
+                named[name(record)].append(record)
+        for resident_name, repeated in named.items():
+            if len(repeated) > 1 and len({key(r) for r in repeated}) > 1:
+                ambiguous_names.add(resident_name)
+    for resident_name in sorted(ambiguous_names):
+        issue("conflicting_identity", "Multiple residents with the same name",
+              "This name appears with different MCRs in the same annual worksheet.",
+              [r for r in identities if name(r) == resident_name])
 
     target = defaultdict(list)
+    target_names = defaultdict(list)
     for record in result["residents"]:
         if key(record):
             target[key(record)].append(record)
+        if name(record) and key(record):
+            target_names[name(record)].append(record)
     for record in [r for rows in annual for r in rows] + result["requests"]:
         mcr = key(record)
-        candidates = target[mcr] if mcr else []
-        ambiguous = (len(candidates) > 1 or len(names[name(record)]) > 1
+        candidates = (target[mcr] or target_names[name(record)]) if mcr else []
+        ambiguous = (len(candidates) > 1 or name(record) in ambiguous_names
                      or len(mcrs[mcr]) > 1
                      or (record["source"]["sheet"], record["source"]["row"]) in duplicate_sources
                      or not name(record)
