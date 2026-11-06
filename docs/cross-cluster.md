@@ -49,7 +49,10 @@
 - Consider remaining eligible postings, not just the recorded R-year. Do not
   defer a missing cluster when doing so would leave no suitable opportunity
   before R4 completion; secure that exposure earlier. Do not assume future
-  availability when it is unknown; flag it for review.
+  availability when it is unknown; flag it for review. For an incomplete R4,
+  remaining eligible R1-R4 posting choices may establish structural feasibility.
+  Choices beyond the draft horizon do not count as planned exposure or reserve
+  capacity, and future availability remains unknown.
 - These priorities never override hard constraints such as LOA, capacity or
   posting eligibility. Planned exposure is not completed historical credit.
 
