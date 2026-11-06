@@ -302,3 +302,19 @@
   .draft-warning-source { @apply text-xs text-muted; overflow-wrap: anywhere; }
   .draft-error { color: #9f352e; }
 }
+
+.monthly-breakdown { margin-top: 1.5rem; }
+.breakdown-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 1.5rem; }
+.breakdown-toolbar h2 { font-size: 1.125rem; font-weight: 500; }
+.breakdown-toolbar p { font-size: .75rem; margin-top: .25rem; }
+.monthly-breakdown table { min-width: 960px; }
+.monthly-breakdown th, .monthly-breakdown td { min-width: 64px; padding: .75rem; text-align: center; }
+.monthly-breakdown tr > :first-child { position: sticky; left: 0; z-index: 1; min-width: 260px; text-align: left; background: white; }
+.monthly-breakdown thead th, .breakdown-group > :first-child, .breakdown-group { background: #fafafa; }
+.breakdown-group { font-weight: 500; }
+.breakdown-group button { display: flex; align-items: center; gap: .5rem; text-align: left; cursor: pointer; }
+.breakdown-group svg { width: 1rem; height: 1rem; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.5; transition: transform 150ms ease; }
+.breakdown-group svg.collapsed { transform: rotate(-90deg); }
+.breakdown-institution > :first-child { padding-left: 2.25rem; font-weight: 400; }
+.breakdown-institution:hover, .breakdown-institution:hover > :first-child { background: #f5f5f5; }
+@media (prefers-reduced-motion: reduce) { .breakdown-group svg { transition: none; } }

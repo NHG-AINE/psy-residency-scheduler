@@ -146,3 +146,16 @@ test('skipped resident warnings combine consecutive months without merging reaso
   assert.equal(groups[3].dates, '')
   assert.equal(reasons.length, 5)
 })
+
+
+test('unresolved skipped history marks only blank draft cells and discard restores them', () => {
+  const skipped = { ...draft, residents: [], skipped_residents: [{ source: resident.source, name: resident.name, mcr: resident.mcr,
+    reasons: [{ code: 'unresolved_history' }] }] }
+  const cells = draftPostings(resident, skipped)
+  assert.equal(postingCategory(postingDisplay([cells[3]]), cells[3].status), 'unresolved')
+  assert.equal(postingDisplay([cells[3]]).label, 'Unresolved')
+  assert.equal(cells[0], resident.postings[0])
+  assert.equal(cells[1], resident.postings[1])
+  assert.equal(draftPostings(resident, null), resident.postings)
+  assert.equal(draftPostings(resident, { ...skipped, skipped_residents: [] }), resident.postings)
+})
