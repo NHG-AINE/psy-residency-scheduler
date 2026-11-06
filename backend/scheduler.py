@@ -53,6 +53,20 @@ def _posting_balance(model, counts, total, month):
     return deviations
 
 
+class _BestScoreTime(cp_model.CpSolverSolutionCallback):
+    """Record the first observation of the best score, including presolve time."""
+    def __init__(self):
+        super().__init__()
+        self.best_score = None
+        self.best_time = None
+
+    def on_solution_callback(self):
+        score = self.objective_value
+        if self.best_score is None or score < self.best_score:
+            self.best_score = score
+            self.best_time = self.wall_time
+
+
 def _solve_priorities(model, objectives, variables, max_seconds):
     """Lock proven scores, not assignments; retain the last valid solution."""
     started = monotonic()
@@ -70,7 +84,8 @@ def _solve_priorities(model, objectives, variables, max_seconds):
         solver.parameters.num_search_workers = SOLVER_WORKERS
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
         stage_started = monotonic()
-        status = solver.solve(model)
+        callback = _BestScoreTime()
+        status = solver.solve(model, callback)
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
@@ -78,6 +93,9 @@ def _solve_priorities(model, objectives, variables, max_seconds):
         best = solver
         score = solver.value(objective)
         stages[-1]["score"] = score
+        stages[-1]["best_objective_bound"] = solver.best_objective_bound
+        if callback.best_time is not None:
+            stages[-1]["best_score_time_seconds"] = callback.best_time
         if status != cp_model.OPTIMAL:
             break  # Never freeze an unproven score and optimise a lower priority.
         model.add(objective == score)
