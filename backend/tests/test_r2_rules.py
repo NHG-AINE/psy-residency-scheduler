@@ -160,7 +160,7 @@ class R2SolverTests(unittest.TestCase):
         book["residents"].append(outside)
         result=self.solve(book)
         self.assertEqual(len(result["residents"]),1)
-        self.assertEqual(result["excluded_residents"][0]["source"],outside["source"])
+        self.assertEqual(result["skipped_residents"][0]["source"],outside["source"])
 
 
     def test_resident_input_issues_do_not_block_other_residents_or_rewrite_evidence(self):

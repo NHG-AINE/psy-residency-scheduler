@@ -1,4 +1,4 @@
-"""Shared draft model and optimisation for R1-R4."""
+"""Shared draft model and optimisation for R1-R5."""
 from collections import defaultdict
 from copy import deepcopy
 from math import isfinite
@@ -8,12 +8,12 @@ from ortools.sat.python import cp_model
 
 if __package__:
     from .cluster_coverage import CLUSTERS, cluster_coverage
-    from .rules import r1_rules, r2_rules, r3_rules, r4_rules
+    from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
     from cluster_coverage import CLUSTERS, cluster_coverage
-    from rules import r1_rules, r2_rules, r3_rules, r4_rules
+    from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 
@@ -119,7 +119,7 @@ def _solve_priorities(model, objectives, variables, max_seconds):
 
 
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
-    """Schedule remaining R1 through R4 work in progression order.
+    """Schedule remaining R1 through R5 work in progression order.
 
     All years share capacity,
     soft priorities and one solve budget. Historical credit is preserved, LOA
@@ -128,17 +128,17 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) or not isfinite(max_seconds) or max_seconds < 0:
         raise ValueError("max_seconds must be a finite nonnegative number")
     prepared = prepare_scheduler_inputs(workbook, reviewstore)
-    years = {"r1", "r2", "r3", "r4"}
+    years = {"r1", "r2", "r3", "r4", "r5"}
     selected = [p for p in prepared["residents"] if years & set(p["recorded_years"])]
     skipped = [deepcopy({**{key: p[key] for key in ("name", "mcr", "source", "recorded_year")},
                          "reasons": p["blockers"]}) for p in selected if p["blockers"]]
     selected = [p for p in selected if not p["blockers"]]
     excluded = [deepcopy({key: p[key] for key in ("name", "mcr", "source", "recorded_year")})
                 for p in prepared["residents"] if not years & set(p["recorded_years"])]
-    result = {"scope": "r1_r2_r3_r4", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
+    result = {"scope": "r1_r2_r3_r4_r5", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
-              "limitations": ["R5 portions are outside this draft", "Future R4 posting availability and capacity are unknown", "Resident requests are not interpreted",
+              "limitations": ["R5 electives with core-credit overlap or unsupported remarks are excluded", "Future posting availability and capacity are unknown", "Resident requests are not interpreted",
                               "Finite shared capacity with excluded residents requires review"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
@@ -156,7 +156,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             r1_done = any(route["evidence_status"] == "supported" for route in person["r1_routes"])
             if r1_done and all(not r["remaining_months"] for r in required):
                 person["recorded_years"].append("r4")
-    has_r2 = any({"r2", "r3", "r4"} & set(person["recorded_years"]) for person in selected)
+    has_r2 = any({"r2", "r3", "r4", "r5"} & set(person["recorded_years"]) for person in selected)
     r2_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R2"] if has_r2 else []
     local_blockers = [[] for _ in selected]
     blocks = [[] for _ in selected]
@@ -175,10 +175,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             if summary.get("residency_year") == "R2" and summary.get("remarks"):
                 blockers.append({"code": "unsupported_r2_remarks", "source": summary["source"]})
         for i, person in enumerate(selected):
-            if {"r2", "r3", "r4"} & set(person["recorded_years"]):
+            if {"r2", "r3", "r4", "r5"} & set(person["recorded_years"]):
                 blocks[i] = r2_rules.prepare_blocks(person, r2_options, local_blockers[i])
         options += r2_options
-    has_r3 = any({"r3", "r4"} & set(person["recorded_years"]) for person in selected)
+    has_r3 = any({"r3", "r4", "r5"} & set(person["recorded_years"]) for person in selected)
     r3_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R3"] if has_r3 else []
     r3_blocks = [[] for _ in selected]
     seen_r3 = set()
@@ -191,10 +191,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         if o["remarks"]:
             blockers.append({"code": "unsupported_r3_remarks", "source": o["source"]})
     for i, person in enumerate(selected):
-        if {"r3", "r4"} & set(person["recorded_years"]):
+        if {"r3", "r4", "r5"} & set(person["recorded_years"]):
             r3_blocks[i] = r3_rules.prepare_block(person, r3_options, local_blockers[i])
     options += r3_options
-    r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any("r4" in p["recorded_years"] for p in selected) else []
+    r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any({"r4", "r5"} & set(p["recorded_years"]) for p in selected) else []
     seen_r4 = set()
     for o in r4_options:
         key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
@@ -207,8 +207,22 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     r4_blocks = [r4_rules.prepare_blocks(person, r4_options, prepared["planning_start"],
                      next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
                      + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i]), local_blockers[i])
-                 if "r4" in person["recorded_years"] else [] for i, person in enumerate(selected)]
+                 if {"r4", "r5"} & set(person["recorded_years"]) else [] for i, person in enumerate(selected)]
     options += r4_options
+    r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any("r5" in p["recorded_years"] for p in selected) else []
+    r5_options = [o for o in r5_options if r5_rules.supported_option(o)]
+    seen_r5 = set()
+    for o in r5_options:
+        key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
+        if key in seen_r5:
+            blockers.append({"code": "duplicate_r5_catalogue_option", "source": o["source"]})
+        seen_r5.add(key)
+        blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+    r5_blocks = [r5_rules.prepare_blocks(person, r5_options, prepared["planning_start"],
+                     next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
+                     + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i])
+                 if "r5" in person["recorded_years"] else [] for i, person in enumerate(selected)]
+    options += r5_options
     keep = [i for i, reasons in enumerate(local_blockers) if not reasons]
     for i, reasons in enumerate(local_blockers):
         if reasons:
@@ -221,6 +235,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     blocks = [blocks[i] for i in keep]
     r3_blocks = [r3_blocks[i] for i in keep]
     r4_blocks = [r4_blocks[i] for i in keep]
+    r5_blocks = [r5_blocks[i] for i in keep]
     result["selected_sources"] = [deepcopy(p["source"]) for p in selected]
     by_key = {(o["requirement_id"], o["institution"], o["label"]): o for o in options}
     # No occupancy is silently reserved or ignored for residents outside this draft.
@@ -280,6 +295,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         r4_months = sum(r["remaining_months"] for r, _, _ in r4_blocks[i])
         for month in active[r1_months + r2_months + r3_months:r1_months + r2_months + r3_months + r4_months]:
             r4_monthly_totals[month] += 1
+        r5_start = r1_months + r2_months + r3_months + r4_months
+        placements[-1] += r2_rules.add_blocks(model, person, r5_blocks[i], r5_start, i)
         for placement in placements[-1]:
             o = placement["option"]
             for month in placement["months"]:
@@ -291,21 +308,21 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             if cluster in person["cluster_coverage"]["visited"]:
                 continue
             visits = [variables[i][j] for j, c in enumerate(candidates[i]) if any(o and o["institution"] in sites for o in c["schedule"])]
-            visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["institution"] in sites]
-            if "r4" in person["recorded_years"]:
+            visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["residency_year"] != "R5" and p["option"]["institution"] in sites]
+            if {"r4", "r5"} & set(person["recorded_years"]):
                 # Future R1-R4 choices witness feasibility only; they do
                 # not contribute projected credit or reserve future capacity.
                 future = [variables[i][j] for j, choice in enumerate(candidates[i])
                           if any(institution in sites for (_, institution) in choice["carryforward"])]
                 future += [p["variable"] for p in placements[i]
-                           if not p["months"] and p["option"]["institution"] in sites]
+                           if not p["months"] and p["option"]["residency_year"] != "R5" and p["option"]["institution"] in sites]
                 model.add(sum(visits + future) >= 1)
             missing = model.new_bool_var(f"missing_{i}_{cluster}")
             model.add(sum(visits) == 0).only_enforce_if(missing)
             model.add(sum(visits) >= 1).only_enforce_if(missing.Not())
             if reaches_r3:
                 r3_cluster_penalties.append(missing)
-            elif "r4" not in person["recorded_years"]:
+            elif not ({"r4", "r5"} & set(person["recorded_years"])):
                 cluster_penalties.append(missing)
     for (month, requirement, institution, label), values in occupancy.items():
         capacity = by_key[(requirement, institution, label)]["capacity"]
@@ -342,7 +359,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     allocation_groups = defaultdict(list)
     for ps in placements:
         for p in ps:
-            if p["months"]:
+            if p["months"] and p["option"]["residency_year"] != "R5":
                 o = p["option"]
                 allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
     for group, ps in allocation_groups.items():
@@ -387,7 +404,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         if status == "infeasible" and r4_options:
             blockers.append({"code": "r4_schedule_infeasible"})
             blockers.extend({"code": "r4_cluster_review", "source": p["source"], "clusters": p["cluster_coverage"]["missing"]}
-                            for p in selected if "r4" in p["recorded_years"] and p["cluster_coverage"]["missing"])
+                            for p in selected if {"r4", "r5"} & set(p["recorded_years"]) and p["cluster_coverage"]["missing"])
         return result
     for i, person in enumerate(selected):
         choice = next(choice for j, choice in enumerate(candidates[i]) if solver.boolean_value(variables[i][j]))
