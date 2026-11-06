@@ -94,6 +94,7 @@ class R3Tests(unittest.TestCase):
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         self.assertTrue(all(m["status"] == "outside_draft_scope" for m in result["residents"][0]["months"]))
         self.assertEqual(result["residents"][0]["carryforward"], [])
+        self.assertEqual(result["soft_results"]["r3_missing_clusters"], 0)
 
     def test_history_and_planning_loa_pause_clinic_and_carry_it_forward(self):
         book = r3_book()
@@ -115,3 +116,21 @@ class R3Tests(unittest.TestCase):
         person = result["residents"][0]
         self.assertTrue(all(m["status"] == "loa" for m in person["months"]))
         self.assertEqual([(c["institution"], c["months"]) for c in person["carryforward"]], [("SGH", 6)])
+        self.assertEqual(result["soft_results"]["r3_missing_clusters"], 0)
+
+    def test_allocation_precedes_r3_cluster_tiebreak(self):
+        book = r3_book(6)
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if o["residency_year"] != "R3" or o["posting"] in {"IMH Continuity Clinic", "NUH Continuity Clinic"}]
+        # One resident already has NUHS exposure; the others need it.
+        for month in book["annual_sheets"][-1]["residents"][0]["postings"]:
+            if month["value"] == "IMH Geriatric Psychiatry":
+                month["value"] = "NUH Geriatric Psychiatry"
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        self.assertEqual(result["soft_priority"], ["incoming_route_distribution", "monthly_medicine_neurology_ratio",
+            "posting_balance", "singleton_months", "inpatient_allocation", "r3_missing_clusters", "inpatient_destination", "missing_clusters"])
+        nuh = [p for p in result["residents"] if p["months"][0]["label"] == "NUH Continuity Clinic"]
+        self.assertEqual(len(nuh), 2)  # Weighted target: four IMH and two NUH.
+        self.assertTrue(all("NUHS" not in p["cluster_coverage"]["historical"]["visited"] for p in nuh))
+        self.assertEqual(result["soft_results"]["r3_missing_clusters"], 3)
