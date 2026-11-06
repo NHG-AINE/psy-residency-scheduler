@@ -184,7 +184,7 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(impossible["residents"], [])
         shared = r1_book()
         next(row for row in shared["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "1"
-        outside = resident([(m["month"], "IMH Inpatient Psychiatry") for m in shared["months"]], "R4", "Planning", 100)
+        outside = resident([(m["month"], "IMH Inpatient Psychiatry") for m in shared["months"]], "R5", "Planning", 100)
         shared["residents"].append(outside)
         blocked = draft_schedule(shared, STORE)
         self.assertEqual(blocked["status"], "blocked")
