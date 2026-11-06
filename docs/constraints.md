@@ -19,6 +19,9 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   LOA pauses the block. If a block is partially completed in recognised history, schedule
   its remaining months at the same posting and institution. Flag conflicting
   or unclear partial history for review rather than choosing automatically.
+  Preserve recognised Continuity Clinic credit when later historical postings
+  or gaps interrupt it; schedule the remainder at the same clinic and institution.
+  Multiple disconnected clinic runs still require review rather than being added together.
   Separate completed blocks, including remediation, may be at different
   institutions. Apply each posting's specific duration and timing rules,
   including any permitted division into separate blocks.

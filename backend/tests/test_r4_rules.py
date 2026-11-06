@@ -75,6 +75,28 @@ class R4Tests(unittest.TestCase):
         self.assertEqual([person["months"][i]["target"]["requirement_id"] for i in (0, 2)], ["r3.continuity_clinic"] * 2)
         self.assertEqual(sum(item["months"] for item in person["carryforward"]), 3)
 
+    def test_interrupted_clinic_resumes_before_remaining_r4_without_repeating_credit(self):
+        book = r4_book()
+        for sheet in book["annual_sheets"]:
+            for past in sheet["residents"]:
+                if past is book["residents"][0]:
+                    continue
+                for month in past["postings"]:
+                    month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+        book["annual_sheets"][-1]["residents"][0]["postings"] = book["annual_sheets"][-1]["residents"][0]["postings"][:10]
+        book["annual_sheets"].append({"residents": [resident(
+            [(f"2026-{7+i:02d}", label) for i, label in enumerate(
+                ["IMH Emergency Psychiatry"] * 3 + ["IMH Forensic Psychiatry"] * 3)], "R4", "R4 history")]})
+        before = deepcopy(book)
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        person = result["residents"][0]
+        self.assertEqual([m["label"] for m in person["months"][:2]], ["TTSH Continuity Clinic"] * 2)
+        self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"][2:] if m["target"]),
+                         {"r4.inpatient_psychiatry": 3, "r4.consultation_liaison_psychiatry": 3})
+        self.assertEqual(person["carryforward"], [])
+        self.assertEqual(book, before)
+
     def test_future_options_do_not_grant_projected_cluster_credit(self):
         book = r4_book()
         # NUHS is available only in the unfinished R3 block, beyond the horizon.

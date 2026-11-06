@@ -163,9 +163,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             blockers.append({"code": "unsupported_r3_remarks", "source": o["source"]})
     for i, person in enumerate(selected):
         if {"r3", "r4"} & set(person["recorded_years"]):
-            remaining = {r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}
-            earlier = next(iter(remaining), 0) + sum(r["remaining_months"] for r, _, _ in blocks[i])
-            r3_blocks[i] = r3_rules.prepare_block(person, r3_options, prepared["planning_start"], earlier, local_blockers[i])
+            r3_blocks[i] = r3_rules.prepare_block(person, r3_options, local_blockers[i])
     options += r3_options
     r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any("r4" in p["recorded_years"] for p in selected) else []
     seen_r4 = set()
