@@ -16,8 +16,8 @@ export type DraftSchedule = {
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
-// Allow time for the 40-second solver budget, input preparation and transport.
-const DRAFT_REQUEST_TIMEOUT_MS = 60_000
+// Allow an extra minute beyond the two-minute solver budget for preparation and transport.
+const DRAFT_REQUEST_TIMEOUT_MS = 180_000
 
 export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal): Promise<DraftSchedule> {
   let response: Response

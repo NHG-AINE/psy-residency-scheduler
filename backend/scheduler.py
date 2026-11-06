@@ -20,9 +20,9 @@ else:
 
 IMH_ALLOCATION_SHARES = 2
 
-DEFAULT_SOLVE_SECONDS = 40
-# Keep the search reproducible for a given set of inputs.
-SOLVER_WORKERS = 1
+DEFAULT_SOLVE_SECONDS = 120
+# Zero lets OR-Tools choose workers from the available CPUs.
+SOLVER_WORKERS = 0
 SOLVER_RANDOM_SEED = 0
 
 
