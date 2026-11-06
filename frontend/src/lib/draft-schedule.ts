@@ -16,6 +16,10 @@ export type DraftSchedule = {
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
+export function canGenerateDraft(workbook: Workbook | null): boolean {
+  return !!workbook && workbook.target_year === Math.max(...workbook.available_years.map(({ year }) => year))
+}
+
 // Allow an extra minute beyond the two-minute solver budget for preparation and transport.
 const DRAFT_REQUEST_TIMEOUT_MS = 180_000
 

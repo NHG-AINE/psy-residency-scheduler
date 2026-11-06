@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -158,4 +158,13 @@ test('unresolved skipped history marks only blank draft cells and discard restor
   assert.equal(cells[1], resident.postings[1])
   assert.equal(draftPostings(resident, null), resident.postings)
   assert.equal(draftPostings(resident, { ...skipped, skipped_residents: [] }), resident.postings)
+})
+
+
+test('draft generation is restricted to the latest workbook year, independent of list order', () => {
+  const workbook = { target_year: 2027, available_years: [{ year: 2028 }, { year: 2026 }, { year: 2027 }] } as Workbook
+  assert.equal(canGenerateDraft(workbook), false)
+  assert.equal(canGenerateDraft({ ...workbook, target_year: 2028 }), true)
+  assert.equal(canGenerateDraft({ ...workbook, target_year: 2029 }), false)
+  assert.equal(canGenerateDraft(null), false)
 })

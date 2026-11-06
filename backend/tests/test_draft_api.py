@@ -21,6 +21,19 @@ class DraftApiTests(unittest.TestCase):
                 self.assertEqual(passed_store.model_dump(), store)
                 self.assertEqual(solve.call_args.kwargs, {})
 
+    def test_historical_year_is_rejected_before_running_solver(self):
+        workbook = r1_book()
+        workbook["available_years"] = [{"year": 2028}, {"year": 2026}, {"year": 2027}]
+        with TestClient(app) as client, patch("main.draft_schedule") as solve:
+            response = client.post("/api/draft", json={"workbook": workbook, "store": {"version": 1, "decisions": []}})
+            self.assertEqual(response.status_code, 422)
+            self.assertIn("latest planning year", response.json()["detail"])
+            solve.assert_not_called()
+            workbook["target_year"] = 2028
+            solve.return_value = {"status": "feasible", "residents": [], "blockers": []}
+            self.assertEqual(client.post("/api/draft", json={"workbook": workbook, "store": {"version": 1, "decisions": []}}).status_code, 200)
+            solve.assert_called_once()
+
     def test_invalid_inputs_and_invalid_review_data_are_actionable(self):
         with TestClient(app) as client:
             response = client.post("/api/draft", json={"workbook": {}, "store": {"version": 1, "decisions": []}})
