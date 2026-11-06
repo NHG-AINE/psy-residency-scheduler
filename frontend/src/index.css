@@ -294,6 +294,7 @@
 
 @layer components {
   .draft-actions { @apply ml-auto flex items-center gap-3; }
+  .draft-timer { @apply text-xs text-muted; min-width: 8rem; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .draft-generate { min-width: 10rem; }
   .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
   .draft-feedback:not(:empty), .draft-error { @apply mt-3 mb-4; }
