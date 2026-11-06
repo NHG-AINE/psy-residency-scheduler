@@ -205,8 +205,8 @@ export default function App() {
     try {
       const result = await importWorkbook(nextFile, nextYear)
       revealAfterUpload.current = reveal
-      if (reveal) setView('Timetable')
-      setWorkbook(result); setFile(nextFile); setYear(result.target_year); setQuery('')
+      if (reveal) { setView('Timetable'); setQuery('') }
+      setWorkbook(result); setFile(nextFile); setYear(result.target_year)
       setStatus(`Imported ${nextFile.name}. ${result.residents.length} residents in the selected planning year. ${(result.issues?.length || 0) + result.warnings.length} import issues.`)
     } catch (problem: unknown) {
       setError(problem instanceof Error ? problem.message : 'Workbook import failed. Please try again.')
