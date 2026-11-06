@@ -129,8 +129,19 @@ class R3Tests(unittest.TestCase):
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "optimal", result["blockers"])
         self.assertEqual(result["soft_priority"], ["incoming_route_distribution", "monthly_medicine_neurology_ratio",
-            "posting_balance", "singleton_months", "inpatient_allocation", "r3_missing_clusters", "inpatient_destination", "missing_clusters"])
+            "posting_balance", "inpatient_allocation", "r3_missing_clusters", "inpatient_destination", "missing_clusters", "singleton_months"])
         nuh = [p for p in result["residents"] if p["months"][0]["label"] == "NUH Continuity Clinic"]
         self.assertEqual(len(nuh), 2)  # Weighted target: four IMH and two NUH.
         self.assertTrue(all("NUHS" not in p["cluster_coverage"]["historical"]["visited"] for p in nuh))
         self.assertEqual(result["soft_results"]["r3_missing_clusters"], 3)
+
+    def test_institution_target_takes_priority_over_avoiding_singletons(self):
+        book = r3_book(6)
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if o["residency_year"] != "R3" or o["posting"] in {
+                "IMH Continuity Clinic", "NUH Continuity Clinic", "SGH Continuity Clinic"}]
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        self.assertEqual(result["soft_results"]["r3_allocation_deviation"], 0)
+        # Four IMH and one at each other site beat a singleton-free 2/2/2 split.
+        self.assertEqual(result["soft_results"]["singleton_months"], 24)

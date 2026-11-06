@@ -28,8 +28,9 @@
   - TTSH/NNI: prefer spreading residents across SHS and NUHS institutions.
   - SGH: prefer institutions outside SHS, in NHG or NUHS.
   - NUH: prefer institutions outside NUHS, in NHG or SHS.
-- Route-to-inpatient preferences rank below peer grouping, the weighted IMH
+- Route-to-inpatient preferences rank below the weighted IMH
   allocation target and R3 cluster exposure, and above R1-R2 cluster exposure.
+  Peer grouping ranks last.
   Follow the full [draft priority order](constraints.md#draft-preference-priority).
 - These are preferences, not mandatory route-to-inpatient pairings. Repeating
   a cluster is allowed provided the cumulative R1-R4 requirement is met.
@@ -39,7 +40,7 @@
 - In R1-R2, treat new cluster exposure as a low-priority preference. Residents
   may repeat a cluster while they still have suitable opportunities to complete
   the requirement before the end of R4.
-- In R3, prioritise missing cluster exposure after peer grouping and weighted
+- In R3, prioritise missing cluster exposure after weighted
   institution allocation, and before R1 route-to-inpatient preferences.
 - By the end of R4, recognised history and planned qualifying postings must
   cover all three clusters. If no valid schedule can meet this requirement,

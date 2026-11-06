@@ -277,13 +277,13 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         ("incoming_route_distribution", preferences["distribution"]),
         ("monthly_medicine_neurology_ratio", preferences["ratio"]),
         ("posting_balance", sum(balance)),
-        ("singleton_months", sum(singletons.values())),
         ("inpatient_allocation", sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation)),
         ("inpatient_destination", preferences["destination"]),
         ("missing_clusters", sum(cluster_penalties)),
+        ("singleton_months", sum(singletons.values())),
     ]
     if r3_cluster_penalties:
-        objectives.insert(5, ("r3_missing_clusters", sum(r3_cluster_penalties)))
+        objectives.insert(4, ("r3_missing_clusters", sum(r3_cluster_penalties)))
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds)

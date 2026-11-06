@@ -22,7 +22,7 @@ PREFERRED_INPATIENT_SITES = {
 }
 SOFT_PRIORITIES = (
     "incoming_route_distribution", "monthly_medicine_neurology_ratio",
-    "singleton_months", "inpatient_allocation", "inpatient_destination", "missing_clusters",
+    "inpatient_allocation", "inpatient_destination", "missing_clusters", "singleton_months",
 )
 
 R1 = PROGRAMME_REQUIREMENTS["R1"]
