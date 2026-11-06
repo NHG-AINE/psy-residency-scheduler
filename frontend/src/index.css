@@ -298,5 +298,7 @@
   .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
   .draft-feedback:not(:empty), .draft-error { @apply mt-3 mb-4; }
   .draft-feedback ul { @apply mt-2 list-disc pl-5; }
+  .draft-resident-warnings { @apply mt-3 grid gap-4; }
+  .draft-warning-source { @apply text-xs text-muted; overflow-wrap: anywhere; }
   .draft-error { color: #9f352e; }
 }

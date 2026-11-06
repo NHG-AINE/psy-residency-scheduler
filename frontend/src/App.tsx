@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
-import { draftBlockerLabel, draftPostings, groupDraftResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import ScrollToTop from './components/ScrollToTop'
 import { scrollToPosition } from './lib/scroll'
@@ -125,7 +125,13 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   return <>
     <div className="timetable-toolbar"><div className="year-navigation" role="group" aria-label="Timetable planning year"><button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button><span className="year-range">Jul {year} - Jun {year + 1}</span><button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button></div><ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-dot legend-${kind}`} />{label}</li>)}</ul></div>
     <div className="draft-feedback" aria-live="polite" role="status">
-      {hasDraft && !generating && !!draft?.skipped_residents?.length && <details><summary>{draft.skipped_residents.length} {draft.skipped_residents.length === 1 ? 'resident left' : 'residents left'} unchanged - review input issues</summary><ul>{draft.skipped_residents.map((person, index) => <li key={index}>{[...new Set(person.reasons.map((reason) => draftBlockerLabel(reason, workbook)))].join('; ')}</li>)}</ul></details>}
+      {hasDraft && !generating && !!draft?.skipped_residents?.length && <details><summary>{draft.skipped_residents.length} {draft.skipped_residents.length === 1 ? 'resident left' : 'residents left'} unchanged - review input issues</summary><div className="draft-resident-warnings">{draft.skipped_residents.map((person, index) => <div key={index}>
+        <strong>{person.name || person.mcr || sourceLabel(person.source)}</strong>
+        <ul>{groupedDraftWarnings(person.reasons).map((warning, warningIndex) => <li key={warningIndex}>
+          <span>{warning.reason}{warning.dates && ` \u00b7 ${warning.dates}`}</span>
+          {warning.sources.length > 0 && <p className="draft-warning-source">Source: {warning.sources.join('; ')}</p>}
+        </li>)}</ul>
+      </div>)}</div></details>}
       {draft && !generating && !hasDraft && <><p>{draft.status === 'blocked' ? 'Draft blocked. Resolve the input issues below, then generate again.' : draft.status === 'infeasible' ? 'No feasible draft meets the current constraints. Review availability and posting capacities.' : draft.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>{draft.blockers.length > 0 && <ul>{draft.blockers.map((blocker, index) => <li key={index}>{draftBlockerLabel(blocker, workbook)}</li>)}</ul>}</>}
     </div>
     {draftError && <p className="draft-error" role="alert">{draftError}</p>}
