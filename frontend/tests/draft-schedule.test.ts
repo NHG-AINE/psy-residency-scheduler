@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -125,4 +125,24 @@ test('R2 elective display retains exact labels and separates matching core label
   assert.equal(postingCategory(display, 'posting'), 'elective')
   assert.equal(postingCategory(postingDisplay(blocks[2]), 'posting'), 'core')
   assert.equal(postings[1], resident.postings[1], 'LOA remains unchanged')
+})
+
+
+test('skipped resident warnings combine consecutive months without merging reasons, sources or gaps', () => {
+  const source = { sheet: 'History', row: 18 }
+  const reasons = ['2027-02', '2026-12', '2027-01', '2027-02', '2027-04'].map((month, index) => ({
+    code: 'unresolved_history', source: { ...source, column: String(index) }, month,
+  }))
+  const groups = groupedDraftWarnings([...reasons,
+    { code: 'conflicting_history', source, month: '2027-01' },
+    { code: 'unresolved_history', source: { ...source, row: 19 }, month: '2027-01' },
+    { code: 'unresolved_history', source },
+  ])
+  assert.equal(groups.length, 4)
+  assert.equal(groups[0].dates, 'Dec 26 \u2013 Feb 27, Apr 27')
+  assert.deepEqual(groups[0].sources, ['History \u00b7 row 18'])
+  assert.equal(groups[1].reason, 'Review conflicting historical records')
+  assert.deepEqual(groups[2].sources, ['History \u00b7 row 19'])
+  assert.equal(groups[3].dates, '')
+  assert.equal(reasons.length, 5)
 })

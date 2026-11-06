@@ -109,3 +109,31 @@ export function draftBlockerLabel(blocker: DraftSchedule['blockers'][number], wo
   return [blockerLabels[blocker.code] || blocker.code.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()),
     ...names, ...rows, ...(blocker.month ? [monthLabel(blocker.month)] : [])].join(' - ')
 }
+
+// Each skipped resident is already identified by its planning-sheet source.
+export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
+  const groups = new Map<string, { reason: string; sources: string[]; months: string[] }>()
+  for (const blocker of reasons) {
+    const sources = [...new Set([...(blocker.sources || []), ...(blocker.source ? [blocker.source] : [])]
+      .map((source) => sourceLabel(source.kind ? source : { sheet: source.sheet, row: source.row })))].sort()
+    const key = JSON.stringify([blocker.code, sources, !!blocker.month])
+    let group = groups.get(key)
+    if (!group) {
+      group = { reason: blockerLabels[blocker.code] || blocker.code.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()), sources, months: [] }
+      groups.set(key, group)
+    }
+    if (blocker.month) group.months.push(blocker.month)
+  }
+  return [...groups.values()].map(({ reason, sources, months }) => {
+    const ranges: string[][] = []
+    const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
+    for (const month of [...new Set(months)].sort()) {
+      const last = ranges.at(-1)
+      if (last && ordinal(month) === ordinal(last.at(-1)!) + 1) last.push(month)
+      else ranges.push([month])
+    }
+    const dates = ranges.map((range) => range.length === 1 ? monthLabel(range[0])
+      : `${monthLabel(range[0])} \u2013 ${monthLabel(range.at(-1)!)}`).join(', ')
+    return { reason, sources, dates }
+  })
+}
