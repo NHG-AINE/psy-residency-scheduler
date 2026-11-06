@@ -188,7 +188,7 @@ class R1SolverTests(unittest.TestCase):
         shared["residents"].append(outside)
         blocked = draft_schedule(shared, STORE)
         self.assertEqual(blocked["status"], "blocked")
-        self.assertEqual(len(blocked["excluded_residents"]), 1)
+        self.assertEqual(len(blocked["skipped_residents"]), 1)
         self.assertIn({"code": "shared_capacity_outside_draft_scope", "source": outside["postings"][0]["source"]}, blocked["blockers"])
 
     def test_incoming_targets_24_23_are_soft_and_relax_under_capacity(self):
