@@ -68,6 +68,9 @@ async def requirement_ledger(request: RequirementLedgerRequest):
 @app.post("/api/draft")
 async def generate_draft(request: RequirementLedgerRequest):
     try:
+        latest_year = max(item["year"] for item in request.workbook["available_years"])
+        if request.workbook["target_year"] != latest_year:
+            raise HTTPException(422, "Draft generation is available only for the latest planning year in this workbook.")
         return await run_in_threadpool(draft_schedule, request.workbook, request.store)
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The draft inputs are incomplete. Re-import the workbook and review saved decisions.") from exc
