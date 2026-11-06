@@ -29,7 +29,7 @@ def r4_book():
     book["annual_sheets"].append({"residents": [resident(
         [(f"{2026 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}", "TTSH Continuity Clinic") for i in range(12)],
         "R3", "Clinic")]})
-    book["residents"][0]["residency_year"] = "R4,R5"
+    book["residents"][0]["residency_year"] = "R4"
     return book
 
 

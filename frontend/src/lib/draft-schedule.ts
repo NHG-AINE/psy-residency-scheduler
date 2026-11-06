@@ -90,7 +90,10 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
-  no_schedulable_residents: 'No R1–R4 residents have usable scheduling inputs',
+  no_schedulable_residents: 'No R1–R5 residents have usable scheduling inputs',
+  conflicting_partial_r5_history: 'Review the interrupted or conflicting R5 posting history',
+  missing_r5_catalogue_option: 'No supported R5 catalogue option for the remaining requirement',
+  duplicate_r5_catalogue_option: 'Resolve duplicate R5 posting options',
   conflicting_partial_r4_history: 'Review the interrupted or conflicting R4 posting history',
   missing_r4_catalogue_option: 'No matching R4 catalogue option for the remaining requirement',
   completed_r4_missing_clusters: 'Review completed R4 history with missing cluster coverage',
