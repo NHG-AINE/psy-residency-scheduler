@@ -69,8 +69,10 @@ def _solve_priorities(model, objectives, variables, max_seconds):
         solver.parameters.max_time_in_seconds = remaining
         solver.parameters.num_search_workers = SOLVER_WORKERS
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
+        stage_started = monotonic()
         status = solver.solve(model)
-        stages.append({"priority": name, "status": solver.status_name(status).lower()})
+        stages.append({"priority": name, "status": solver.status_name(status).lower(),
+                       "wall_time_seconds": monotonic() - stage_started})
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
             break
         best = solver
@@ -213,8 +215,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             o = placement["option"]
             for month in placement["months"]:
                 occupancy[(month, o["requirement_id"], o["institution"], o["label"])].append(placement["variable"])
-    cluster_penalties = []
+    cluster_penalties, r3_cluster_penalties = [], []
     for i, person in enumerate(selected):
+        reaches_r3 = any(p["months"] and p["option"]["residency_year"] == "R3" for p in placements[i])
         for cluster, sites in CLUSTERS.items():
             if cluster in person["cluster_coverage"]["visited"]:
                 continue
@@ -223,7 +226,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             missing = model.new_bool_var(f"missing_{i}_{cluster}")
             model.add(sum(visits) == 0).only_enforce_if(missing)
             model.add(sum(visits) >= 1).only_enforce_if(missing.Not())
-            cluster_penalties.append(missing)
+            (r3_cluster_penalties if reaches_r3 else cluster_penalties).append(missing)
     for (month, requirement, institution, label), values in occupancy.items():
         capacity = by_key[(requirement, institution, label)]["capacity"]
         if capacity is not None:
@@ -245,7 +248,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
         model.add_abs_equality(deviation, sum(inpatient_counts[site]) - target)
         inpatient_deviations.append(deviation)
-    balance, allocation = [], []
+    balance, allocation, r3_allocation = [], [], []
     r2_ids = sorted({r["requirement_id"] for bs in blocks for r, _, _ in bs})
     for month in range(len(prepared["planning_months"])):
         counts = [sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in r2_ids]
@@ -254,11 +257,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     allocation_groups = defaultdict(list)
     for ps in placements:
         for p in ps:
-            if p["months"] and p["option"]["residency_year"] == "R2":
+            if p["months"]:
                 o = p["option"]
                 allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
     for group, ps in allocation_groups.items():
-        eligible = sorted({o["institution"] for o in r2_options if (o["requirement_id"], normalized_label(o["posting"])) == group and o["capacity"] != 0})
+        eligible = sorted({o["institution"] for o in r2_options + r3_options if (o["requirement_id"], normalized_label(o["posting"])) == group and o["capacity"] != 0})
         if "IMH" not in eligible:
             continue
         total = sum(p["variable"] for p in ps)
@@ -269,12 +272,18 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
             count = sum(p["variable"] for p in ps if p["option"]["institution"] == site)
             d = model.new_int_var(0, len(selected), f"allocation_{group}_{site}")
             model.add_abs_equality(d, count - target)
-            allocation.append(d)
-    objectives = list(zip(r1_rules.SOFT_PRIORITIES, (
-        preferences["distribution"], preferences["ratio"], sum(singletons.values()),
-        sum(inpatient_deviations) + sum(allocation), preferences["destination"], sum(cluster_penalties),
-    )))
-    objectives.insert(2, ("posting_balance", sum(balance)))
+            (r3_allocation if group[0].startswith("r3.") else allocation).append(d)
+    objectives = [
+        ("incoming_route_distribution", preferences["distribution"]),
+        ("monthly_medicine_neurology_ratio", preferences["ratio"]),
+        ("posting_balance", sum(balance)),
+        ("singleton_months", sum(singletons.values())),
+        ("inpatient_allocation", sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation)),
+        ("inpatient_destination", preferences["destination"]),
+        ("missing_clusters", sum(cluster_penalties)),
+    ]
+    if r3_cluster_penalties:
+        objectives.insert(5, ("r3_missing_clusters", sum(r3_cluster_penalties)))
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds)
@@ -316,8 +325,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
         "inpatient_counts": {site: sum(solver.value(v) for v in values) for site, values in inpatient_counts.items()},
         "inpatient_deviation": solver.value(sum(inpatient_deviations)),
-        "missing_clusters": solver.value(sum(cluster_penalties)),
+        "missing_clusters": solver.value(sum(cluster_penalties) + sum(r3_cluster_penalties)),
+        "r3_missing_clusters": solver.value(sum(r3_cluster_penalties)),
         "posting_balance": solver.value(sum(balance)), "r2_allocation_deviation": solver.value(sum(allocation)),
+        "r3_allocation_deviation": solver.value(sum(r3_allocation)),
     }
     result["singletons"] = [
         {"month": prepared["planning_months"][month]["month"],

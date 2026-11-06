@@ -267,7 +267,7 @@ class R1SolverTests(unittest.TestCase):
                 return cp_model.FEASIBLE if interrupted_status == cp_model.FEASIBLE else actual
 
             with patch("scheduler.cp_model.CpSolver.solve", new=interrupted), patch(
-                    "scheduler.monotonic", side_effect=[0, 0, 0.5, 1]):
+                    "scheduler.monotonic", side_effect=[0, 0, 0, 0.25, 0.5, 0.5, 0.75, 1]):
                 solver, status, stages, _ = _solve_priorities(
                     model, [("first", choice), ("second", 1 - choice)], [choice], 2)
             self.assertEqual(status, "feasible")
@@ -275,7 +275,7 @@ class R1SolverTests(unittest.TestCase):
             self.assertEqual(len(stages), expected_stages)
             if len(calls) == 2:
                 self.assertLess(calls[1], calls[0])
-        with patch("scheduler.monotonic", side_effect=[0, 0, 3, 3]):
+        with patch("scheduler.monotonic", side_effect=[0, 0, 0, 0.5, 3, 3]):
             solver, status, stages, _ = _solve_priorities(
                 model, [("first", choice), ("second", 1 - choice)], [choice], 2)
         self.assertEqual(status, "feasible")

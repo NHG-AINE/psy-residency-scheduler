@@ -59,7 +59,7 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   an exact mandatory ratio. The NUH combined route is excluded from this split.
 - **Increase cluster-exposure priority as R4 completion approaches.** Treat
   new exposure as a low-priority preference in R1-R2. In R3, prioritise missing
-  clusters over institution distribution targets. Secure exposure earlier if
+  clusters after peer grouping and institution distribution targets. Secure exposure earlier if
   no suitable later posting remains; completion by the end of R4 is mandatory.
   Repeat clusters remain allowed while completion is still feasible. See
   [cross-cluster.md](cross-cluster.md) for the urgency and review rules.
@@ -91,7 +91,7 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   automatically to the full intake, and choose assignments together rather
   than filling IMH first.
 
-## R1 draft preference priority
+## Draft preference priority
 
 Apply the following soft preferences in order, while satisfying all hard
 constraints. A lower-priority improvement must not worsen a higher-priority
@@ -99,11 +99,13 @@ score; compare scores in order rather than adding them into a total.
 
 1. Usual R1 route distribution.
 2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
-3. Avoid singleton months for the same posting and institution.
-4. Weighted IMH institution allocation target.
-5. Preferred route-to-inpatient destination, as described in
+3. Balance posting requirements over time.
+4. Avoid singleton months for the same posting and institution.
+5. Weighted IMH institution allocation target.
+6. Missing cluster exposure for residents whose draft reaches R3.
+7. Preferred route-to-inpatient destination, as described in
    [cross-cluster.md](cross-cluster.md).
-6. Additional cluster exposure as a tie-breaker.
+8. Additional R1-R2 cluster exposure as a tie-breaker.
 
-This order applies to the R1 draft. It does not set the priority of resident
-requests or replace the stronger cluster urgency for later R-years.
+This order applies across the R1-R3 draft. It does not set the priority of
+resident requests or replace the hard R4 completion requirement.
