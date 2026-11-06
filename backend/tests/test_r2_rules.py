@@ -66,7 +66,8 @@ class R2SolverTests(unittest.TestCase):
             if not (o["residency_year"] == "R2" and o["posting"] in
                     {"IMH Geriatric Psychiatry", "SGH Geriatric Psychiatry"})]
         result = self.solve(book)
-        self.assertEqual(result["status"], "optimal")
+        allocation = next(stage for stage in result["optimisation_stages"] if stage["priority"] == "inpatient_allocation")
+        self.assertEqual(allocation["status"], "optimal")
         counts = Counter(next(m["label"] for m in p["months"]
                               if m["target"]["requirement_id"] == "r2.geriatric_psychiatry")
                          for p in result["residents"])

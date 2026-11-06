@@ -78,7 +78,8 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   LOA, capacity and remaining requirements. This is a preference, not a fixed
   quota; residents must still complete their required postings. Balance posting
   types separately from the distribution of residents across institutions.
-  Balance R2 and R4 posting requirements separately each month. Posting
+  Balance R2, R4 and R5 posting requirements separately each month; for R5,
+  account for the remaining months of each requirement when setting the spread. Posting
   balance takes priority over institution allocation, which takes priority over
   peer grouping, across all R-years.
 - **Spread placements across institutions using allocation targets.**
@@ -114,5 +115,5 @@ score; compare scores in order rather than adding them into a total.
 7. Additional R1-R2 cluster exposure.
 8. Avoid singleton months for the same posting and institution.
 
-This order applies across the R1-R4 draft. It does not set the priority of
+This order applies across the R1-R5 draft. It does not set the priority of
 resident requests or replace the hard R4 completion requirement.

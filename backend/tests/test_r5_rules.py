@@ -94,6 +94,45 @@ class R5Tests(unittest.TestCase):
         self.assertTrue(all(m["target"]["requirement_id"].startswith("r5.") for m in months[3:]))
         self.assertEqual(sum(item["months"] for item in result["residents"][0]["carryforward"]), 3)
 
+    def test_duration_aware_balance_and_weighted_sites(self):
+        book = r5_book()
+        for sheet in book["annual_sheets"]:
+            for original in list(sheet["residents"]):
+                for i in range(1, 4):
+                    duplicate = deepcopy(original)
+                    duplicate.update(name=f"R5 Resident {i}", mcr=f"R5-{i}", source={**original["source"], "row": i + 3})
+                    for month in duplicate["postings"]:
+                        month["source"]["row"] = i + 3
+                    sheet["residents"].append(duplicate)
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        people = result["residents"]
+        for month in range(12):
+            counts = Counter(p["months"][month]["target"]["requirement_id"] for p in people)
+            self.assertEqual(counts, {"r5.geriatric_psychiatry": 1, "r5.child_adolescent_psychiatry": 1, "r5.elective": 2})
+        geri = Counter(next(m["target"]["institution"] for m in p["months"]
+                            if m["target"]["requirement_id"] == "r5.geriatric_psychiatry") for p in people)
+        self.assertEqual(geri, {"IMH": 2, "CGH": 1, "NUH": 1})
+        self.assertEqual(result["soft_results"]["r5_allocation_deviation"], 0)
+        # Once the elective is completed, only the remaining two cores balance.
+        for sheet in book["annual_sheets"]:
+            for past in sheet["residents"]:
+                if any(past is person for person in book["residents"]):
+                    continue
+                for month in past["postings"]:
+                    month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+        histories = []
+        for i, person in enumerate(book["residents"]):
+            past = resident([(f"2027-{m:02d}", "IMH Forensic Psychiatry (Elective)") for m in range(1, 7)], "R5", "R5 elective", i + 3)
+            past.update(name=person["name"], mcr=person["mcr"])
+            histories.append(past)
+        book["annual_sheets"].append({"residents": histories})
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal", result["blockers"])
+        for month in range(6):
+            counts = Counter(p["months"][month]["target"]["requirement_id"] for p in result["residents"])
+            self.assertEqual(counts, {"r5.geriatric_psychiatry": 2, "r5.child_adolescent_psychiatry": 2})
+
     def test_r5_cannot_satisfy_r4_cluster_deadline(self):
         book = r5_book()
         history = book["annual_sheets"][-1]["residents"][0]["postings"]
