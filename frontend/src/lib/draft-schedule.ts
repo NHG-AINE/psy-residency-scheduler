@@ -8,7 +8,7 @@ import type { ReviewStore } from './history-review.ts'
 export type DraftSchedule = {
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
-  blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
+  blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
   skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string } | null }[]
@@ -86,7 +86,14 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
-  no_schedulable_residents: 'No R1, R2 or R3 residents have usable scheduling inputs',
+  no_schedulable_residents: 'No R1–R4 residents have usable scheduling inputs',
+  conflicting_partial_r4_history: 'Review the interrupted or conflicting R4 posting history',
+  missing_r4_catalogue_option: 'No matching R4 catalogue option for the remaining requirement',
+  completed_r4_missing_clusters: 'Review completed R4 history with missing cluster coverage',
+  unsupported_r4_remarks: 'Review unsupported R4 posting remarks',
+  duplicate_r4_catalogue_option: 'Resolve duplicate R4 posting options',
+  r4_schedule_infeasible: 'No valid R4 schedule was found; review eligibility, clusters and capacity',
+  r4_cluster_review: 'Review cluster coverage alongside posting eligibility and capacity',
   conflicting_partial_r3_history: 'Review the interrupted or conflicting Continuity Clinic history',
   missing_r3_catalogue_option: 'No matching Continuity Clinic catalogue option',
   unsupported_r3_remarks: 'Review unsupported R3 posting remarks',
@@ -112,7 +119,7 @@ export function draftBlockerLabel(blocker: DraftSchedule['blockers'][number], wo
   const people = [...workbook.residents, ...workbook.histories.flatMap((history) => history.residents)]
   const names = [...new Set(people.filter((person) => sources.some((source) => sameSource(person.source, source))).map((person) => person.name || person.mcr).filter(Boolean))]
   return [blockerLabels[blocker.code] || blocker.code.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()),
-    ...names, ...rows, ...(blocker.month ? [monthLabel(blocker.month)] : [])].join(' - ')
+    ...names, ...rows, ...(blocker.clusters?.length ? [blocker.clusters.join(", ")] : []), ...(blocker.month ? [monthLabel(blocker.month)] : [])].join(' - ')
 }
 
 // Each skipped resident is already identified by its planning-sheet source.
@@ -121,10 +128,11 @@ export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
   for (const blocker of reasons) {
     const sources = [...new Set([...(blocker.sources || []), ...(blocker.source ? [blocker.source] : [])]
       .map((source) => sourceLabel(source.kind ? source : { sheet: source.sheet, row: source.row })))].sort()
-    const key = JSON.stringify([blocker.code, sources, !!blocker.month])
+    const key = JSON.stringify([blocker.code, sources, blocker.clusters, !!blocker.month])
     let group = groups.get(key)
     if (!group) {
-      group = { reason: blockerLabels[blocker.code] || blocker.code.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()), sources, months: [] }
+      const reason = blockerLabels[blocker.code] || blocker.code.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
+      group = { reason: [reason, ...(blocker.clusters?.length ? [blocker.clusters.join(', ')] : [])].join(' - '), sources, months: [] }
       groups.set(key, group)
     }
     if (blocker.month) group.months.push(blocker.month)

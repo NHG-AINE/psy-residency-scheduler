@@ -86,13 +86,15 @@ class R3Tests(unittest.TestCase):
                     continue
                 for month in past["postings"]:
                     month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
-        book["residents"][0]["residency_year"] = "R3,R4"
+        from tests.test_r4_rules import add_r4_catalogue
+        add_r4_catalogue(book)
+        book["residents"][0]["residency_year"] = "R3"  # Completed R3 progresses even before a roster update.
         book["annual_sheets"].append({"residents": [resident(
             [(f"{2026 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}", "TTSH Continuity Clinic") for i in range(12)],
             "R3", "Clinic")]})
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
-        self.assertTrue(all(m["status"] == "outside_draft_scope" for m in result["residents"][0]["months"]))
+        self.assertTrue(all(m["target"]["requirement_id"].startswith("r4.") for m in result["residents"][0]["months"]))
         self.assertEqual(result["residents"][0]["carryforward"], [])
         self.assertEqual(result["soft_results"]["r3_missing_clusters"], 0)
 
