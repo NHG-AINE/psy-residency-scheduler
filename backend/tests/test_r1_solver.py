@@ -251,6 +251,16 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(status, "optimal")
         self.assertEqual(solver.value(choice), 0)
         self.assertEqual([s["score"] for s in stages], [0, 100])
+        for stage in stages:
+            self.assertEqual(stage["best_objective_bound"], stage["score"])
+            self.assertGreaterEqual(stage["best_score_time_seconds"], 0)
+            self.assertLessEqual(stage["best_score_time_seconds"], stage["wall_time_seconds"])
+        constant_model = cp_model.CpModel()
+        _, status, stages, _ = _solve_priorities(constant_model, [("constant", 0)], [], 2)
+        self.assertEqual(status, "optimal")
+        self.assertEqual(stages[0]["score"], 0)
+        self.assertEqual(stages[0]["best_objective_bound"], 0)
+        self.assertGreaterEqual(stages[0]["best_score_time_seconds"], 0)
 
     def test_timeout_retains_solution_and_feasible_does_not_advance_priority(self):
         solve = cp_model.CpSolver.solve
@@ -259,11 +269,11 @@ class R1SolverTests(unittest.TestCase):
             choice = model.new_bool_var("choice")
             calls = []
 
-            def interrupted(solver, current_model):
+            def interrupted(solver, current_model, callback=None):
                 calls.append(solver.parameters.max_time_in_seconds)
                 if interrupted_status == cp_model.UNKNOWN and len(calls) == 2:
                     return cp_model.UNKNOWN
-                actual = solve(solver, current_model)
+                actual = solve(solver, current_model, callback)
                 return cp_model.FEASIBLE if interrupted_status == cp_model.FEASIBLE else actual
 
             with patch("scheduler.cp_model.CpSolver.solve", new=interrupted), patch(
@@ -273,8 +283,12 @@ class R1SolverTests(unittest.TestCase):
             self.assertEqual(status, "feasible")
             self.assertEqual(solver.value(choice), 0)
             self.assertEqual(len(stages), expected_stages)
+            self.assertIn("best_objective_bound", stages[0])
+            self.assertIn("best_score_time_seconds", stages[0])
             if len(calls) == 2:
                 self.assertLess(calls[1], calls[0])
+                self.assertNotIn("best_objective_bound", stages[1])
+                self.assertNotIn("best_score_time_seconds", stages[1])
         with patch("scheduler.monotonic", side_effect=[0, 0, 0, 0.5, 3, 3]):
             solver, status, stages, _ = _solve_priorities(
                 model, [("first", choice), ("second", 1 - choice)], [choice], 2)
@@ -288,14 +302,16 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(unknown["residents"], [])
         solve = cp_model.CpSolver.solve
 
-        def invalid_model(solver, model):
+        def invalid_model(solver, model, callback=None):
             model.new_int_var(1, 0, "invalid_domain")
-            return solve(solver, model)
+            return solve(solver, model, callback)
 
         with patch("scheduler.cp_model.CpSolver.solve", new=invalid_model):
             invalid = draft_schedule(workbook, STORE)
         self.assertEqual(invalid["status"], "model_invalid")
         self.assertEqual(invalid["residents"], [])
+        self.assertNotIn("best_objective_bound", invalid["optimisation_stages"][0])
+        self.assertNotIn("best_score_time_seconds", invalid["optimisation_stages"][0])
         for change, expected in (("remarks", "unsupported_r1_remarks"), ("history", "unresolved_history"),
                                  ("unsafe_history", "unsafe_historical_identity_evidence_excluded"), ("identity", "unsafe_identity")):
             with self.subTest(change=change):
