@@ -229,6 +229,15 @@ class R1SolverTests(unittest.TestCase):
         self.assertLessEqual(draft["soft_results"]["inpatient_counts"]["IMH"], 1)
         self.assertGreater(draft["soft_results"]["inpatient_deviation"], 0)
 
+    def test_inpatient_balances_remaining_sites_when_imh_is_unavailable(self):
+        book = r1_book(4)
+        next(o for o in book["postings"]["core"] if o["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal")
+        counts = result["soft_results"]["inpatient_counts"]
+        self.assertEqual([counts[site] for site in ("TTSH", "CGH", "SGH", "NUH")], [1, 1, 1, 1])
+        self.assertEqual(counts.get("IMH", 0), 0)
+
     def test_cluster_tiebreak_uses_history_and_only_actual_scheduled_months(self):
         book = r1_book()
         set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + [None] * 6)

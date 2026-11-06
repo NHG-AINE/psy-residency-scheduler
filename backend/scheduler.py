@@ -35,6 +35,17 @@ def _allocation_targets(size, sites):
             for site in sites}
 
 
+def _institution_balance(model, counts, maximum, name):
+    """Prefer even site counts without choosing which site gets the remainder."""
+    deviations = []
+    for left in range(len(counts)):
+        for right in range(left + 1, len(counts)):
+            deviation = model.new_int_var(0, maximum, f"allocation_{name}_{left}_{right}")
+            model.add_abs_equality(deviation, counts[left] - counts[right])
+            deviations.append(deviation)
+    return deviations
+
+
 def _posting_balance(model, counts, total, month):
     """Pairwise imbalance with a valid lower bound, not an equal-split quota."""
     model.add(sum(counts) == total)
@@ -317,6 +328,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
         model.add_abs_equality(deviation, sum(inpatient_counts[site]) - target)
         inpatient_deviations.append(deviation)
+    if "IMH" not in eligible_sites:
+        inpatient_deviations.extend(_institution_balance(
+            model, [sum(inpatient_counts[site]) for site in eligible_sites], len(selected), "r1"))
     balance, allocation, r3_allocation, r4_allocation = [], [], [], []
     r2_ids = sorted({r["requirement_id"] for bs in blocks for r, _, _ in bs})
     r4_ids = sorted({r["requirement_id"] for bs in r4_blocks for r, _, _ in bs})
@@ -338,13 +352,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         if len(eligible) < 2:
             continue
         if "IMH" not in eligible:
-            if group[0] == "r4.consultation_liaison_psychiatry":
-                counts = [sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible]
-                for left in range(len(counts)):
-                    for right in range(left + 1, len(counts)):
-                        d = model.new_int_var(0, len(selected), f"allocation_{group}_{left}_{right}")
-                        model.add_abs_equality(d, counts[left] - counts[right])
-                        r4_allocation.append(d)
+            counts = [sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible]
+            penalties = r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
+            penalties.extend(_institution_balance(model, counts, len(selected), group))
             continue
         total = sum(p["variable"] for p in ps)
         baseline = model.new_int_var(0, len(selected), f"baseline_{group}")

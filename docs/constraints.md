@@ -93,8 +93,9 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   Allow deviations for capacity limits, cross-cluster requirements, LOA
   and resident requests. Small cohorts need not populate every institution. Apply the formula to the residents needing the posting, not
   automatically to the full intake, and choose assignments together rather
-  than filling IMH first. For R4 Consultation Liaison, which has no IMH option,
-  aim for an even distribution across eligible institutions.
+  than filling IMH first. When IMH is not an eligible option, aim for an even distribution across
+  the eligible institutions offering the same posting. This is a soft preference,
+  not an equal quota; capacity and other hard constraints take precedence.
 
 ## Draft preference priority
 
@@ -105,8 +106,8 @@ score; compare scores in order rather than adding them into a total.
 1. Usual R1 route distribution.
 2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
 3. Balance posting requirements over time.
-4. Institution allocation targets: weighted IMH where offered, even R4
-   Consultation Liaison allocation otherwise.
+4. Institution allocation targets: weighted IMH where offered, even distribution
+   across eligible institutions otherwise.
 5. Missing cluster exposure for residents whose draft reaches R3.
 6. Preferred route-to-inpatient destination, as described in
    [cross-cluster.md](cross-cluster.md).

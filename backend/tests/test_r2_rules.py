@@ -60,6 +60,19 @@ class R2SolverTests(unittest.TestCase):
         self.assertIn(result["status"], {"optimal", "feasible"}, result.get("blockers"))
         return result
 
+    def test_no_imh_core_posting_balances_institutions_with_odd_cohort(self):
+        book = r2_book(5)
+        book["postings"]["core"] = [o for o in book["postings"]["core"]
+            if not (o["residency_year"] == "R2" and o["posting"] in
+                    {"IMH Geriatric Psychiatry", "SGH Geriatric Psychiatry"})]
+        result = self.solve(book)
+        self.assertEqual(result["status"], "optimal")
+        counts = Counter(next(m["label"] for m in p["months"]
+                              if m["target"]["requirement_id"] == "r2.geriatric_psychiatry")
+                         for p in result["residents"])
+        self.assertEqual(set(counts), {"CGH Geriatric Psychiatry", "NUH Geriatric Psychiatry"})
+        self.assertEqual(sorted(counts.values()), [2, 3])
+
     def test_full_r2_balances_requirements_in_continuous_blocks_without_mutating_import(self):
         book = r2_book(4)
         before = deepcopy(book)
