@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
 import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
+import MonthlyBreakdown from './components/MonthlyBreakdown'
 import ScrollToTop from './components/ScrollToTop'
 import { scrollToPosition } from './lib/scroll'
 import ResidentRequirements from './components/ResidentRequirements'
@@ -65,7 +67,7 @@ function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Res
   </details>
 }
 
-function Review({ workbook, view, query, year, years, onYearChange, onHistoryReview, historyResident, draftState, loading = false }: { workbook: Workbook; view: View; query: string; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState; loading?: boolean }) {
+function Review({ workbook, view, query, year, years, onYearChange, onHistoryReview, historyResident, draftState, breakdownHost, loading = false }: { workbook: Workbook; view: View; query: string; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState; breakdownHost: HTMLDivElement | null; loading?: boolean }) {
   const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
@@ -77,14 +79,14 @@ function Review({ workbook, view, query, year, years, onYearChange, onHistoryRev
     const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
     return <><p className="table-note">Requests are not assigned to a planning year. The selected year changes resident links, not request dates or the recorded request rows.</p>{requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small></td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>}</>
   }
-  if (view === 'Timetable') return <Timetable residents={residents} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} draftState={draftState} />
+  if (view === 'Timetable') return <Timetable residents={residents} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} draftState={draftState} breakdownHost={breakdownHost} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
   return <div className="resident-list">{residents.map((resident) => <ResidentDetail key={JSON.stringify(resident.source)} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
 const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState }) {
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null }) {
   const { draft, busy: generating, error: draftError } = draftState
   const hasDraft = draft?.status === 'optimal' || draft?.status === 'feasible'
   const timetable = useRef<HTMLDivElement>(null)
@@ -163,6 +165,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       </tr>)}</tbody>
     </table></div>}
     </div>
+    {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft} entries={resolution?.entries || []} />, breakdownHost)}
   </>
 }
 
@@ -182,6 +185,7 @@ export default function App() {
   const [view, setView] = useState<View>('Timetable')
   const [query, setQuery] = useState('')
   const [historyResident, setHistoryResident] = useState('')
+  const [breakdownHost, setBreakdownHost] = useState<HTMLDivElement | null>(null)
   const draftState = useDraftSchedule(workbook, busy)
   const hasDraft = draftState.draft?.status === 'optimal' || draftState.draft?.status === 'feasible'
 
@@ -235,8 +239,9 @@ export default function App() {
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
         {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{view === 'Timetable' ? <div className="draft-actions">{hasDraft && <button type="button" className="button button-secondary" onClick={draftState.discard}>Discard draft</button>}<button type="button" className="button draft-generate" disabled={busy || draftState.busy || !workbook} onClick={() => void draftState.generate()}>{draftState.busy ? 'Generating draft...' : 'Generate draft'}</button></div> : workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
-        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
+        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} breakdownHost={breakdownHost} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
+      {workbook && view === 'Timetable' && <div ref={setBreakdownHost} />}
     </main>
     {workbook && !busy && ['Residents', 'Requests', 'Postings'].includes(view) && <ScrollToTop key={view} />}
   </>

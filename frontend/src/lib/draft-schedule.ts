@@ -11,7 +11,7 @@ export type DraftSchedule = {
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string }[]
   skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
-    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective' } | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
@@ -38,8 +38,12 @@ export async function generateDraft(workbook: Workbook, store: ReviewStore, sign
 // Display copies only: source retains the location being replaced, never generated evidence.
 // This overlay must never be passed to the history review or requirement ledger.
 export function draftPostings(resident: Resident, draft: DraftSchedule | null): Resident['postings'] {
-  const person = draft?.residents.find((candidate) => sameSource(candidate.source, resident.source))
-  if (!person || !['optimal', 'feasible'].includes(draft!.status)) return resident.postings
+  if (!draft || !['optimal', 'feasible'].includes(draft.status)) return resident.postings
+  const person = draft.residents.find((candidate) => sameSource(candidate.source, resident.source))
+  const unresolved = draft.skipped_residents?.find((candidate) => sameSource(candidate.source, resident.source))
+    ?.reasons.some((reason) => ['unresolved_history', 'pending_history_review'].includes(reason.code))
+  if (!person) return unresolved ? resident.postings.map((posting) => posting.status === 'blank'
+    ? { ...posting, unresolvedDraft: true } : posting) : resident.postings
   return resident.postings.map((posting) => {
     const month = person.months.find((candidate) => candidate.month === posting.month)
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
@@ -57,6 +61,7 @@ export function groupDraftResidents(residents: Resident[], draft: DraftSchedule 
     const route = successfulDraft?.residents.find((person) => sameSource(person.source, resident.source))?.route
     const rank = routes.indexOf(route || '')
     const reasons = entries ? draftPostings(resident, successfulDraft).flatMap((posting) => {
+      if (posting.unresolvedDraft) return ['Review unresolved historical postings']
       if (posting.status !== 'posting' || posting.draft) return []
       const entry = postingHistoryEntry(posting, entries)
       if (entry && resolvedCatalogueTarget(entry.review)) return []
