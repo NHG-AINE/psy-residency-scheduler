@@ -16,8 +16,8 @@ export type DraftSchedule = {
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
-export function canGenerateDraft(workbook: Workbook | null): boolean {
-  return !!workbook && workbook.target_year === Math.max(...workbook.available_years.map(({ year }) => year))
+export function canGenerateDraft(workbook: Workbook | null, selectedYear = workbook?.target_year, importing = false): boolean {
+  return !importing && !!workbook && workbook.target_year === selectedYear && workbook.target_year === Math.max(...workbook.available_years.map(({ year }) => year))
 }
 
 // Allow an extra minute beyond the two-minute solver budget for preparation and transport.

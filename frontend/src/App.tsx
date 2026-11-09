@@ -116,11 +116,12 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const error = !importLoading && failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
   const loading = importLoading || generating || (!resolution && !error)
   useEffect(() => {
+    if (importLoading || workbook.target_year !== year) { revealAfterGeneration.current = false; return }
     if (generating) { revealAfterGeneration.current = true; return }
     if (loading || !revealAfterGeneration.current) return
     revealAfterGeneration.current = false
     if (hasDraft && timetable.current) return revealElement(timetable.current)
-  }, [generating, loading, hasDraft])
+  }, [generating, loading, hasDraft, importLoading, workbook.target_year, year])
   const availableYears = [...years].sort((a, b) => a - b)
   const yearIndex = availableYears.indexOf(year)
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
@@ -187,7 +188,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [historyResident, setHistoryResident] = useState('')
   const [breakdownHost, setBreakdownHost] = useState<HTMLDivElement | null>(null)
-  const draftState = useDraftSchedule(workbook, busy)
+  const draftState = useDraftSchedule(workbook, busy, year)
   const hasDraft = draftState.draft?.status === 'optimal' || draftState.draft?.status === 'feasible'
 
   useEffect(() => {
@@ -199,7 +200,6 @@ export default function App() {
   }, [busy, workbook])
 
   async function load(nextFile: File, nextYear: number, reveal = false) {
-    draftState.cancelGeneration()
     setLoadingHeight(review.current?.getBoundingClientRect().height)
     setBusy(true); setError(''); setStatus(`Reading ${nextFile.name}…`)
     try {
@@ -209,6 +209,7 @@ export default function App() {
       setWorkbook(result); setFile(nextFile); setYear(result.target_year)
       setStatus('')
     } catch (problem: unknown) {
+      setYear(workbook?.target_year ?? year)
       setError(problem instanceof Error ? problem.message : 'Workbook import failed. Please try again.')
       setStatus(file ? 'The previous import is still available.' : '')
     } finally { setBusy(false) }
@@ -220,7 +221,7 @@ export default function App() {
     void load(files[0], year, true)
   }
   function selectYear(nextYear: number) {
-    if (file && !busy) void load(file, nextYear)
+    if (file && !busy) { setYear(nextYear); void load(file, nextYear) }
   }
   const years = [...new Set(workbook?.available_years.map((item) => item.year) || [year])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
