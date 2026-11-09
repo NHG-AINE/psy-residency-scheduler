@@ -22,11 +22,24 @@ export function canGenerateDraft(workbook: Workbook | null, selectedYear = workb
 
 // Allow an extra minute beyond the two-minute solver budget for preparation and transport.
 const DRAFT_REQUEST_TIMEOUT_MS = 180_000
+const DRAFT_CONTROL_TIMEOUT_MS = 15_000
 
-export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal): Promise<DraftSchedule> {
+export async function startDraft(): Promise<string> {
+  const response = await fetch('/api/draft/start', { method: 'POST', signal: AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS) })
+  const data = await response.json().catch(() => null)
+  if (!response.ok || typeof data?.token !== 'string') throw new Error('Could not start draft generation. Check the connection and retry.')
+  return data.token
+}
+
+export async function cancelDraft(token: string): Promise<void> {
+  const response = await fetch(`/api/draft/${encodeURIComponent(token)}`, { method: 'DELETE', signal: AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS) })
+  if (!response.ok) throw new Error('Could not cancel draft generation. Check the connection and retry.')
+}
+
+export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal, token?: string): Promise<DraftSchedule> {
   let response: Response
   try {
-    response = await fetch('/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_REQUEST_TIMEOUT_MS)]) })
+    response = await fetch(token ? `/api/draft?token=${encodeURIComponent(token)}` : '/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_REQUEST_TIMEOUT_MS)]) })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('Draft generation timed out. Check the connection and retry.')
     throw new Error('Could not reach the backend to generate a draft. Check the connection and retry.')

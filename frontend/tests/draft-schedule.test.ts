@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canGenerateDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -169,9 +169,22 @@ test('draft generation is restricted to the latest workbook year, independent of
   assert.equal(canGenerateDraft(null), false)
 })
 
- test('generation controls follow the selected year immediately during navigation', () => {
+test('generation controls follow the selected year immediately during navigation', () => {
   const workbook = { target_year: 2027, available_years: [{ year: 2026 }, { year: 2027 }] } as Workbook
   assert.equal(canGenerateDraft(workbook, 2027), true)
   assert.equal(canGenerateDraft(workbook, 2026), false)
   assert.equal(canGenerateDraft(workbook, 2027, true), false)
+})
+
+test('draft cancellation uses the registered operation and reports failures', async (context) => {
+  const calls: string[] = []
+  context.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
+    calls.push(`${options.method} ${url}`)
+    return new Response(JSON.stringify({ token: 'operation' }))
+  })
+  const token = await startDraft()
+  await cancelDraft(token)
+  assert.deepEqual(calls, ['POST /api/draft/start', 'DELETE /api/draft/operation'])
+  context.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }))
+  await assert.rejects(cancelDraft(token), /Could not cancel/)
 })

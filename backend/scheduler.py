@@ -3,6 +3,7 @@ from collections import defaultdict
 from copy import deepcopy
 from math import isfinite, gcd
 from time import monotonic
+from threading import Event, Thread
 
 from ortools.sat.python import cp_model
 
@@ -24,6 +25,7 @@ DEFAULT_SOLVE_SECONDS = 120
 # Zero lets OR-Tools choose workers from the available CPUs.
 SOLVER_WORKERS = 0
 SOLVER_RANDOM_SEED = 0
+CANCEL_POLL_SECONDS = 0.05
 
 
 def _allocation_targets(size, sites):
@@ -78,7 +80,11 @@ class _BestScoreTime(cp_model.CpSolverSolutionCallback):
             self.best_time = self.wall_time
 
 
-def _solve_priorities(model, objectives, variables, max_seconds):
+class DraftCancelled(Exception):
+    pass
+
+
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None):
     """Lock proven scores, not assignments; retain the last valid solution."""
     started = monotonic()
     deadline = started + max_seconds
@@ -86,6 +92,8 @@ def _solve_priorities(model, objectives, variables, max_seconds):
     stages = []
     status = cp_model.UNKNOWN
     for name, objective in objectives:
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
@@ -96,7 +104,22 @@ def _solve_priorities(model, objectives, variables, max_seconds):
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
         stage_started = monotonic()
         callback = _BestScoreTime()
-        status = solver.solve(model, callback)
+        finished = Event()
+        def stop_when_cancelled():
+            while not finished.wait(CANCEL_POLL_SECONDS):
+                if cancel.is_set():
+                    solver.stop_search()
+        monitor = Thread(target=stop_when_cancelled, daemon=True) if cancel else None
+        if monitor:
+            monitor.start()
+        try:
+            status = solver.solve(model, callback)
+        finally:
+            finished.set()
+            if monitor:
+                monitor.join()
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
@@ -118,7 +141,7 @@ def _solve_priorities(model, objectives, variables, max_seconds):
     return best, final_status, stages, monotonic() - started
 
 
-def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
+def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None):
     """Schedule remaining R1 through R5 work in progression order.
 
     All years share capacity,
@@ -127,7 +150,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     """
     if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) or not isfinite(max_seconds) or max_seconds < 0:
         raise ValueError("max_seconds must be a finite nonnegative number")
+    if cancel and cancel.is_set():
+        raise DraftCancelled()
     prepared = prepare_scheduler_inputs(workbook, reviewstore)
+    if cancel and cancel.is_set():
+        raise DraftCancelled()
     years = {"r1", "r2", "r3", "r4", "r5"}
     selected = [p for p in prepared["residents"] if years & set(p["recorded_years"])]
     skipped = [deepcopy({**{key: p[key] for key in ("name", "mcr", "source", "recorded_year")},
@@ -151,6 +178,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         selected, options, prepared["planning_start"], blockers)
     # A completed R3 resident may be awaiting a roster-year update.
     for person in selected:
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
         if "r3" in person["recorded_years"] and "r4" not in person["recorded_years"]:
             required = [r for r in person["requirements"] if r["requirement_year"] in {"R2", "R3"}]
             r1_done = any(route["evidence_status"] == "supported" for route in person["r1_routes"])
@@ -280,6 +309,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
     r4_monthly_totals = [0] * len(prepared["planning_months"])
     r5_demand = defaultdict(int)
     for i, person in enumerate(selected):
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
         remaining = {r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}
         assert len(remaining) <= 1, "R1 candidates must have equal remaining duration"
         r1_months = next(iter(remaining), 0)
@@ -412,7 +443,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS):
         objectives.insert(4, ("r3_missing_clusters", sum(r3_cluster_penalties)))
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
-        model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds)
+        model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
