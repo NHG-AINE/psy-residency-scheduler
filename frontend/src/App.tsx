@@ -201,7 +201,7 @@ export default function App() {
 
   async function load(nextFile: File, nextYear: number, reveal = false) {
     setLoadingHeight(review.current?.getBoundingClientRect().height)
-    setBusy(true); setError(''); setStatus(`Reading ${nextFile.name}…`)
+    setBusy(true); setError(''); setStatus('')
     try {
       const result = await importWorkbook(nextFile, nextYear)
       revealAfterUpload.current = reveal
