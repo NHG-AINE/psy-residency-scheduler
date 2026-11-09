@@ -168,3 +168,10 @@ test('draft generation is restricted to the latest workbook year, independent of
   assert.equal(canGenerateDraft({ ...workbook, target_year: 2029 }), false)
   assert.equal(canGenerateDraft(null), false)
 })
+
+ test('generation controls follow the selected year immediately during navigation', () => {
+  const workbook = { target_year: 2027, available_years: [{ year: 2026 }, { year: 2027 }] } as Workbook
+  assert.equal(canGenerateDraft(workbook, 2027), true)
+  assert.equal(canGenerateDraft(workbook, 2026), false)
+  assert.equal(canGenerateDraft(workbook, 2027, true), false)
+})
