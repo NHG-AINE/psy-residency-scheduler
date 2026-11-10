@@ -8,11 +8,13 @@ from threading import Event, Thread
 from ortools.sat.python import cp_model
 
 if __package__:
+    from .request_preferences import resolve_requests, add_request_objective
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
+    from request_preferences import resolve_requests, add_request_objective
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from scheduler_inputs import prepare_scheduler_inputs
@@ -165,7 +167,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     result = {"scope": "r1_r2_r3_r4_r5", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
-              "limitations": ["R5 electives with core-credit overlap or unsupported remarks are excluded", "Future posting availability and capacity are unknown", "Resident requests are not interpreted",
+              "limitations": ["R5 electives with core-credit overlap or unsupported remarks are excluded", "Future posting availability and capacity are unknown",
                               "Finite shared capacity with excluded residents requires review"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
@@ -430,6 +432,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             d = model.new_int_var(0, len(selected), f"allocation_{group}_{site}")
             model.add_abs_equality(d, count - target)
             (r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation).append(d)
+    request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"]) for person in selected]
+    request_objective = add_request_objective(model, request_outcomes, placements)
     objectives = [
         ("incoming_route_distribution", preferences["distribution"]),
         ("monthly_medicine_neurology_ratio", preferences["ratio"]),
@@ -439,8 +443,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         ("missing_clusters", sum(cluster_penalties)),
         ("singleton_months", sum(singletons.values())),
     ]
+    if any(row['status'] == 'evaluable' and 'duplicate_of' not in row for rows in request_outcomes for row in rows):
+        objectives.insert(2, ("resident_requests", request_objective))
     if r3_cluster_penalties:
-        objectives.insert(4, ("r3_missing_clusters", sum(r3_cluster_penalties)))
+        destination_index = next(i for i, (name, _) in enumerate(objectives) if name == "inpatient_destination")
+        objectives.insert(destination_index, ("r3_missing_clusters", sum(r3_cluster_penalties)))
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel)
@@ -468,7 +475,32 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                            "status": "loa" if not availability["available"] else "posting" if option else "outside_draft_scope",
                            "label": option["label"] if option else None,
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
-        result["residents"].append({**deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
+        outcomes = request_outcomes[i]
+        for outcome in outcomes:
+            if outcome.get('status') == 'evaluable' and 'duplicate_of' not in outcome:
+                outcome['status'] = 'met' if solver.value(outcome.pop('_flag')) else 'not_met'
+                matching = [p for p in chosen if p['option']['requirement_id'] == outcome['requirement_id'] and p['months']]
+                outcome['assigned'] = [
+                    {'label': p['option']['label'],
+                     'months': [prepared['planning_months'][m]['month'] for m in p['months']]}
+                    for p in matching]
+                replacement = (outcome['status'] == 'not_met' and len(matching) == 1
+                               and any(m in range(start, start + outcome['duration'])
+                                       for m in matching[0]['months'] for start in outcome['starts']))
+                outcome['replacement_months'] = ([prepared['planning_months'][m]['month']
+                                                   for m in matching[0]['months']] if replacement else [])
+                outcome['matched_months'] = [
+                    prepared['planning_months'][m]['month'] for p in matching
+                    if outcome['status'] == 'met'
+                    and (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in outcome['option_keys']
+                    and len(p['months']) == outcome['duration'] and p['months'][0] in outcome['starts']
+                    for m in p['months']]
+
+        for outcome in outcomes:
+            if 'duplicate_of' in outcome:
+                original = outcomes[outcome['duplicate_of']]
+                outcome.update({key: deepcopy(original[key]) for key in ('status', 'reason', 'assigned', 'matched_months') if key in original})
+        result["residents"].append({"requests": outcomes, **deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
                                     "route": choice["route"], "months": months,
                                     "cluster_coverage": {
                                         "historical": deepcopy(person["cluster_coverage"]),
