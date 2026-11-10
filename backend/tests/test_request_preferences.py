@@ -1,9 +1,27 @@
 import unittest
 from ortools.sat.python import cp_model
-from request_preferences import period_starts, resolve_requests, add_request_objective
+from request_preferences import period_starts, resolve_requests, add_request_objective, unmet_request_reason
 
 
 class RequestPreferenceTests(unittest.TestCase):
+    def test_reason_distinguishes_proven_restrictions_from_search_outcomes(self):
+        req = {'requirement_id': 'r2.child', 'remaining_months': 3, 'expected_months': 0}
+        person = {'requirements': [req], 'months': [], 'availability': [{'available': True}] * 3}
+        option = {'requirement_id': 'r2.child', 'institution': 'IMH', 'posting': 'Child', 'label': 'IMH Child', 'capacity': 1}
+        request = {'requirement_id': 'r2.child', 'option_keys': [('r2.child', 'IMH', 'IMH Child')], 'starts': [0]}
+        placement = {'option': option, 'months': [0, 1, 2]}
+        for stages, code in (([], 'request_search_incomplete'),
+                             ([{'priority': 'resident_requests', 'status': 'feasible'}], 'request_search_incomplete'),
+                             ([{'priority': 'resident_requests', 'status': 'optimal'}], 'not_selected')):
+            with self.subTest(stages=stages):
+                reason_code, message = unmet_request_reason(person, request, [placement], [option], stages)
+                self.assertEqual(reason_code, code)
+                self.assertNotIn('capacity', message.lower())  # Capacity 1 alone does not establish why it lost.
+        request['starts'] = []
+        self.assertEqual(unmet_request_reason(person, request, [], [option], [])[0], 'no_valid_start')
+        req['remaining_months'] = 0
+        self.assertEqual(unmet_request_reason(person, request, [], [option], [])[0], 'requirement_completed')
+
     def test_periods(self):
         months = [{'month': f'{y}-{m:02d}'} for y, m in [(2027, m) for m in range(7, 13)] + [(2028, m) for m in range(1, 7)]]
         self.assertEqual(period_starts('Jan - June 2028', months, 3), [6, 9])

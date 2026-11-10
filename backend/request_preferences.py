@@ -5,8 +5,12 @@ from math import lcm
 
 if __package__:
     from .workbook_import import normalized_label
+    from .rules.r2_rules import partial_posting_identity
+    from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
     from workbook_import import normalized_label
+    from rules.r2_rules import partial_posting_identity
+    from rules.r4_rules import completed_r1_inpatient_at_imh
 
 MONTHS = {name: number for number, names in enumerate((('jan','january'), ('feb','february'), ('mar','march'), ('apr','april'), ('may',), ('jun','june'), ('jul','july'), ('aug','august'), ('sep','sept','september'), ('oct','october'), ('nov','november'), ('dec','december')), 1) for name in names}
 
@@ -117,3 +121,39 @@ def add_request_objective(model, outcomes, placements):
         groups.append(evaluable)
     scale = lcm(*(len(g) for g in groups)) if groups else 1
     return sum((scale // len(g)) * (len(g) - sum(row['_flag'] for row in g)) for g in groups)
+
+
+def unmet_request_reason(person, request, placements, options, stages):
+    """Explain proven individual restrictions; do not infer global conflicts."""
+    key = request['requirement_id']
+    requirement = next(r for r in person['requirements'] if r['requirement_id'] == key)
+    if not requirement['remaining_months']:
+        return 'requirement_completed', 'This requirement was already completed before the planning year.'
+    requested = [o for o in options if (o['requirement_id'], o['institution'], o['label']) in request['option_keys']]
+    if (key == 'r4.inpatient_psychiatry' and requested
+            and all(o['institution'] == 'IMH' for o in requested)
+            and completed_r1_inpatient_at_imh(person)):
+        return 'r1_imh_exclusion', 'R1 Inpatient Psychiatry was completed at IMH. R4 Inpatient must be outside IMH.'
+    partial = partial_posting_identity(person, key)
+    if partial and requested and all((o['posting'], o['institution']) != partial for o in requested):
+        posting, institution = partial
+        return 'partial_posting_continuation', f'This requirement must continue as {institution} {posting}, where it was started.'
+    if requested and all(o.get('capacity') == 0 for o in requested):
+        return 'zero_capacity', 'The requested posting has zero capacity in the Postings tab.'
+    if not request['starts']:
+        return 'no_valid_start', 'The requested period does not contain a permitted block start for this posting.'
+    # Use the scheduler's actual placement choices, including history and LOA.
+    possible = [p for p in placements if p['option'].get('capacity') != 0 and placement_fulfils_request(p, request)]
+    if not possible:
+        if all(not person['availability'][m]['available'] for m in request['starts']):
+            return 'loa_start', 'Recorded LOA prevents the posting from starting on any permitted date in the requested period.'
+        matching = [p for p in placements if p['option'].get('capacity') != 0
+                    and (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in request['option_keys']]
+        starts = [p['months'][0] for p in matching if p['months']]
+        if matching and (not starts or min(starts) > max(request['starts'])):
+            return 'training_progression', 'Outstanding training and required block order prevent a start within the requested period.'
+        return 'no_valid_placement', "No placement matches this request under the resident's remaining training and timing rules."
+    stage = next((s for s in stages if s['priority'] == 'resident_requests'), None)
+    if stage is None or stage['status'] != 'optimal':
+        return 'request_search_incomplete', 'The search time limit was reached before request optimisation was completed. This request may still be achievable.'
+    return 'not_selected', 'This request was not fulfilled in the best overall request allocation found. A specific individual restriction has not been established.'

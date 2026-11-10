@@ -8,13 +8,13 @@ from threading import Event, Thread
 from ortools.sat.python import cp_model
 
 if __package__:
-    from .request_preferences import resolve_requests, add_request_objective, placement_fulfils_request
+    from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
-    from request_preferences import resolve_requests, add_request_objective, placement_fulfils_request
+    from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from scheduler_inputs import prepare_scheduler_inputs
@@ -502,6 +502,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         for outcome in outcomes:
             if outcome.get('status') == 'evaluable' and 'duplicate_of' not in outcome:
                 outcome['status'] = 'met' if solver.value(outcome.pop('_flag')) else 'not_met'
+                if outcome['status'] == 'not_met':
+                    outcome['reason_code'], outcome['reason'] = unmet_request_reason(
+                        person, outcome, placements[i], options, stages)
                 matching = [p for p in chosen if p['option']['requirement_id'] == outcome['requirement_id'] and p['months']]
                 outcome['assigned'] = [
                     {'label': p['option']['label'],
@@ -521,7 +524,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         for outcome in outcomes:
             if 'duplicate_of' in outcome:
                 original = outcomes[outcome['duplicate_of']]
-                outcome.update({key: deepcopy(original[key]) for key in ('status', 'reason', 'assigned', 'matched_months') if key in original})
+                outcome.update({key: deepcopy(original[key]) for key in ('status', 'reason', 'reason_code', 'assigned', 'matched_months') if key in original})
         result["residents"].append({"requests": outcomes, **deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
                                     "route": choice["route"], "months": months,
                                     "cluster_coverage": {

@@ -48,7 +48,14 @@ class RequestSchedulerTests(unittest.TestCase):
                 result = draft_schedule(book, STORE, max_seconds=20)
                 self.assertIn(result['status'], {'optimal', 'feasible'}, result['blockers'])
                 expected = 'met' if scenario == 'met' else 'pending' if scenario == 'pending' else 'not_met'
-                self.assertEqual(result['residents'][0]['requests'][0]['status'], expected)
+                outcome = result['residents'][0]['requests'][0]
+                self.assertEqual(outcome['status'], expected)
+                if scenario in ('capacity', 'loa', 'mixed'):
+                    self.assertEqual(outcome['reason_code'], {'capacity': 'zero_capacity', 'loa': 'loa_start', 'mixed': 'training_progression'}[scenario])
+                elif scenario == 'met':
+                    self.assertIsNone(outcome['reason'])
+                else:
+                    self.assertEqual(outcome['reason'], 'No unique eligible catalogue posting')
                 priorities = result['soft_priority']
                 if scenario == 'pending':
                     self.assertNotIn('resident_requests', priorities)
