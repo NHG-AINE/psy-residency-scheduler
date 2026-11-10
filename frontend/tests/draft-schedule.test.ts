@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, requestSummary, updatedResidentCount } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -187,4 +187,22 @@ test('draft cancellation uses the registered operation and reports failures', as
   assert.deepEqual(calls, ['POST /api/draft/start', 'DELETE /api/draft/operation'])
   context.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }))
   await assert.rejects(cancelDraft(token), /Could not cancel/)
+})
+
+
+test('request summaries and markers share draft outcomes and exclude duplicates', () => {
+  const request = { posting_request: 'IMH Example', period: null, source: { sheet: 'Request', row: 2 } }
+  const rows = [
+    { request, status: 'met' as const, matched_months: ['2027-07'] },
+    { request, status: 'not_met' as const, replacement_months: ['2027-10'] },
+    { request, status: 'pending' as const, reason: 'Clarify' },
+    { request, status: 'met' as const, duplicate_of: 0, matched_months: ['2027-07'] },
+  ]
+  const withRequests = { ...draft, residents: [{ ...draft.residents[0], requests: rows }] }
+  const summary = requestSummary(resident, withRequests)
+  assert.deepEqual(summary.counts, { met: 1, not_met: 1, pending: 1 })
+  assert.equal(summary.indicator('2027-07')?.status, 'met')
+  assert.equal(summary.indicator('2027-10')?.status, 'not_met')
+  assert.equal(summary.indicator('2027-08'), undefined)
+  assert.deepEqual(requestSummary(resident, null).counts, { met: 0, not_met: 0, pending: 0 })
 })
