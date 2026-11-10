@@ -15,9 +15,9 @@ STORE = ReviewStore(version=1, decisions=[])
 def planning_book(history=(), planning="2027-07"):
     workbook = book(list(history), planning)
     workbook["postings"]["core"] = [row for row in workbook["postings"]["core"]
-                                      if validate_posting(row["residency_year"], {**row, "label": row["posting"], "category": "core"})["valid"]]
+                                      if validate_posting(row["residency_year"], {**row, "label": row["posting"], "category": "core"}, core_catalogue=workbook["postings"]["core"])["valid"]]
     for row in workbook["postings"]["core"]:
-        row["duration_months"] = str(validate_posting(row["residency_year"], {**row, "label": row["posting"], "category": "core"})["required_months"])
+        row["duration_months"] = str(validate_posting(row["residency_year"], {**row, "label": row["posting"], "category": "core"}, core_catalogue=workbook["postings"]["core"])["required_months"])
         row["max"] = None
     workbook["residents"][0]["postings"] = resident([(planning, None)], sheet="Planning")["postings"]
     return workbook
@@ -96,7 +96,7 @@ class SchedulerInputsTests(unittest.TestCase):
         self.assertEqual((elective["label"], elective["institution"], elective["duration_months"]), ("IMH ANDS", "IMH", 3))
         self.assertEqual(elective["remarks"], workbook["postings"]["electives"][0]["remarks"])
         self.assertTrue(elective["policy_review_required"])
-        for field, value, reason in (("posting", "KKH General Medicine", "institution_not_allowed"),
+        for field, value, reason in (("posting", "KKH Unknown Posting", "posting_not_required_for_year"),
                                      ("posting", None, "invalid_catalogue_label"),
                                      ("residency_year", "R1,R2", "unknown_requirement_year"),
                                      ("duration_months", "3", "programme_duration_mismatch"),

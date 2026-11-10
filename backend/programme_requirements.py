@@ -13,41 +13,37 @@ else:
 
 PROGRAMME_REQUIREMENTS = {
     "R1": {
-        "General Medicine": {"id": "r1.general_medicine", "months": 4, "institutions": ("TTSH", "SGH"),
+        "General Medicine": {"id": "r1.general_medicine", "months": 4,
                              "training_months": (1, 6)},
-        "Neurology": {"id": "r1.neurology", "months": 2, "institutions": ("NNI", "SGH"),
+        "Neurology": {"id": "r1.neurology", "months": 2,
                       "training_months": (1, 6)},
-        "Medicine & Neurology": {"id": "r1.medicine_neurology", "months": 6, "institutions": ("NUH",),
+        "Medicine & Neurology": {"id": "r1.medicine_neurology", "months": 6,
                                  "training_months": (1, 6)},
         "Inpatient Psychiatry": {"id": "r1.inpatient_psychiatry", "months": 6,
-                                 "institutions": ("IMH", "TTSH", "CGH", "SGH", "NUH"),
                                  "training_months": (7, 12)},
     },
     "R2": {
-        "Elective": {"id": "r2.elective", "months": 3, "institutions": None},
-        "Geriatric Psychiatry": {"id": "r2.geriatric_psychiatry", "months": 3, "institutions": ("IMH", "CGH", "NUH", "SGH")},
-        "Child & Adolescent Psychiatry": {"id": "r2.child_adolescent_psychiatry", "months": 3, "institutions": ("IMH", "NUH")},
-        "Addiction Medicine": {"id": "r2.addiction_medicine", "months": 3, "institutions": ("IMH",)},
+        "Elective": {"id": "r2.elective", "months": 3},
+        "Geriatric Psychiatry": {"id": "r2.geriatric_psychiatry", "months": 3},
+        "Child & Adolescent Psychiatry": {"id": "r2.child_adolescent_psychiatry", "months": 3},
+        "Addiction Medicine": {"id": "r2.addiction_medicine", "months": 3},
     },
     "R3": {
         "Continuity Clinic": {
             "id": "r3.continuity_clinic", "months": 12,
-            "institutions": ("IMH", "TTSH", "KTPH", "WH", "CGH", "SGH", "NUH", "NTFGH", "AH"),
             "continuity": {"same_posting": True, "same_institution": True, "loa": "pause"},
         },
     },
     "R4": {
-        "Inpatient Psychiatry": {"id": "r4.inpatient_psychiatry", "months": 3,
-                                 "institutions": ("IMH", "TTSH", "CGH", "SGH", "NUH")},
-        "Consultation Liaison Psychiatry": {"id": "r4.consultation_liaison_psychiatry", "months": 3,
-                                            "institutions": ("TTSH", "KTPH", "CGH", "SGH", "SKH", "NUH", "NTFGH")},
-        "Emergency Psychiatry": {"id": "r4.emergency_psychiatry", "months": 3, "institutions": ("IMH",)},
-        "Forensic Psychiatry": {"id": "r4.forensic_psychiatry", "months": 3, "institutions": ("IMH",)},
+        "Inpatient Psychiatry": {"id": "r4.inpatient_psychiatry", "months": 3},
+        "Consultation Liaison Psychiatry": {"id": "r4.consultation_liaison_psychiatry", "months": 3},
+        "Emergency Psychiatry": {"id": "r4.emergency_psychiatry", "months": 3},
+        "Forensic Psychiatry": {"id": "r4.forensic_psychiatry", "months": 3},
     },
     "R5": {
-        "Geriatric Psychiatry": {"id": "r5.geriatric_psychiatry", "months": 3, "institutions": ("IMH", "CGH", "NUH")},
-        "Child & Adolescent Psychiatry": {"id": "r5.child_adolescent_psychiatry", "months": 3, "institutions": ("IMH", "NUH", "KKH")},
-        "Elective": {"id": "r5.elective", "months": 6, "institutions": None},
+        "Geriatric Psychiatry": {"id": "r5.geriatric_psychiatry", "months": 3},
+        "Child & Adolescent Psychiatry": {"id": "r5.child_adolescent_psychiatry", "months": 3},
+        "Elective": {"id": "r5.elective", "months": 6},
     },
 }
 
@@ -60,11 +56,12 @@ R1_COMPLETION_ROUTES = (
 )
 
 
-def validate_posting(requirement_year, resolved_target, elective_catalogue=()):
-    """Validate year, posting and institution against the programme, without credit.
+def validate_posting(requirement_year, resolved_target, elective_catalogue=(), *, core_catalogue=()):
+    """Validate requirements against programme rules and institutions against the workbook.
 
     Electives are the parsed catalogue rows (year, institution, elective), not
-    raw history labels. Workbook durations/remarks do not override the programme.
+    raw history labels. Core institutions must also appear in the supplied catalogue.
+    Workbook durations/remarks do not override the programme.
     R3 progress keys distinguish each posting option and institution; LOA policy
     is declarative only. This function does not consume months or compute totals.
     """
@@ -119,7 +116,9 @@ def validate_posting(requirement_year, resolved_target, elective_catalogue=()):
             if normalized_label(name) == normalized_label(posting):
                 requirement = candidate
                 result["posting"] = name
-                if institution not in candidate["institutions"]:
+                if not any(normalized_label(row.get("residency_year")) == year.casefold()
+                           and normalized_label(row.get("posting")) == normalized_label(label)
+                           for row in core_catalogue):
                     result["reasons"].append("institution_not_allowed")
                 break
     if requirement is None:

@@ -8,6 +8,7 @@ from ortools.sat.python import cp_model
 
 from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
+from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule, _allocation_targets, _solve_priorities
 from rules.r1_rules import PREFERRED_INPATIENT_SITES
 from tests.test_requirement_ledger import resident
@@ -29,7 +30,7 @@ def r1_book(size=1):
     workbook["histories"] = []
     core = []
     for posting, rule in PROGRAMME_REQUIREMENTS["R1"].items():
-        for institution in rule["institutions"]:
+        for institution in INSTITUTIONS["R1"][posting]:
             core.append({"residency_year": "R1", "posting": f"{institution} {posting}",
                          "duration_months": str(rule["months"]), "max": None,
                          "remarks": "To be completed in the " + ("second" if posting == "Inpatient Psychiatry" else "first") + " 6 months of R1",
@@ -81,6 +82,18 @@ class R1SolverTests(unittest.TestCase):
         for person in result["residents"]:
             self.assertIn(person["months"][-1]["target"]["institution"], PREFERRED_INPATIENT_SITES[person["route"]])
         self.assertEqual(workbook, original)
+
+    def test_inpatient_candidates_follow_catalogue_instead_of_fixed_sites(self):
+        workbook = r1_book()
+        core = workbook["postings"]["core"]
+        inpatient = next(row for row in core if row["posting"] == "IMH Inpatient Psychiatry")
+        workbook["postings"]["core"] = [row for row in core if "Inpatient Psychiatry" not in row["posting"]]
+        workbook["postings"]["core"].append({**inpatient, "posting": "AH Inpatient Psychiatry"})
+        result = draft_schedule(workbook, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        self.check_resident(result["residents"][0])
+        self.assertEqual([m["label"] for m in result["residents"][0]["months"][6:]],
+                         ["AH Inpatient Psychiatry"] * 6)
 
     def test_continuing_history_preserves_pairing_neuro_block_and_only_schedules_remaining(self):
         workbook = r1_book()

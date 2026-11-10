@@ -3,6 +3,7 @@ from copy import deepcopy
 import unittest
 
 from programme_requirements import PROGRAMME_REQUIREMENTS
+from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule
 from tests.test_r1_solver import STORE
 from tests.test_r3_rules import r3_book
@@ -12,7 +13,7 @@ from tests.test_requirement_ledger import resident
 
 def add_r4_catalogue(book):
     for name, rule in PROGRAMME_REQUIREMENTS["R4"].items():
-        for site in rule["institutions"]:
+        for site in INSTITUTIONS["R4"][name]:
             book["postings"]["core"].append({"residency_year": "R4", "posting": f"{site} {name}",
                 "duration_months": "3", "source": {"sheet": "Postings", "row": 300 + len(book["postings"]["core"])}})
 

@@ -47,6 +47,30 @@ class R5Tests(unittest.TestCase):
             self.assertEqual(len({person["months"][i]["label"] for i in indices}), 1)
         self.assertEqual(book, before)
 
+    def test_added_geriatric_sites_count_history_and_schedule_remaining_months(self):
+        for site in ("TTSH", "SKH"):
+            with self.subTest(site=site):
+                book = r5_book()
+                for sheet in book["annual_sheets"]:
+                    for past in sheet["residents"]:
+                        if past is not book["residents"][0]:
+                            for month in past["postings"]:
+                                month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+                label = f"{site} Geriatric Psychiatry"
+                book["postings"]["core"].append({"residency_year": "R5", "posting": label,
+                    "duration_months": "3", "max": "1", "source": {"sheet": "Postings", "row": 700}})
+                book["annual_sheets"].append({"residents": [resident(
+                    [("2027-06", label)], "R5", "R5 history")]})
+                result = draft_schedule(book, STORE)
+                self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                self.assertEqual([m["label"] for m in result["residents"][0]["months"][:2]], [label] * 2)
+                book["postings"]["core"].pop()
+                prepared = prepare_scheduler_inputs(book, STORE)
+                requirement = next(r for r in prepared["residents"][0]["requirements"]
+                                   if r["requirement_id"] == "r5.geriatric_psychiatry")
+                self.assertEqual(requirement["expected_months"], 0)
+                self.assertFalse(prepared["residents"][0]["input_ready"])
+
     def test_explicit_core_capacity_and_history_credit(self):
         book = r5_book()
         book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"

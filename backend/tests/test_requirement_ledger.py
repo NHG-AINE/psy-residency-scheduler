@@ -211,8 +211,8 @@ class RequirementLedgerTests(unittest.TestCase):
         decision["context"] = reviewed["entries"][0]["context"]
         self.assertEqual(requirement(ledger(workbook), "r1.general_medicine")["expected_months"], 1)
         self.assertEqual(requirement(ledger(workbook, [decision]), "r1.general_medicine")["expected_months"], 1)
-        invalid = book([resident([("2026-01", "TTSH Geriatric Psychiatry")], "R2")])
-        self.assertEqual(ledger(invalid)["residents"][0]["months"][0]["reasons"], ["institution_not_allowed"])
+        added_site = book([resident([("2026-01", "TTSH Geriatric Psychiatry")], "R2")])
+        self.assertEqual(requirement(ledger(added_site), "r2.geriatric_psychiatry")["expected_months"], 1)
 
     def test_earlier_electives_and_remediation_count_without_bypassing_ambiguity(self):
         history = resident([(f"2026-{month:02d}", "IMH Geriatric Psychiatry (Remediation)" if month <= 9

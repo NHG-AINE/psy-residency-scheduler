@@ -1,7 +1,9 @@
 # PSY Programme Structure
 
 This document outlines the postings, institutions and training durations for
-R1-R5 in the NHG Psychiatry Residency Programme.
+R1-R5 in the NHG Psychiatry Residency Programme. The uploaded Postings tab is
+the source of truth for institutions offering each posting in each R-year; the
+institutions below describe the programme overview, not a fixed eligibility list.
 
 Postings are not fixed to particular calendar months. Scheduling requirements,
 including timing restrictions and progression after LOA, are documented in
