@@ -25,7 +25,9 @@ class RatioRelaxationTests(unittest.TestCase):
                   for months in ([M, M, N, N, M, M], [N, N, M, M, M, M])]
         for candidates, active in (
             ([paired], [True]),
-            ([paired, paired], [True, True]),
+            ([paired, list(reversed(paired)), paired], [True, True, True]),
+            ([paired, paired], [True, False]),
+            ([paired, paired[:1]], [True, True]),
             ([paired, [choice('SGH', [None, N, N, M, None, M])]], [True, False]),
             ([[choice('NUH', [None] * 6), choice('SGH', [N, N, M, M, M, M])]], [False]),
         ):
@@ -43,7 +45,9 @@ class RatioRelaxationTests(unittest.TestCase):
                     scores.append((distribution, ratio))
                 # Include nonzero route deviations; do not assume all targets were attainable.
                 for distribution in {d for d, _ in scores}:
-                    model, objective, _ = r1.ratio_relaxation(candidates, active, [{}] * 6, distribution)
+                    model, objective, variables = r1.ratio_relaxation(candidates, active, [{}] * 6, distribution)
+                    if len(candidates) == 3:
+                        self.assertEqual(len(variables), len(paired))
                     model.minimize(objective)
                     solver = cp_model.CpSolver()
                     self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
