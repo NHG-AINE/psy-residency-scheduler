@@ -9,15 +9,19 @@ else:
     from requirement_ledger import month_number
 
 
+def completed_r1_inpatient_at_imh(person):
+    return sum(
+        m["status"] == "expected" and m.get("requirement_id") == "r1.inpatient_psychiatry"
+        and m["institution"] == "IMH" for m in person["months"]) >= PROGRAMME_REQUIREMENTS["R1"]["Inpatient Psychiatry"]["months"]
+
+
 def prepare_blocks(person, options, planning_start, earlier_months, blockers):
     blocks = []
     remaining = [r for r in person["requirements"] if r["requirement_year"] == "R4" and r["remaining_months"]]
     if not remaining and person["cluster_coverage"]["missing"]:
         blockers.append({"code": "completed_r4_missing_clusters", "source": person["source"],
                          "clusters": person["cluster_coverage"]["missing"]})
-    imh = sum(
-        m["status"] == "expected" and m.get("requirement_id") == "r1.inpatient_psychiatry"
-        and m["institution"] == "IMH" for m in person["months"]) >= PROGRAMME_REQUIREMENTS["R1"]["Inpatient Psychiatry"]["months"]
+    imh = completed_r1_inpatient_at_imh(person)
     for requirement in person["requirements"]:
         if requirement["requirement_year"] != "R4" or not requirement["remaining_months"]:
             continue

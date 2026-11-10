@@ -36,10 +36,18 @@ def r4_book():
 
 class R4Tests(unittest.TestCase):
     def test_full_year_blocks_cluster_completion_and_r1_imh_exclusion(self):
-        result = draft_schedule(r4_book(), STORE)
+        book = r4_book()
+        request = {'posting_request': 'IMH Inpatient Psychiatry', 'period': None,
+                   'matched_resident_source': book['residents'][0]['source'], 'source': {'sheet': 'Request', 'row': 2}}
+        book['requests'] = [request, dict(request, source={'sheet': 'Request', 'row': 3})]
+        result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         person = result["residents"][0]
         months = person["months"]
+        for outcome in person['requests']:
+            self.assertEqual(outcome['status'], 'not_met')
+            self.assertEqual(outcome['reason_code'], 'r1_imh_exclusion')
+            self.assertIn('R4 Inpatient must be outside IMH', outcome['reason'])
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in months),
                          {rule["id"]: 3 for rule in PROGRAMME_REQUIREMENTS["R4"].values()})
         for start in range(0, 12, 3):
@@ -58,8 +66,13 @@ class R4Tests(unittest.TestCase):
                     month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
         book["annual_sheets"].append({"residents": [resident([("2027-06", "NUH Consultation Liaison Psychiatry")], "R4", "Partial")]})
         book["residents"][0]["postings"][1].update(status="loa", value="LOA")
+        book['requests'] = [{'posting_request': 'KTPH Consultation Liaison Psychiatry', 'period': None,
+            'matched_resident_source': book['residents'][0]['source'], 'source': {'sheet': 'Request', 'row': 2}}]
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        outcome = result['residents'][0]['requests'][0]
+        self.assertEqual(outcome['reason_code'], 'partial_posting_continuation')
+        self.assertIn('NUH Consultation Liaison Psychiatry', outcome['reason'])
         months = result["residents"][0]["months"]
         self.assertEqual([months[i]["label"] for i in (0, 2)], ["NUH Consultation Liaison Psychiatry"] * 2)
         self.assertEqual(months[1]["status"], "loa")

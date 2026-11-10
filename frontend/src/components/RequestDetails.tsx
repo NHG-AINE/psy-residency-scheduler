@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { RequestOutcome } from '../lib/draft-schedule'
-import { monthLabel, sourceLabel } from '../lib/workbook'
+import { monthLabel } from '../lib/workbook'
 
 export default function RequestDetails({ name, rows, hint, className, children }: {
   name: string; rows: RequestOutcome[]; hint: string; className: string; children: ReactNode
@@ -55,9 +55,8 @@ export default function RequestDetails({ name, rows, hint, className, children }
         <p className={`request-status ${row.status}`}>{row.status === 'met' ? 'Request met' : row.status === 'not_met' ? 'Request not met' : 'Pending clarification'}</p>
         <dl><dt>Requested</dt><dd>{row.request.posting_request}<small>{row.request.period || 'Any time in planning year'}</small></dd>
           {!!row.assigned?.length && <><dt>Assigned</dt><dd>{row.assigned.map((item, i) => <div key={i}>{item.label}<small>{item.months.map(monthLabel).join(', ')}</small></div>)}</dd></>}
+          {row.reason && <><dt>{row.status === 'not_met' ? "Why this wasn't met" : 'Clarification needed'}</dt><dd>{row.reason}</dd></>}
         </dl>
-        {row.reason && <p className="request-reason">{row.reason}</p>}
-        <small className="source">{sourceLabel(row.request.source)}</small>
       </article>)}
     </div>
   </>
