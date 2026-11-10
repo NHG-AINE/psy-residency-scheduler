@@ -13,7 +13,7 @@ MONTHS = {name: number for number, names in enumerate((('jan','january'), ('feb'
 
 def period_starts(value, planning_months, duration):
     if value is None or isinstance(value, str) and not value.strip():
-        return list(range(len(planning_months) - duration + 1))
+        return list(range(len(planning_months)))
     if not isinstance(value, str):
         return None
     match = re.fullmatch(r'\s*([A-Za-z]+)(?:\s+(\d{4}))?\s*[-\u2013]\s*([A-Za-z]+)\s+(\d{4})\s*', value)
@@ -29,7 +29,10 @@ def period_starts(value, planning_months, duration):
     a, b = months.index(start), months.index(end)
     if b < a:
         return None
-    return list(range(a, b - duration + 2, duration))
+    # Preserve block-aligned windows; only the planning-year boundary may
+    # truncate the requested block. Remaining training carries into next year.
+    return [start for start in range(a, b + 1, duration)
+            if min(start + duration - 1, len(months) - 1) <= b]
 
 
 def resolve_requests(person, requests, options, planning_months):
@@ -92,6 +95,14 @@ def resolve_requests(person, requests, options, planning_months):
     return outcomes
 
 
+def placement_fulfils_request(placement, request):
+    """Placements already satisfy training rules; a request recognises their start."""
+    option = placement['option']
+    return bool(placement['months']) and (
+        option['requirement_id'], option['institution'], option['label']
+    ) in request['option_keys'] and placement['months'][0] in request['starts']
+
+
 def add_request_objective(model, outcomes, placements):
     groups = []
     for i, rows in enumerate(outcomes):
@@ -99,11 +110,7 @@ def add_request_objective(model, outcomes, placements):
         if not evaluable:
             continue
         for n, row in enumerate(evaluable):
-            candidates = [p['variable'] for p in placements[i]
-                          if (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in row['option_keys']
-                          and len(p['months']) == row['duration'] and not p['remaining']
-                          and p['months'] == list(range(p['months'][0], p['months'][0] + row['duration']))
-                          and p['months'][0] in row['starts']]
+            candidates = [p['variable'] for p in placements[i] if placement_fulfils_request(p, row)]
             flag = model.new_bool_var(f'request_{i}_{n}')
             model.add(flag == sum(candidates))
             row['_flag'] = flag

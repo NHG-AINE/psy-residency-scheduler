@@ -1,8 +1,11 @@
 import unittest
+from copy import deepcopy
 from ortools.sat.python import cp_model
 from request_preferences import add_request_objective
 from scheduler import _solve_priorities, draft_schedule
 from tests.test_r2_rules import r2_book
+from tests.test_r3_rules import r3_book
+from tests.test_requirement_ledger import resident
 from tests.test_r1_solver import STORE
 
 
@@ -53,3 +56,42 @@ class RequestSchedulerTests(unittest.TestCase):
                     self.assertEqual(priorities.index('resident_requests'), 2)
                     stage = next(stage for stage in result['optimisation_stages'] if stage['priority'] == 'resident_requests')
                     self.assertEqual(stage['score'], 0 if scenario == 'met' else 1)
+
+    def test_mixed_year_clinic_start_fulfils_request_without_completing_training(self):
+        for scenario in ('blank', 'explicit', 'loa', 'wrong_start', 'wrong_institution'):
+            with self.subTest(scenario=scenario):
+                book = r3_book(complete_r2=False)
+                person = book['residents'][0]
+                person['residency_year'] = 'R2,R3'
+                past = resident([(f'2026-{7+i:02d}', label) for i, label in enumerate(
+                    ['IMH Geriatric Psychiatry'] * 3 + ['IMH Child & Adolescent Psychiatry'] * 3)],
+                    'R2', 'R2 history', person['source']['row'])
+                past.update(name=person['name'], mcr=person['mcr'])
+                book['annual_sheets'].append({'residents': [past]})
+                period = 'Jul - Dec 2027' if scenario == 'wrong_start' else 'Jan - June 2028' if scenario == 'explicit' else None
+                book['requests'] = [{'posting_request': 'NTFGH Continuity Clinic', 'period': period,
+                    'source': {'sheet': 'Request', 'row': 2}, 'matched_resident_source': person['source']}]
+                if scenario == 'loa':
+                    person['postings'][7].update(status='loa', value='LOA')
+                if scenario == 'wrong_institution':
+                    next(o for o in book['postings']['core'] if o['posting'] == 'NTFGH Continuity Clinic')['max'] = 0
+                original = deepcopy(book)
+                result = draft_schedule(book, STORE, max_seconds=20)
+                self.assertIn(result['status'], {'optimal', 'feasible'}, result['blockers'])
+                planned = result['residents'][0]
+                outcome = planned['requests'][0]
+                met = scenario not in ('wrong_start', 'wrong_institution')
+                self.assertEqual(outcome['status'], 'met' if met else 'not_met')
+                stage = next(s for s in result['optimisation_stages'] if s['priority'] == 'resident_requests')
+                self.assertEqual(stage['score'], 0 if met else 1)
+                clinic = [m for m in planned['months'] if (m.get('target') or {}).get('requirement_id') == 'r3.continuity_clinic']
+                self.assertEqual(clinic[0]['month'], '2028-01')
+                self.assertEqual(sum(c['months'] for c in planned['carryforward']), 7 if scenario == 'loa' else 6)
+                self.assertEqual(outcome['matched_months'], [m['month'] for m in clinic] if met else [])
+                if met:
+                    self.assertTrue(all(m['label'] == 'NTFGH Continuity Clinic' for m in clinic))
+                    self.assertEqual(outcome['replacement_months'], [])
+                if scenario == 'loa':
+                    self.assertEqual(planned['months'][7]['status'], 'loa')
+                    self.assertNotIn('2028-02', outcome['matched_months'])
+                self.assertEqual(book, original)
