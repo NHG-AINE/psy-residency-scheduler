@@ -8,13 +8,13 @@ from threading import Event, Thread
 from ortools.sat.python import cp_model
 
 if __package__:
-    from .request_preferences import resolve_requests, add_request_objective
+    from .request_preferences import resolve_requests, add_request_objective, placement_fulfils_request
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
-    from request_preferences import resolve_requests, add_request_objective
+    from request_preferences import resolve_requests, add_request_objective, placement_fulfils_request
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from scheduler_inputs import prepare_scheduler_inputs
@@ -492,8 +492,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 outcome['matched_months'] = [
                     prepared['planning_months'][m]['month'] for p in matching
                     if outcome['status'] == 'met'
-                    and (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in outcome['option_keys']
-                    and len(p['months']) == outcome['duration'] and p['months'][0] in outcome['starts']
+                    and placement_fulfils_request(p, outcome)
                     for m in p['months']]
 
         for outcome in outcomes:

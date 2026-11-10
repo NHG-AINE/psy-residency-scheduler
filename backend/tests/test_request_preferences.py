@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from ortools.sat.python import cp_model
 from request_preferences import period_starts, resolve_requests, add_request_objective
 
@@ -11,8 +11,11 @@ class RequestPreferenceTests(unittest.TestCase):
         self.assertEqual(period_starts('Jul - Nov 2027', months, 3), [0])
         self.assertIsNone(period_starts('Jan - Mar 2029', months, 3))
         self.assertEqual(period_starts('Jul - Sep 2027', months, 6), [])
+        self.assertEqual(period_starts(None, months, 12), list(range(12)))
+        self.assertEqual(period_starts('Jan - June 2028', months, 12), [6])
+        self.assertEqual(period_starts('Apr - June 2028', months, 6), [9])
 
-    def test_matching_and_full_placement(self):
+    def test_matching_and_valid_start(self):
         months = [{'month': f'2027-{m:02d}'} for m in range(7, 10)]
         source = {'sheet': 'AY', 'row': 2}
         person = {'source': source, 'recorded_years': ['r2'], 'requirements': [{'requirement_id': 'r2.child', 'requirement_year': 'R2', 'required_months': 3, 'remaining_months': 3}]}
@@ -28,7 +31,7 @@ class RequestPreferenceTests(unittest.TestCase):
         model.minimize(objective)
         solver = cp_model.CpSolver()
         solver.solve(model)
-        self.assertEqual(solver.value(objective), 1)
+        self.assertEqual(solver.value(objective), 0)
         ambiguous = dict(option, category='elective')
         self.assertEqual(resolve_requests(person, [row], [option, ambiguous], months)[0]['status'], 'evaluable')
         self.assertEqual(resolve_requests(person, [row], [ambiguous], months)[0]['status'], 'pending')
