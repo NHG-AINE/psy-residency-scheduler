@@ -4,8 +4,10 @@ from copy import deepcopy
 
 if __package__ == "backend.rules":
     from ..programme_requirements import PROGRAMME_REQUIREMENTS
+    from ..cluster_coverage import CLUSTERS
 else:
     from programme_requirements import PROGRAMME_REQUIREMENTS
+    from cluster_coverage import CLUSTERS
 
 
 STANDARD_ROUTE_TARGETS = {"TTSH/NNI": 12, "SGH": 9, "NUH": 3}
@@ -15,10 +17,10 @@ SHORT_COHORT_SIZE = sum(SHORT_COHORT_ROUTE_TARGETS.values())
 ROUTES = tuple(STANDARD_ROUTE_TARGETS)
 PAIRED_ROUTES = ("TTSH/NNI", "SGH")
 MEDICINE_PER_NEUROLOGY = 2
-PREFERRED_INPATIENT_SITES = {
-    "TTSH/NNI": {"SGH", "CGH", "NUH"},
-    "SGH": {"IMH", "TTSH", "NUH"},
-    "NUH": {"IMH", "TTSH", "SGH", "CGH"},
+PREFERRED_INPATIENT_CLUSTERS = {
+    "TTSH/NNI": ("SHS", "NUHS"),
+    "SGH": ("NHG", "NUHS"),
+    "NUH": ("NHG", "SHS"),
 }
 SOFT_PRIORITIES = (
     "incoming_route_distribution", "monthly_medicine_neurology_ratio",
@@ -122,7 +124,8 @@ def add_preferences(model, candidates, variables, active_intake, planning_months
             sites = {o["institution"] for o in choice["schedule"]
                      if o and o["requirement_id"] == R1["Inpatient Psychiatry"]["id"]}
             for site in sites:
-                if site not in PREFERRED_INPATIENT_SITES[choice["route"]]:
+                if not any(site in CLUSTERS[cluster]
+                           for cluster in PREFERRED_INPATIENT_CLUSTERS[choice["route"]]):
                     destination_penalties.append(variable)
             for month, option in enumerate(choice["schedule"]):
                 if option and option["requirement_id"] in {R1["General Medicine"]["id"], R1["Neurology"]["id"]}:

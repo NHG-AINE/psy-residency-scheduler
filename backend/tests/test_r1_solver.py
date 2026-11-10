@@ -10,7 +10,8 @@ from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
 from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule, _allocation_targets, _solve_priorities
-from rules.r1_rules import PREFERRED_INPATIENT_SITES
+from rules.r1_rules import add_preferences
+from cluster_coverage import CLUSTERS
 from tests.test_requirement_ledger import resident
 from tests import test_workbook_import
 
@@ -80,7 +81,9 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(result["soft_results"]["inpatient_counts"], {"IMH": 8, "TTSH": 4, "CGH": 4, "SGH": 4, "NUH": 4})
         self.assertEqual(result["singletons"], [])
         for person in result["residents"]:
-            self.assertIn(person["months"][-1]["target"]["institution"], PREFERRED_INPATIENT_SITES[person["route"]])
+            preferred = {"TTSH/NNI": ("SHS", "NUHS"), "SGH": ("NHG", "NUHS"), "NUH": ("NHG", "SHS")}[person["route"]]
+            self.assertTrue(any(person["months"][-1]["target"]["institution"] in CLUSTERS[cluster]
+                                for cluster in preferred))
         self.assertEqual(workbook, original)
 
     def test_inpatient_candidates_follow_catalogue_instead_of_fixed_sites(self):
@@ -228,6 +231,24 @@ class R1SolverTests(unittest.TestCase):
                                  {site: imh if site == "IMH" else other for site in sites})
         self.assertEqual(_allocation_targets(6, ["IMH", "NUH"]), {"IMH": 4, "NUH": 2})
         self.assertEqual(_allocation_targets(6, ["NUH"]), {})
+
+    def test_destination_preference_uses_cluster_membership_for_catalogue_sites(self):
+        # These sites were absent from the old destination list. An unknown
+        # cluster must not accidentally receive a preference bonus.
+        for route, penalties in (("TTSH/NNI", {"AH": 0, "SKH": 0, "KTPH": 1, "UNKNOWN": 1}),
+                                 ("SGH", {"AH": 0, "SKH": 1, "KTPH": 0, "UNKNOWN": 1}),
+                                 ("NUH", {"AH": 1, "SKH": 0, "KTPH": 0, "UNKNOWN": 1})):
+            for site, expected in penalties.items():
+                with self.subTest(route=route, site=site):
+                    model = cp_model.CpModel()
+                    choice = model.new_bool_var("choice")
+                    model.add(choice == 1)
+                    candidates = [[{"route": route, "schedule": [{"institution": site,
+                        "requirement_id": "r1.inpatient_psychiatry"}]}]]
+                    preferences = add_preferences(model, candidates, [[choice]], [False], [])
+                    solver = cp_model.CpSolver()
+                    self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
+                    self.assertEqual(solver.value(preferences["destination"]), expected)
 
     def test_allocation_overrides_destination_but_capacity_overrides_allocation(self):
         book = r1_book()
