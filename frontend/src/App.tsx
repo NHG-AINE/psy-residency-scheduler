@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
-import type { RequestOutcome } from './lib/draft-schedule'
+import RequestDetails from './components/RequestDetails'
 import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings, requestSummary } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
@@ -94,11 +94,6 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const { draft, busy: generating, error: draftError } = draftState
   const hasDraft = draft?.status === 'optimal' || draft?.status === 'feasible'
   const timetable = useRef<HTMLDivElement>(null)
-  const requestDetailRef = useRef<HTMLElement>(null)
-  const [savedRequestDetail, saveRequestDetail] = useState<{ name: string; rows: RequestOutcome[]; draft: typeof draft; year: number } | null>(null)
-  const requestDetail = savedRequestDetail?.draft === draft && savedRequestDetail?.year === year ? savedRequestDetail : null
-  const setRequestDetail = (detail: { name: string; rows: RequestOutcome[] } | null) => saveRequestDetail(detail ? { ...detail, draft, year } : null)
-  useEffect(() => { requestDetailRef.current?.scrollIntoView({ block: 'nearest' }) }, [requestDetail])
   const revealAfterGeneration = useRef(false)
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState<{ workbook: Workbook; attempt: number; data: HistoryReview } | null>(null)
@@ -148,14 +143,13 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     </div>
     {draftError && <p className="draft-error" role="alert">{draftError}</p>}
     {error && <div className="timetable-label-error" role="alert"><p>Catalogue labels are unavailable. Original labels are shown. {error}</p><button className="button button-secondary" type="button" onClick={() => setAttempt((value) => value + 1)}>Retry catalogue labels</button></div>}
-    {requestDetail && <section ref={requestDetailRef} className="request-details" aria-label="Draft request details"><button type="button" onClick={() => setRequestDetail(null)}>Close request details</button><h3>{requestDetail.name} - Draft requests</h3><ul>{requestDetail.rows.filter((row) => row.duplicate_of === undefined).map((row, index) => <li key={index}><strong>{row.status === 'met' ? 'Met' : row.status === 'not_met' ? 'Not met' : 'Pending'}</strong>: {show(row.request.posting_request)} - {row.request.period || 'Any time in planning year'}{row.reason && ` - ${row.reason}`}{row.assigned?.length ? ` - Assigned: ${row.assigned.map((item) => `${item.label} (${item.months.map(monthLabel).join(', ')})`).join('; ')}` : ''}{source(row.request.source)}</li>)}</ul></section>}
     <div ref={timetable} aria-busy={loading}>
     {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : generating ? 'Generating draft' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p> : <div className="table-scroll timetable"><table>
       <caption className="sr-only">{hasDraft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
       <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident, index) => <tr key={index}>
-        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small>{(() => { const { rows, counts } = requestSummary(resident, draft); return rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => { const count = counts[status]; return count > 0 && <button type="button" className={`request-count ${status}`} key={status} onClick={() => setRequestDetail({ name: show(resident.name), rows })}>{count} {status === 'not_met' ? 'not met' : status}</button> })}</div> })()}</th>
+        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small>{(() => { const { rows, counts } = requestSummary(resident, draft); return rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => { const count = counts[status]; return count > 0 && <RequestDetails className={`request-count ${status}`} key={status} name={show(resident.name)} rows={rows.filter((row) => row.status === status)} hint={`${count} ${status === 'not_met' ? 'not met' : status} - click for details`}>{count} {status === 'not_met' ? 'not met' : status}</RequestDetails> })}</div> })()}</th>
         {groupPostings(draftPostings(resident, draft)).map((block) => {
           const status = block[0].status
           const display = postingDisplay(block, 'catalogue', resolution?.entries)
@@ -166,14 +160,13 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
           const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
           const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
           const summary = requestSummary(resident, draft)
-          const requestRows = summary.rows
           const indicator = summary.indicator(block[0].month)
           return <td key={block[0].month} colSpan={block.length}><div
             className={`posting-value ${category}`}
             title={`${block[0].draft ? 'Draft assignment - ' : ''}${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
             >
             {words(value)}
-            {indicator && <button type="button" className={`request-indicator ${indicator.status}`} aria-label={`${indicator.status === 'met' ? 'Request met' : 'Request not met'}: show draft request details`} onClick={() => setRequestDetail({ name: show(resident.name), rows: requestRows })}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></button>}
+            {indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={show(resident.name)} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>}
             {display.markers.some((marker) => marker !== 'Elective') && <span className="posting-markers">{display.markers.filter((marker) => marker !== 'Elective').map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
           </div></td>
         })}
