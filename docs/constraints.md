@@ -106,14 +106,14 @@ score; compare scores in order rather than adding them into a total.
 
 1. Usual R1 route distribution.
 2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
-3. Balance posting requirements over time.
-4. Institution allocation targets: weighted IMH where offered, even distribution
+3. Maximise each resident's fraction of evaluable requests fulfilled.
+4. Balance posting requirements over time.
+5. Institution allocation targets: weighted IMH where offered, even distribution
    across eligible institutions otherwise.
-5. Missing cluster exposure for residents whose draft reaches R3.
-6. Preferred route-to-inpatient destination, as described in
+6. Missing cluster exposure for residents whose draft reaches R3.
+7. Preferred route-to-inpatient destination, as described in
    [cross-cluster.md](cross-cluster.md).
-7. Additional R1-R2 cluster exposure.
-8. Avoid singleton months for the same posting and institution.
+8. Additional R1-R2 cluster exposure.
+9. Avoid singleton months for the same posting and institution.
 
-This order applies across the R1-R5 draft. It does not set the priority of
-resident requests or replace the hard R4 completion requirement.
+This order applies across the R1-R5 draft. It does not replace the hard R4 completion requirement.
