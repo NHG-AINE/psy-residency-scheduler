@@ -114,8 +114,10 @@ def prepare_candidates(selected, options, planning_start, blockers):
     return by_key, candidates, active_intake
 
 
-def add_preferences(model, candidates, variables, active_intake, planning_months):
+def add_preferences(model, candidates, variables, active_intake, planning_months, group_sizes=None):
     """R1-only route, monthly ratio and route-to-inpatient preferences."""
+    group_sizes = group_sizes if group_sizes is not None else [1] * len(candidates)
+    resident_count = sum(group_sizes)
     route_counts, ratio_counts = defaultdict(list), defaultdict(list)
     destination_penalties = []
     for i, choices in enumerate(candidates):
@@ -133,15 +135,15 @@ def add_preferences(model, candidates, variables, active_intake, planning_months
                 if option and option["requirement_id"] in {R1["General Medicine"]["id"], R1["Neurology"]["id"]}:
                     kind = "medicine" if option["requirement_id"] == R1["General Medicine"]["id"] else "neuro"
                     ratio_counts[(month, choice["route"], kind)].append(variable)
-    targets = _targets(sum(active_intake))
+    targets = _targets(sum(size for size, active in zip(group_sizes, active_intake) if active))
     distribution_deviations, ratio_deviations = [], []
     for route, target in targets.items():
-        deviation = model.new_int_var(0, len(candidates), f"distribution_{route}")
+        deviation = model.new_int_var(0, resident_count, f"distribution_{route}")
         model.add_abs_equality(deviation, sum(route_counts[route]) - target)
         distribution_deviations.append(deviation)
     for month in range(len(planning_months)):
         for route in PAIRED_ROUTES:
-            deviation = model.new_int_var(0, MEDICINE_PER_NEUROLOGY * len(candidates), f"ratio_{month}_{route}")
+            deviation = model.new_int_var(0, MEDICINE_PER_NEUROLOGY * resident_count, f"ratio_{month}_{route}")
             model.add_abs_equality(deviation, sum(ratio_counts[(month, route, "medicine")]) - MEDICINE_PER_NEUROLOGY * sum(ratio_counts[(month, route, "neuro")]))
             ratio_deviations.append(deviation)
     return {"targets": targets, "route_counts": route_counts, "ratio_counts": ratio_counts,
@@ -154,9 +156,10 @@ def ratio_relaxation(candidates, active_intake, planning_months, distribution_sc
 
     Every full timetable projects to a choice here, so this model's proven
     ratio bound is safe for the full model. Never use its assignments there.
+    Identical projected choice sets use counts instead of individual assignments.
     """
     ratio_ids = {R1[name]["id"] for name in ("General Medicine", "Neurology")}
-    reduced, active = [], []
+    groups = {}
     for choices, incoming in zip(candidates, active_intake):
         unique = {}
         for choice in choices:
@@ -165,14 +168,20 @@ def ratio_relaxation(candidates, active_intake, planning_months, distribution_sc
             signature = (choice["route"], tuple(o["requirement_id"] if o else None for o in schedule))
             unique[signature] = {"route": choice["route"], "schedule": schedule}
         if unique and (incoming or any(any(c["schedule"]) for c in unique.values())):
-            reduced.append(list(unique.values()))
-            active.append(incoming)
+            # Only these projected patterns and intake status affect this relaxation.
+            key = (incoming, frozenset(unique))
+            if key not in groups:
+                groups[key] = [list(unique.values()), 0]
+            groups[key][1] += 1
+    reduced = [choices for choices, _ in groups.values()]
+    sizes = [size for _, size in groups.values()]
+    active = [incoming for incoming, _ in groups]
     model = cp_model.CpModel()
-    variables = [[model.new_bool_var(f"ratio_choice_{i}_{j}") for j in range(len(choices))]
+    variables = [[model.new_int_var(0, sizes[i], f"ratio_choice_{i}_{j}") for j in range(len(choices))]
                  for i, choices in enumerate(reduced)]
-    for choices in variables:
-        model.add_exactly_one(choices)
-    preferences = add_preferences(model, reduced, variables, active, planning_months)
+    for choices, size in zip(variables, sizes):
+        model.add(sum(choices) == size)
+    preferences = add_preferences(model, reduced, variables, active, planning_months, sizes)
     model.add(preferences["distribution"] == distribution_score)
     return model, preferences["ratio"], [v for choices in variables for v in choices]
 
