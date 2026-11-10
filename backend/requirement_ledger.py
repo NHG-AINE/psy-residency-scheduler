@@ -185,7 +185,8 @@ def _allocation(entry, workbook):
     target_year = year.strip().casefold()
     if not review.get("requirement_year") and (not years or target_year > max(years)):
         return {"status": "pending", "reasons": ["requirement_year_unconfirmed"]}
-    validation = validate_posting(year, target, workbook.get("postings", {}).get("electives", []))
+    validation = validate_posting(year, target, workbook.get("postings", {}).get("electives", []),
+                                  core_catalogue=workbook.get("postings", {}).get("core", []))
     if not validation["valid"]:
         return {"status": "pending", "reasons": validation["reasons"]}
     return {"status": "expected", "reasons": [], "requirement_id": validation["requirement_id"],

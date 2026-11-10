@@ -18,6 +18,7 @@ class PartialR2HistoryTests(unittest.TestCase):
 from collections import Counter
 from copy import deepcopy
 from programme_requirements import PROGRAMME_REQUIREMENTS
+from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule
 from tests.test_r1_solver import r1_book, set_history, STORE
 from tests.test_requirement_ledger import resident
@@ -35,7 +36,7 @@ def r2_book(size=1, mixed=False):
     for name, rule in PROGRAMME_REQUIREMENTS["R2"].items():
         if name == "Elective":
             continue
-        for site in rule["institutions"]:
+        for site in INSTITUTIONS["R2"][name]:
             workbook["postings"]["core"].append({"residency_year": "R2", "posting": f"{site} {name}",
                 "duration_months": str(rule["months"]), "source": {"sheet": "Postings", "row": len(workbook["postings"]["core"]) + 2}})
     workbook["postings"]["electives"] = [{"residency_year": "R2", "institution": "IMH", "elective": title,

@@ -29,7 +29,7 @@ R1 = PROGRAMME_REQUIREMENTS["R1"]
 R1_REQUIRED_MONTHS = R1["Medicine & Neurology"]["months"] + R1["Inpatient Psychiatry"]["months"]
 
 
-def _paths(person):
+def _paths(person, catalogue_keys):
     """Use ledger credit, never validate the order of historical exceptions."""
     gm, neuro, combined, inpatient = [R1[name]["id"] for name in (
         "General Medicine", "Neurology", "Medicine & Neurology", "Inpatient Psychiatry")]
@@ -43,7 +43,10 @@ def _paths(person):
     paired_months = remaining[gm] + remaining[neuro]
     least_remaining = min(paired_months, remaining[combined])
     inpatient_sites = {month["institution"] for month in history if month["requirement_id"] == inpatient}
-    sites = sorted(inpatient_sites) if len(inpatient_sites) == 1 else R1["Inpatient Psychiatry"]["institutions"]
+    sites = sorted(inpatient_sites) if len(inpatient_sites) == 1 else [
+        site for requirement, site in catalogue_keys if requirement == inpatient]
+    if not remaining[inpatient]:
+        sites = [None]  # No inpatient option is needed when history already completed it.
     for site in sites:
         tail = [(inpatient, site)] * remaining[inpatient]
         if paired_months == least_remaining:
@@ -91,7 +94,7 @@ def prepare_candidates(selected, options, planning_start, blockers):
         incoming = person["recorded_years"] == ["r1"] and (person.get("intake") or "").strip() == planning_start[:4]
         active_intake.append(incoming and any(m["available"] for m in person["availability"]))
         choices = []
-        for route, remaining in _paths(person):
+        for route, remaining in _paths(person, by_key):
             if any(key not in by_key for key in remaining):
                 continue
             schedule, consumed = [], 0

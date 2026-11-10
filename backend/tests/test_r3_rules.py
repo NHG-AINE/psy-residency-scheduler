@@ -2,6 +2,7 @@ from copy import deepcopy
 import unittest
 
 from programme_requirements import PROGRAMME_REQUIREMENTS
+from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule
 from tests.test_r1_solver import STORE
 from tests.test_r2_rules import r2_book
@@ -10,7 +11,7 @@ from tests.test_requirement_ledger import resident
 
 def r3_book(size=1, complete_r2=True):
     book = r2_book(size)
-    for site in PROGRAMME_REQUIREMENTS["R3"]["Continuity Clinic"]["institutions"]:
+    for site in INSTITUTIONS["R3"]["Continuity Clinic"]:
         book["postings"]["core"].append({"residency_year": "R3", "posting": f"{site} Continuity Clinic",
             "duration_months": "12", "source": {"sheet": "Postings", "row": 200 + len(book["postings"]["core"])}})
     for person in book["residents"]:

@@ -51,7 +51,8 @@ def prepare_scheduler_inputs(workbook, reviewstore):
                 continue
             targets = posting_catalogue({"core" if category == "core" else "electives": [row]})
             target = targets[0] if targets else {"category": category, "residency_year": row.get("residency_year"), "label": None, "source": row["source"]}
-            validation = validate_posting(row.get("residency_year"), target, postings.get("electives", []))
+            validation = validate_posting(row.get("residency_year"), target, postings.get("electives", []),
+                                          core_catalogue=postings.get("core", []))
             reasons = list(validation["reasons"])
             duration, capacity = None, None
             try:
