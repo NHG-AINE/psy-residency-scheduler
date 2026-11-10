@@ -1,7 +1,7 @@
 """Shared draft model and optimisation for R1-R5."""
 from collections import defaultdict
 from copy import deepcopy
-from math import isfinite, gcd
+from math import isfinite, gcd, floor
 from time import monotonic
 from threading import Event, Thread
 
@@ -24,6 +24,7 @@ else:
 IMH_ALLOCATION_SHARES = 2
 
 DEFAULT_SOLVE_SECONDS = 120
+R1_RATIO_BOUND_SECONDS = 10
 # Zero lets OR-Tools choose workers from the available CPUs.
 SOLVER_WORKERS = 0
 SOLVER_RANDOM_SEED = 0
@@ -86,7 +87,7 @@ class DraftCancelled(Exception):
     pass
 
 
-def _solve_priorities(model, objectives, variables, max_seconds, cancel=None):
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None):
     """Lock proven scores, not assignments; retain the last valid solution."""
     started = monotonic()
     deadline = started + max_seconds
@@ -99,12 +100,30 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None):
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
+        stage_started = monotonic()
+        relaxation = None
+        if (name == "monthly_medicine_neurology_ratio" and r1_ratio_data
+                and stages and stages[-1]["priority"] == "incoming_route_distribution"
+                and remaining > R1_RATIO_BOUND_SECONDS):
+            bound_started = monotonic()
+            small_model, small_objective, small_variables = r1_rules.ratio_relaxation(
+                *r1_ratio_data, stages[-1]["score"])
+            bound_budget = max(0, min(deadline, bound_started + R1_RATIO_BOUND_SECONDS) - monotonic())
+            bound_solver, bound_status, bound_stages, _ = _solve_priorities(
+                small_model, [("ratio_bound", small_objective)], small_variables, bound_budget, cancel)
+            bound = floor(bound_stages[-1]["best_objective_bound"]) if bound_solver is not None else None
+            if bound is not None:
+                model.add(objective >= bound)
+            relaxation = {"status": bound_status, "lower_bound": bound,
+                          "wall_time_seconds": monotonic() - bound_started}
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
         model.minimize(objective)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = remaining
         solver.parameters.num_search_workers = SOLVER_WORKERS
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
-        stage_started = monotonic()
         callback = _BestScoreTime()
         finished = Event()
         def stop_when_cancelled():
@@ -124,6 +143,8 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None):
             raise DraftCancelled()
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
+        if relaxation is not None:
+            stages[-1]["ratio_relaxation"] = relaxation
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
             break
         best = solver
@@ -131,7 +152,7 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None):
         stages[-1]["score"] = score
         stages[-1]["best_objective_bound"] = solver.best_objective_bound
         if callback.best_time is not None:
-            stages[-1]["best_score_time_seconds"] = callback.best_time
+            stages[-1]["best_score_time_seconds"] = callback.best_time + (relaxation["wall_time_seconds"] if relaxation else 0)
         if status != cp_model.OPTIMAL:
             break  # Never freeze an unproven score and optimise a lower priority.
         model.add(objective == score)
@@ -450,7 +471,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         objectives.insert(destination_index, ("r3_missing_clusters", sum(r3_cluster_penalties)))
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
-        model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel)
+        model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel,
+        r1_ratio_data=(candidates, active_intake, prepared["planning_months"])
+        if any(preferences["ratio_counts"].values()) else None)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,

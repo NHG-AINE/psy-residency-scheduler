@@ -2,6 +2,8 @@
 from collections import Counter, defaultdict
 from copy import deepcopy
 
+from ortools.sat.python import cp_model
+
 if __package__ == "backend.rules":
     from ..programme_requirements import PROGRAMME_REQUIREMENTS
     from ..cluster_coverage import CLUSTERS
@@ -145,6 +147,34 @@ def add_preferences(model, candidates, variables, active_intake, planning_months
     return {"targets": targets, "route_counts": route_counts, "ratio_counts": ratio_counts,
             "distribution": sum(distribution_deviations), "ratio": sum(ratio_deviations),
             "destination": sum(destination_penalties)}
+
+
+def ratio_relaxation(candidates, active_intake, planning_months, distribution_score):
+    """A superset of full-model choices: omit destinations and later-year constraints.
+
+    Every full timetable projects to a choice here, so this model's proven
+    ratio bound is safe for the full model. Never use its assignments there.
+    """
+    ratio_ids = {R1[name]["id"] for name in ("General Medicine", "Neurology")}
+    reduced, active = [], []
+    for choices, incoming in zip(candidates, active_intake):
+        unique = {}
+        for choice in choices:
+            schedule = [o if o and o["requirement_id"] in ratio_ids else None
+                        for o in choice["schedule"]]
+            signature = (choice["route"], tuple(o["requirement_id"] if o else None for o in schedule))
+            unique[signature] = {"route": choice["route"], "schedule": schedule}
+        if unique and (incoming or any(any(c["schedule"]) for c in unique.values())):
+            reduced.append(list(unique.values()))
+            active.append(incoming)
+    model = cp_model.CpModel()
+    variables = [[model.new_bool_var(f"ratio_choice_{i}_{j}") for j in range(len(choices))]
+                 for i, choices in enumerate(reduced)]
+    for choices in variables:
+        model.add_exactly_one(choices)
+    preferences = add_preferences(model, reduced, variables, active, planning_months)
+    model.add(preferences["distribution"] == distribution_score)
+    return model, preferences["ratio"], [v for choices in variables for v in choices]
 
 
 def preference_results(solver, preferences, planning_months):
