@@ -5,15 +5,30 @@ import { postingHistoryEntry } from './posting-blocks.ts'
 import type { HistoryEntry } from './history-review.ts'
 import type { ReviewStore } from './history-review.ts'
 
+export type RequestOutcome = {
+  request: { posting_request: string | null; period: string | null; source: Source }
+  status: 'met' | 'not_met' | 'pending'; reason?: string | null; duplicate_of?: number
+  assigned?: { label: string; months: string[] }[]; matched_months?: string[]; replacement_months?: string[]
+}
 export type DraftSchedule = {
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
   skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
+    requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
+}
+
+export function requestSummary(resident: Resident, draft: DraftSchedule | null) {
+  const rows = draft && ['optimal', 'feasible'].includes(draft.status)
+    ? draft.residents.find((person) => sameSource(person.source, resident.source))?.requests?.filter((row) => row.duplicate_of === undefined) || [] : []
+  const counts = { met: 0, not_met: 0, pending: 0 }
+  for (const row of rows) counts[row.status]++
+  const indicator = (month: string) => rows.find((row) => row.matched_months?.includes(month)) || rows.find((row) => row.replacement_months?.includes(month))
+  return { rows, counts, indicator }
 }
 
 export function canGenerateDraft(workbook: Workbook | null, selectedYear = workbook?.target_year, importing = false): boolean {
