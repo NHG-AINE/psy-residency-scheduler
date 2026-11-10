@@ -325,9 +325,31 @@
 .request-count.met, .request-indicator.met { color: #276344; }
 .request-count.not_met, .request-indicator.not_met { color: #704d6b; }
 .request-count.pending { color: #815b24; }
-.request-details { margin: 12px 0; padding: 16px; background: white; border: 1px solid #e7e5e4; border-radius: 8px; }
-.request-details h3 { margin: 8px 0; }
-.posting-value:has(.request-indicator) { position: relative; padding-right: 24px; }
-.request-indicator { position: absolute; top: 3px; right: 3px; border: 0; background: transparent; cursor: pointer; font-size: 12px; }
+.posting-value:has(.request-indicator) { position: relative; padding-right: 2.5rem; }
+.request-indicator { position: absolute; top: .25rem; right: .25rem; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; padding: 0; border: 0; background: transparent; cursor: pointer; font-size: 12px; }
 
 .request-indicator svg { display: block; width: 12px; height: 12px; }
+
+.request-popover { position: fixed; margin: 0; width: min(24rem, calc(100vw - 2rem)); padding: 1rem; overflow: auto; border: 0; border-radius: .75rem; background: #fff; color: #292524; box-shadow: 0 8px 32px #29252426; text-align: left; font-size: .8125rem; font-weight: 400; line-height: 1.5; }
+.request-popover:popover-open { animation: request-appear 160ms ease-out; }
+.request-popover header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.request-popover h3 { margin: .25rem 0 .75rem; font-size: .875rem; font-weight: 600; }
+.request-close { display: grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 50%; cursor: pointer; }
+.request-close svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.request-close:hover, .request-indicator:hover { background: #2925240a; }
+.request-close:active, .request-indicator:active { transform: scale(.96); }
+.request-indicator { border-radius: .25rem; }
+.request-popover article + article { border-top: 1px solid #e7e5e4; margin-top: 1rem; padding-top: 1rem; }
+.request-status { margin: 0 0 .75rem; font-weight: 500; }
+.request-status.met { color: #276344; }
+.request-status.not_met { color: #704d6b; }
+.request-status.pending { color: #815b24; }
+.request-popover dl, .request-popover dd { margin: 0; }
+.request-popover dt { margin-top: .75rem; color: #6e675e; font-size: .75rem; }
+.request-popover dd { margin-top: .25rem; }
+.request-popover small { display: block; margin-top: .25rem; color: #6e675e; font-size: .75rem; }
+.request-popover .source { margin-top: 1rem; }
+.request-reason { margin: .75rem 0 0; }
+@keyframes request-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 520px) { .request-popover { top: auto !important; bottom: .75rem !important; left: .75rem !important; width: calc(100vw - 1.5rem); max-height: 70dvh !important; } }
+@media (prefers-reduced-motion: reduce) { .request-popover:popover-open { animation: none; } .request-indicator:active, .request-close:active { transform: none; } }
