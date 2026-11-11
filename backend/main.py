@@ -94,8 +94,12 @@ async def cancel_draft(token: str):
     return {"cancelled": True}
 
 
+class DraftRequest(RequirementLedgerRequest):
+    max_seconds: Literal[60, 120, 300, 600] = 120
+
+
 @app.post("/api/draft")
-async def generate_draft(request: RequirementLedgerRequest, token: str | None = None):
+async def generate_draft(request: DraftRequest, token: str | None = None):
     operation = _draft_operations.get(token) if token else None
     if token and (not operation or operation["running"]):
         raise HTTPException(409, "Draft operation is no longer available.")
@@ -106,11 +110,11 @@ async def generate_draft(request: RequirementLedgerRequest, token: str | None = 
         if request.workbook["target_year"] != latest_year:
             raise HTTPException(422, "Draft generation is available only for the latest planning year in this workbook.")
         if operation:
-            result = await run_in_threadpool(draft_schedule, request.workbook, request.store, cancel=operation["cancel"])
+            result = await run_in_threadpool(draft_schedule, request.workbook, request.store, max_seconds=request.max_seconds, cancel=operation["cancel"])
             if operation["cancel"].is_set():
                 raise DraftCancelled()
             return result
-        return await run_in_threadpool(draft_schedule, request.workbook, request.store)
+        return await run_in_threadpool(draft_schedule, request.workbook, request.store, max_seconds=request.max_seconds)
     except DraftCancelled as exc:
         raise HTTPException(409, "Draft generation cancelled.") from exc
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
