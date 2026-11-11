@@ -137,8 +137,9 @@ def normalized_label(value):
 
 
 def normalized_posting_label(value):
-    """Compare conjunction spellings without rewriting source labels or identities."""
-    return normalized_label((value or "").replace("&", " and "))
+    """Ignore conjunction spelling and regional notes when comparing posting labels."""
+    label = re.sub(r"\(\s*(?:north|south|east|west)\s*\)", " ", value or "", flags=re.IGNORECASE)
+    return normalized_label(label.replace("&", " and "))
 
 
 def recorded_years(value):
