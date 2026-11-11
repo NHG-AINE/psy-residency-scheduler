@@ -57,8 +57,8 @@ export function canGenerateDraft(workbook: Workbook | null, selectedYear = workb
   return !importing && !!workbook && workbook.target_year === selectedYear && workbook.target_year === Math.max(...workbook.available_years.map(({ year }) => year))
 }
 
-// Allow an extra minute beyond the two-minute solver budget for preparation and transport.
-const DRAFT_REQUEST_TIMEOUT_MS = 180_000
+// Allow an extra minute beyond the selected solver budget for preparation and transport.
+const DRAFT_REQUEST_OVERHEAD_MS = 60_000
 const DRAFT_CONTROL_TIMEOUT_MS = 15_000
 
 export async function startDraft(): Promise<string> {
@@ -73,10 +73,10 @@ export async function cancelDraft(token: string): Promise<void> {
   if (!response.ok) throw new Error('Could not cancel draft generation. Check the connection and retry.')
 }
 
-export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal, token?: string): Promise<DraftSchedule> {
+export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal, token?: string, maxSeconds = 120): Promise<DraftSchedule> {
   let response: Response
   try {
-    response = await fetch(token ? `/api/draft?token=${encodeURIComponent(token)}` : '/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store }), signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_REQUEST_TIMEOUT_MS)]) })
+    response = await fetch(token ? `/api/draft?token=${encodeURIComponent(token)}` : '/api/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workbook, store, max_seconds: maxSeconds }), signal: AbortSignal.any([signal, AbortSignal.timeout(maxSeconds * 1000 + DRAFT_REQUEST_OVERHEAD_MS)]) })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('Draft generation timed out. Check the connection and retry.')
     throw new Error('Could not reach the backend to generate a draft. Check the connection and retry.')

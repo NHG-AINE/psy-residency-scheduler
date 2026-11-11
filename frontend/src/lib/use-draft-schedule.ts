@@ -6,6 +6,7 @@ import type { Workbook } from './workbook'
 
 export function useDraftSchedule(workbook: Workbook | null, importing: boolean, selectedYear: number) {
   const [result, setResult] = useState<{ year: number; data: DraftSchedule; elapsedSeconds: number } | null>(null)
+  const [searchSeconds, setSearchSeconds] = useState(120)
   const [busy, setBusy] = useState(false)
   const [originYear, setOriginYear] = useState<number | null>(null)
   const [startedAt, setStartedAt] = useState<number | null>(null)
@@ -60,7 +61,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
       if (saved.error) throw new Error(saved.error)
       const token = await operation.token
       if (operation.cancelled) return
-      const data = await generateDraft(workbook, saved.store, controller.signal, token)
+      const data = await generateDraft(workbook, saved.store, controller.signal, token, searchSeconds)
       if (!operation.cancelled && !operation.invalidated) {
         const elapsedSeconds = Math.floor((performance.now() - start) / 1000)
         setResult({ year: workbook.target_year, data, elapsedSeconds })
@@ -74,7 +75,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   }
   const visible = !importing && canGenerate && result?.year === workbook?.target_year ? result : null
   const onOriginYear = canGenerate && originYear === selectedYear
-  return { draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null,
+  return { searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null,
     elapsedSeconds: visible && ['optimal', 'feasible'].includes(visible.data.status) ? visible.elapsedSeconds : null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>

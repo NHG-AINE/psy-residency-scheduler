@@ -398,3 +398,11 @@
 .timing-remaining ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.9; }
 @media (max-width: 520px) { .draft-timing-trigger { min-height: 44px; } .draft-timing { padding: 20px; transform-origin: bottom center; } }
 @media (prefers-reduced-motion: reduce) { .draft-timing, .draft-timing-trigger { transition: none; transform: none; } .draft-timing:popover-open .timing-bar > span { animation: none; } }
+
+.draft-search-limit { display: flex; align-items: center; flex-shrink: 0; height: 40px; padding-left: 16px; border: 1px solid #d6d3d1; border-radius: 999px; font-size: 12px; font-weight: 400; color: #6e675e; }
+.draft-search-value { position: relative; }
+.draft-search-value select { appearance: none; margin: 0; min-height: 38px; padding: 8px 38px 8px 10px; border: 0; border-radius: 999px; background: transparent; color: #292524; font-size: 13px; font-weight: 500; cursor: pointer; }
+.draft-search-value svg { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; pointer-events: none; }
+.draft-search-limit:focus-within { outline: 2px solid #695b82; outline-offset: 3px; }
+.draft-search-value select:focus-visible { outline: none; }
+@media (max-width: 520px) { .draft-search-limit { height: 44px; } .draft-search-value select { min-height: 42px; } }

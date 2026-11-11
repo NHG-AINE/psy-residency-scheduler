@@ -60,13 +60,15 @@ test('draft request sends the original workbook, saved decisions and cancellatio
   const store = { version: 1 as const, decisions: [] }
   context.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
     assert.equal(url, '/api/draft')
-    assert.deepEqual(JSON.parse(String(options.body)), { workbook, store })
+    assert.deepEqual(JSON.parse(String(options.body)), { workbook, store, max_seconds: 600 })
     assert.ok(options.signal instanceof AbortSignal)
     controller.abort()
     assert.equal(options.signal.aborted, true)
     return new Response(JSON.stringify(draft))
   })
-  assert.deepEqual(await generateDraft(workbook, store, controller.signal), draft)
+  const timeout = context.mock.method(AbortSignal, 'timeout', () => new AbortController().signal)
+  assert.deepEqual(await generateDraft(workbook, store, controller.signal, undefined, 600), draft)
+  assert.equal(timeout.mock.calls[0].arguments[0], 660_000)
   context.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ detail: 'Review inputs first.' }), { status: 422 }))
   await assert.rejects(generateDraft(workbook, store, controller.signal), /Review inputs first/)
   context.mock.method(globalThis, 'fetch', async () => new Response('invalid json'))

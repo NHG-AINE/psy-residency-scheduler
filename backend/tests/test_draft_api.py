@@ -19,7 +19,21 @@ class DraftApiTests(unittest.TestCase):
                 passed_workbook, passed_store = solve.call_args.args
                 self.assertEqual(passed_workbook, workbook)
                 self.assertEqual(passed_store.model_dump(), store)
-                self.assertEqual(solve.call_args.kwargs, {})
+                self.assertEqual(solve.call_args.kwargs, {"max_seconds": 120})
+
+    def test_selected_search_budget_reaches_solver_and_invalid_budgets_are_rejected(self):
+        payload = {"workbook": r1_book(), "store": {"version": 1, "decisions": []}}
+        with TestClient(app) as client, patch("main.draft_schedule", return_value={"status": "optimal"}) as solve:
+            for seconds in (60, 120, 300, 600):
+                token = client.post('/api/draft/start').json()['token']
+                response = client.post(f'/api/draft?token={token}', json={**payload, "max_seconds": seconds})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(solve.call_args.kwargs['max_seconds'], seconds)
+                self.assertIn('cancel', solve.call_args.kwargs)
+            solve.reset_mock()
+            for invalid in (0, -1, 121, 601, "300", None):
+                self.assertEqual(client.post('/api/draft', json={**payload, "max_seconds": invalid}).status_code, 422)
+            solve.assert_not_called()
 
     def test_historical_year_is_rejected_before_running_solver(self):
         workbook = r1_book()
