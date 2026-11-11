@@ -19,6 +19,9 @@ export type DraftSchedule = {
     requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
+  soft_priority?: string[]
+  wall_time_seconds?: number
+  optimisation_stages?: { priority: string; status: string; wall_time_seconds: number }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
