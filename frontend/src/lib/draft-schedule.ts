@@ -31,6 +31,25 @@ export function requestSummary(resident: Resident, draft: DraftSchedule | null) 
   return { rows, counts, indicator }
 }
 
+export type RequestStatus = RequestOutcome['status']
+
+export function requestTotals(draft: DraftSchedule | null) {
+  const counts = { met: 0, not_met: 0, pending: 0 }
+  if (draft && ['optimal', 'feasible'].includes(draft.status)) {
+    for (const person of draft.residents) {
+      for (const row of person.requests || []) {
+        if (row.duplicate_of === undefined) counts[row.status]++
+      }
+    }
+  }
+  return counts
+}
+
+export function filterRequestResidents(residents: Resident[], draft: DraftSchedule | null, status: RequestStatus | null) {
+  if (!status || !draft || !['optimal', 'feasible'].includes(draft.status)) return residents
+  return residents.filter((resident) => requestSummary(resident, draft).counts[status] > 0)
+}
+
 export function canGenerateDraft(workbook: Workbook | null, selectedYear = workbook?.target_year, importing = false): boolean {
   return !importing && !!workbook && workbook.target_year === selectedYear && workbook.target_year === Math.max(...workbook.available_years.map(({ year }) => year))
 }

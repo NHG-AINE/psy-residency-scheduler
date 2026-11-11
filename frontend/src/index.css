@@ -351,3 +351,15 @@
 @keyframes request-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 520px) { .request-popover { top: auto !important; bottom: .75rem !important; left: .75rem !important; width: calc(100vw - 1.5rem); max-height: 70dvh !important; } }
 @media (prefers-reduced-motion: reduce) { .request-popover:popover-open { animation: none; } .request-indicator:active, .request-close:active { transform: none; } }
+
+.request-totals { min-width: 0; align-self: flex-end; }
+.request-total-buttons { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: .25rem; }
+.request-total-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; min-height: 40px; white-space: nowrap; padding: .5rem .625rem; border: 1px solid transparent; border-radius: 999px; background: transparent; color: #6e675e; font: inherit; font-size: .75rem; font-variant-numeric: tabular-nums; cursor: pointer; transition: background 150ms ease, border-color 150ms ease; }
+.request-total-buttons button:hover { background: #f5f5f4; }
+.request-total-buttons button[aria-pressed="true"] { background: #f0efed; border-color: #a8a29e; }
+.request-total-buttons button:active { background: #e7e5e4; }
+.request-total-buttons button.met { color: #276344; }
+.request-total-buttons button.not_met { color: #704d6b; }
+.request-total-buttons svg { width: .875rem; height: .875rem; fill: none; stroke: currentColor; stroke-width: 1.5; }
+@media (max-width: 640px) { .search-toolbar .request-totals { flex-basis: 100%; } .request-total-buttons { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); } .request-total-buttons button { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .request-total-buttons button { transition: none; } }

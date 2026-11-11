@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, requestSummary, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, requestSummary, requestTotals, filterRequestResidents, updatedResidentCount } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -213,7 +213,7 @@ test('request summaries and markers share draft outcomes and exclude duplicates'
 
 
 test('request details show the outcome reason without workbook row metadata', async () => {
-  const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   try {
     const { default: RequestDetails } = await vite.ssrLoadModule('/src/components/RequestDetails.tsx')
     const html = renderToStaticMarkup(createElement(RequestDetails, {
@@ -229,4 +229,29 @@ test('request details show the outcome reason without workbook row metadata', as
   } finally {
     await vite.close()
   }
+})
+
+
+test('request totals count distinct requests across the draft while filters combine with resident search', () => {
+  const request = { posting_request: 'Example', period: null, source: { sheet: 'Request', row: 2 } }
+  const other = { ...resident, name: 'Other', source: { sheet: 'Planning', row: 20 } }
+  const skipped = { ...resident, name: 'Skipped', source: { sheet: 'Planning', row: 21 } }
+  const data: DraftSchedule = { ...draft, residents: [
+    { ...draft.residents[0], source: resident.source, requests: [
+      { request, status: 'met' }, { request, status: 'met' }, { request, status: 'not_met' },
+      { request, status: 'not_met', duplicate_of: 2 },
+    ] },
+    { ...draft.residents[0], source: other.source, requests: [{ request, status: 'pending' }] },
+  ] }
+  const people = [resident, other, skipped]
+  assert.deepEqual(requestTotals(data), { met: 2, not_met: 1, pending: 1 })
+  for (const status of ['met', 'not_met', 'pending'] as const) {
+    assert.deepEqual(filterRequestResidents(people, data, status), [status === 'pending' ? other : resident])
+  }
+  assert.equal(filterRequestResidents(people, data, null), people)
+  assert.deepEqual(filterRequestResidents([other], data, 'not_met'), []) // Name search applied first.
+  assert.deepEqual(requestTotals(data), { met: 2, not_met: 1, pending: 1 }) // Search never changes totals.
+  assert.equal(filterRequestResidents(people, null, 'not_met'), people)
+  assert.deepEqual(requestTotals(null), { met: 0, not_met: 0, pending: 0 })
+  assert.deepEqual(requestTotals({ ...data, status: 'blocked' }), { met: 0, not_met: 0, pending: 0 })
 })
