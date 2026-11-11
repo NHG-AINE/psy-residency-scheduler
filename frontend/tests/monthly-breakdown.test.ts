@@ -60,3 +60,22 @@ test('R2 and R5 electives share one expandable group with separate posting rows 
     assert.deepEqual(assigned, year === 'R2' ? labels.slice(0, 1) : labels.slice(1))
   }
 })
+
+
+test('earlier outstanding requirements count in the resident recorded cohort, with mixed years split where applicable', () => {
+  const people = ['R1', 'R5', 'R4,R5'].map((residency_year, row) => ({ residency_year,
+    source: { sheet: 'Plan', row }, postings: [{ month: '2027-07', value: null, status: 'blank', source: { sheet: 'Plan', row, column: 'B' } }],
+  })) as Resident[]
+  const workbook = { residents: people, months: [{ month: '2027-07' }], postings: {
+    core: [{ posting: 'NUH Medicine & Neurology', max: '9' }], electives: [],
+  } } as unknown as Workbook
+  const draft = { status: 'optimal', residents: people.map((person) => ({ source: person.source,
+    months: [{ month: '2027-07', status: 'posting', label: 'NUH Medicine & Neurology', target: { category: 'core', residency_year: 'R1' } }],
+  })) } as DraftSchedule
+  for (const year of ['R1', 'R4', 'R5']) {
+    const rows = monthlyBreakdown(workbook, draft, [], year)
+    assert.equal(rows[0].label, 'Medicine & Neurology')
+    assert.equal(rows[0].counts['2027-07'], 1)
+    assert.equal(rows[0].institutions[0].allCounts['2027-07'], 3)
+  }
+})

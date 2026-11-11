@@ -56,9 +56,12 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
       const requirementYear = posting.draft
         ? planned?.months.find((month) => month.month === posting.month)?.target?.residency_year
         : target ? entry?.review.requirement_year || target.residency_year : null
-      // Non-posting months have no requirement year; only use an unambiguous recorded year.
-      const recorded = resident.residency_year?.trim().toUpperCase()
-      const applicableYear = requirementYear || (category !== 'core' && category !== 'elective' && /^R[1-5]$/.test(recorded || '') ? recorded : null)
+      // Filter resident cohorts. Split mixed-year residents by the requirement
+      // when it belongs to their recorded years; earlier catch-up stays in the first cohort.
+      const recordedYears: string[] = resident.residency_year?.toUpperCase().match(/\bR[1-5]\b/g) || []
+      const applicableYear = recordedYears.length === 1 ? recordedYears[0]
+        : requirementYear && recordedYears.includes(requirementYear) ? requirementYear
+        : recordedYears[0] || requirementYear
       const included = !year || applicableYear === year
       if (category === 'core' || category === 'elective') {
         const { group, site } = siteFor(display.label, category)
