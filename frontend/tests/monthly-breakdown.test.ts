@@ -34,3 +34,29 @@ import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
   assert.equal(monthlyBreakdown(workbook, null, []).find((row) => row.label === 'Unresolved')!.counts['2027-07'], 3)
   assert.deepEqual({ workbook, draft }, before)
 })
+
+
+test('R2 and R5 electives share one expandable group with separate posting rows and year-specific totals', () => {
+  const people = ['R2', 'R5', 'R4,R5'].map((residency_year, row) => ({ residency_year,
+    source: { sheet: 'Plan', row }, postings: [{ month: '2027-07', value: null, status: 'blank', source: { sheet: 'Plan', row, column: 'B' } }],
+  })) as Resident[]
+  const workbook = { residents: people, months: [{ month: '2027-07' }], postings: {
+    core: [], electives: [
+      { residency_year: 'R2', institution: 'CGH', elective: 'Inpatient Psychiatry' },
+      { residency_year: 'R5', institution: 'IMH', elective: 'Addiction Medicine' },
+      { residency_year: 'R5', institution: 'NUH', elective: 'Consultation Liaison' },
+    ],
+  } } as unknown as Workbook
+  const labels = ['CGH Inpatient Psychiatry', 'IMH Addiction Medicine', 'NUH Consultation Liaison']
+  const draft = { status: 'optimal', residents: people.map((person, index) => ({ source: person.source,
+    months: [{ month: '2027-07', status: 'posting', label: labels[index], target: { category: 'elective', residency_year: index === 0 ? 'R2' : 'R5' } }],
+  })) } as DraftSchedule
+  for (const year of ['R2', 'R5']) {
+    const groups = monthlyBreakdown(workbook, draft, [], year)
+    assert.equal(groups.length, 1)
+    assert.equal(groups[0].label, 'Electives')
+    assert.equal(groups[0].counts['2027-07'], year === 'R2' ? 1 : 2)
+    const assigned = groups[0].institutions.filter((site) => site.counts['2027-07']).map((site) => site.label)
+    assert.deepEqual(assigned, year === 'R2' ? labels.slice(0, 1) : labels.slice(1))
+  }
+})
