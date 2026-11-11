@@ -4,11 +4,11 @@ from copy import deepcopy
 from math import lcm
 
 if __package__:
-    from .workbook_import import normalized_label
+    from .workbook_import import normalized_label, normalized_posting_label
     from .rules.r2_rules import partial_posting_identity
     from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
-    from workbook_import import normalized_label
+    from workbook_import import normalized_label, normalized_posting_label
     from rules.r2_rules import partial_posting_identity
     from rules.r4_rules import completed_r1_inpatient_at_imh
 
@@ -53,20 +53,20 @@ def resolve_requests(person, requests, options, planning_months):
         if not isinstance(raw, str):
             item['reason'] = 'Request must be text'
             continue
-        label = normalized_label(raw)
+        label = normalized_posting_label(raw)
         marker = re.search(r'\s*\((core|elective)\)$', label)
         category_filter = marker[1] if marker else 'core'
         if marker:
             label = label[:marker.start()].rstrip()
         matches = [o for o in options if o.get('valid') and o.get('requirement_id') in requirements and o.get('residency_year') in eligible_years
                    and o['category'] == category_filter
-                   and label in {normalized_label(o['label']), normalized_label(o['posting'])}]
+                   and label in {normalized_posting_label(o['label']), normalized_posting_label(o['posting'])}]
         current = [o for o in matches if o['residency_year'].lower() in person['recorded_years']]
         if current:
             matches = current
         else:
             matches = [o for o in matches if requirements[o['requirement_id']]['remaining_months']]
-        identities = {(o['requirement_id'], normalized_label(o['posting']), o['category']) for o in matches}
+        identities = {(o['requirement_id'], normalized_posting_label(o['posting']), o['category']) for o in matches}
         if len(identities) != 1:
             item['reason'] = 'No unique eligible catalogue posting'
             continue

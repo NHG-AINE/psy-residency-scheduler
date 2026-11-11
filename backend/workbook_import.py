@@ -136,6 +136,11 @@ def normalized_label(value):
     return " ".join((value or "").split()).casefold()
 
 
+def normalized_posting_label(value):
+    """Compare conjunction spellings without rewriting source labels or identities."""
+    return normalized_label((value or "").replace("&", " and "))
+
+
 def recorded_years(value):
     return set(re.findall(r"\br[1-5]\b", normalized_label(value)))
 
@@ -160,9 +165,9 @@ def match_posting(posting, residency_year, catalogue):
     label = posting["value"]
     elective = bool(re.search(r"\(\s*elective\s*\)", label, re.IGNORECASE))
     remediation = bool(re.search(r"\bremediation\b", label, re.IGNORECASE))
-    lookup = normalized_label(re.sub(r"\(\s*(?:elective|remediation)\s*\)", " ", label, flags=re.IGNORECASE))
+    lookup = normalized_posting_label(re.sub(r"\(\s*(?:elective|remediation)\s*\)", " ", label, flags=re.IGNORECASE))
     candidates = [dict(c, match_basis="exact") for c in catalogue
-                  if normalized_label(c["label"]) == lookup
+                  if normalized_posting_label(c["label"]) == lookup
                   and (not elective or c["category"] == "elective")]
     years = recorded_years(residency_year)
     earlier_years = {f"r{year}" for year in range(1, max(int(y[1:]) for y in years))} if years else set()
