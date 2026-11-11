@@ -1,5 +1,5 @@
 """Shared draft model and optimisation for R1-R5."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from copy import deepcopy
 from math import isfinite, gcd, floor
 from time import monotonic
@@ -25,6 +25,7 @@ IMH_ALLOCATION_SHARES = 2
 
 DEFAULT_SOLVE_SECONDS = 120
 R1_RATIO_BOUND_SECONDS = 10
+POSTING_BALANCE_BOUND_SECONDS = 10
 # Zero lets OR-Tools choose workers from the available CPUs.
 SOLVER_WORKERS = 0
 SOLVER_RANDOM_SEED = 0
@@ -69,6 +70,76 @@ def _posting_balance(model, counts, total, month):
     return deviations
 
 
+def _weighted_posting_balance(model, counts, weights, maximum, name):
+    deviations = []
+    for left, a in enumerate(weights):
+        for b in list(weights)[left + 1:]:
+            d = model.new_int_var(0, maximum * max(weights[a], weights[b]), f"{name}_{a}_{b}")
+            model.add_abs_equality(d, counts[a] * weights[b] - counts[b] * weights[a])
+            deviations.append(d)
+    return deviations
+
+
+def _posting_balance_relaxation(year_totals, r5_totals, weights):
+    """Project full timetables to monthly counts, omitting all coupling rules.
+
+    Each full timetable has these fixed active-month totals. Omitting block,
+    request and institution rules can only lower its optimum. Repeated totals
+    use the cheapest monthly distribution, which can only lower their sum.
+    Only the certified objective bound is used; assignments are discarded.
+    """
+    model = cp_model.CpModel()
+    objective = sum((total % kinds) * (kinds - total % kinds)
+                    for kinds, totals in year_totals if kinds for total in totals)
+    variables = []
+    for total, frequency in Counter(r5_totals).items():
+        counts = {key: model.new_int_var(0, total, f"posting_count_{total}_{key}") for key in weights}
+        variables.extend(counts.values())
+        model.add(sum(counts.values()) == total)
+        objective += frequency * sum(_weighted_posting_balance(model, counts, weights, total, f"posting_bound_{total}"))
+    return model, objective, variables
+
+
+def _posting_block_relaxation(block_data, year_totals, r5_bound, request_score):
+    """Retain valid block starts/progression and requests, omit site coupling.
+
+    Full schedules project to these choices. Institution variants are merged
+    only when every request recognises them identically. R5's independent
+    count bound replaces its weighted placement objective, avoiding that search.
+    """
+    people, candidates, block_years, request_outcomes = block_data
+    outcomes = deepcopy([[{k: v for k, v in row.items() if k != "_flag"} for row in rows]
+                         for rows in request_outcomes])
+    model = cp_model.CpModel()
+    placements = []
+    for i, person in enumerate(people):
+        start = next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
+        rows = [row for row in outcomes[i] if row["status"] == "evaluable" and "duplicate_of" not in row]
+        ps = []
+        for year in block_years:
+            reduced = []
+            for requirement, options, partial in year[i]:
+                unique = {}
+                for option in options:
+                    identity = (option["requirement_id"], option["institution"], option["label"])
+                    signature = tuple(identity in row["option_keys"] for row in rows)
+                    unique[signature] = option
+                reduced.append((requirement, list(unique.values()), partial))
+            ps.extend(r2_rules.add_blocks(model, person, reduced, start, i))
+            start += sum(r["remaining_months"] for r, _, _ in reduced)
+        placements.append(ps)
+    if request_score is not None:
+        model.add(add_request_objective(model, outcomes, placements) == request_score)
+    objective = r5_bound
+    for year, (_, totals) in zip((block_years[0], block_years[2]), year_totals):
+        ids = sorted({r["requirement_id"] for blocks in year for r, _, _ in blocks})
+        for month, total in enumerate(totals):
+            counts = [sum(p["variable"] for ps in placements for p in ps
+                          if month in p["months"] and p["option"]["requirement_id"] == key) for key in ids]
+            objective += sum(_posting_balance(model, counts, total, f"block_bound_{ids}_{month}"))
+    return model, objective, [p["variable"] for ps in placements for p in ps]
+
+
 class _BestScoreTime(cp_model.CpSolverSolutionCallback):
     """Record the first observation of the best score, including presolve time."""
     def __init__(self):
@@ -87,7 +158,7 @@ class DraftCancelled(Exception):
     pass
 
 
-def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None):
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None):
     """Lock proven scores, not assignments; retain the last valid solution."""
     started = monotonic()
     deadline = started + max_seconds
@@ -119,6 +190,38 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
             remaining = deadline - monotonic()
             if remaining <= 0:
                 break
+        if name == "posting_balance" and posting_balance_data and remaining > POSTING_BALANCE_BOUND_SECONDS:
+            bound_started = monotonic()
+            small_model, small_objective, small_variables = _posting_balance_relaxation(*posting_balance_data)
+            bound_budget = max(0, min(deadline, bound_started + POSTING_BALANCE_BOUND_SECONDS) - monotonic())
+            bound_solver, bound_status, bound_stages, _ = _solve_priorities(
+                small_model, [("posting_bound", small_objective)], small_variables, bound_budget, cancel)
+            bound = floor(bound_stages[-1]["best_objective_bound"]) if bound_solver is not None else None
+            count_bound = bound
+            block_bound = None
+            if (bound is not None and posting_block_data
+                    and monotonic() < min(deadline, bound_started + POSTING_BALANCE_BOUND_SECONDS)):
+                year_totals = posting_balance_data[0]
+                remainder_bound = sum((total % kinds) * (kinds - total % kinds)
+                                      for kinds, totals in year_totals if kinds for total in totals)
+                request_score = next((stage["score"] for stage in stages
+                                      if stage["priority"] == "resident_requests" and stage["status"] == "optimal"), None)
+                small_model, small_objective, small_variables = _posting_block_relaxation(
+                    posting_block_data, year_totals, max(0, bound - remainder_bound), request_score)
+                bound_budget = max(0, min(deadline, bound_started + POSTING_BALANCE_BOUND_SECONDS) - monotonic())
+                bound_solver, bound_status, bound_stages, _ = _solve_priorities(
+                    small_model, [("posting_block_bound", small_objective)], small_variables, bound_budget, cancel)
+                if bound_solver is not None:
+                    block_bound = floor(bound_stages[-1]["best_objective_bound"])
+                    bound = max(bound, block_bound)
+            if bound is not None:
+                model.add(objective >= bound)
+            relaxation = {"status": bound_status, "lower_bound": bound,
+                          "count_lower_bound": count_bound, "block_lower_bound": block_bound,
+                          "wall_time_seconds": monotonic() - bound_started}
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
         model.minimize(objective)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = remaining
@@ -144,7 +247,7 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
         if relaxation is not None:
-            stages[-1]["ratio_relaxation"] = relaxation
+            stages[-1]["posting_relaxation" if name == "posting_balance" else "ratio_relaxation"] = relaxation
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
             break
         best = solver
@@ -331,6 +434,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r2_monthly_totals = [0] * len(prepared["planning_months"])
     r4_monthly_totals = [0] * len(prepared["planning_months"])
     r5_demand = defaultdict(int)
+    r5_monthly_totals = [0] * len(prepared["planning_months"])
     for i, person in enumerate(selected):
         if cancel and cancel.is_set():
             raise DraftCancelled()
@@ -352,6 +456,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             r4_monthly_totals[month] += 1
         r5_start = r1_months + r2_months + r3_months + r4_months
         placements[-1] += r2_rules.add_blocks(model, person, r5_blocks[i], r5_start, i)
+        for month in active[r5_start:r5_start + sum(r["remaining_months"] for r, _, _ in r5_blocks[i])]:
+            r5_monthly_totals[month] += 1
         if len(active) > r5_start:
             for requirement, _, _ in r5_blocks[i]:
                 r5_demand[requirement["requirement_id"]] += requirement["remaining_months"]
@@ -420,12 +526,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     weights = {key: demand // divisor for key, demand in r5_demand.items()} if divisor else {}
     for month in range(len(prepared["planning_months"])):
         counts = {key: sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in weights}
-        for left, a in enumerate(weights):
-            for b in list(weights)[left + 1:]:
-                bound = len(selected) * max(weights[a], weights[b])
-                d = model.new_int_var(0, bound, f"r5_balance_{month}_{a}_{b}")
-                model.add_abs_equality(d, counts[a] * weights[b] - counts[b] * weights[a])
-                balance.append(d)
+        balance.extend(_weighted_posting_balance(model, counts, weights, len(selected), f"r5_balance_{month}"))
     # Allocation is per exact posting, not a shared bucket for all electives.
     allocation_groups = defaultdict(list)
     for ps in placements:
@@ -473,7 +574,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel,
         r1_ratio_data=(candidates, active_intake, prepared["planning_months"])
-        if any(preferences["ratio_counts"].values()) else None)
+        if any(preferences["ratio_counts"].values()) else None,
+        posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
+                              r5_monthly_totals, weights) if weights else None,
+        posting_block_data=(selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes))
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
