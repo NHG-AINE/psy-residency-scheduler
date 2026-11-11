@@ -12,17 +12,18 @@ export type BreakdownGroup = { key: string; label: string; counts: Counts; insti
 }[] }
 
 export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null, entries: HistoryEntry[], year = '') {
+  const groupElectives = year === 'R2' || year === 'R5'
   const groups = new Map<string, BreakdownGroup>()
   const capacities = new Map<string, Set<string | null>>()
   const groupFor = (label: string, category: string) => {
     const key = JSON.stringify([category, label.toLowerCase()])
-    if (!groups.has(key)) groups.set(key, { key, label: category === 'elective' ? (year === 'R2' ? 'Electives' : `${label} (Elective)`) : label, counts: {}, institutions: [] })
+    if (!groups.has(key)) groups.set(key, { key, label: category === 'elective' ? (groupElectives ? 'Electives' : `${label} (Elective)`) : label, counts: {}, institutions: [] })
     return groups.get(key)!
   }
   const siteFor = (label: string, category: string) => {
     // Catalogue labels use the same institution-prefix convention as the scheduler.
     const [institution, ...words] = label.trim().split(/\s+/)
-    const groupedElective = year === 'R2' && category === 'elective'
+    const groupedElective = groupElectives && category === 'elective'
     const group = groupFor(groupedElective ? 'Electives' : words.join(' ') || label, category)
     const rowLabel = groupedElective ? label : institution
     let site = group.institutions.find((item) => item.label === rowLabel)
@@ -40,7 +41,7 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
     siteFor(row.posting, 'core')
   }
   for (const row of workbook.postings.electives || []) {
-    if (year !== 'R2' || row.residency_year === 'R2') siteFor(`${row.institution} ${row.elective}`, 'elective')
+    if (!groupElectives || row.residency_year === year) siteFor(`${row.institution} ${row.elective}`, 'elective')
   }
   const increment = (counts: Counts, month: string) => { counts[month] = (counts[month] || 0) + 1 }
   const months = new Set(workbook.months.map((month) => month.month))
