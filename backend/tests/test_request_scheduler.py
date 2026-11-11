@@ -5,6 +5,7 @@ from request_preferences import add_request_objective
 from scheduler import _solve_priorities, draft_schedule
 from tests.test_r2_rules import r2_book
 from tests.test_r3_rules import r3_book
+from tests.test_r5_rules import r5_book
 from tests.test_requirement_ledger import resident
 from tests.test_r1_solver import STORE
 
@@ -102,3 +103,25 @@ class RequestSchedulerTests(unittest.TestCase):
                     self.assertEqual(planned['months'][7]['status'], 'loa')
                     self.assertNotIn('2028-02', outcome['matched_months'])
                 self.assertEqual(book, original)
+
+
+    def test_short_request_window_still_marks_the_overlapping_assigned_elective(self):
+        book = r5_book()
+        source = book['residents'][0]['source']
+        book['requests'] = [
+            {'posting_request': label, 'period': period, 'matched_resident_source': source,
+             'source': {'sheet': 'Request', 'row': index + 2}}
+            for index, (label, period) in enumerate([
+                ('IMH Geriatric Psychiatry', 'Jul - Sep 2027'),
+                ('IMH Child & Adolescent Psychiatry', 'Oct - Dec 2027'),
+                ('IMH Forensic Psychiatry (Elective)', 'Jan - Mar 2028'),
+            ])]
+        result = draft_schedule(book, STORE, max_seconds=20)
+        outcomes = result['residents'][0]['requests']
+        self.assertEqual([o['status'] for o in outcomes], ['met', 'met', 'not_met'])
+        elective = outcomes[-1]
+        self.assertEqual(elective['reason_code'], 'no_valid_start')
+        self.assertEqual(elective['reason'], 'R5 Elective requires 6 months, but the requested Jan - Mar 2028 period is only 3 months.')
+        self.assertEqual(elective['starts'], [])
+        self.assertEqual(elective['matched_months'], [])
+        self.assertEqual(elective['replacement_months'], [f'2028-{m:02d}' for m in range(1, 7)])

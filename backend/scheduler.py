@@ -510,9 +510,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                     {'label': p['option']['label'],
                      'months': [prepared['planning_months'][m]['month'] for m in p['months']]}
                     for p in matching]
+                # Display overlap uses the requested calendar window, even when
+                # that window contains no valid start for the training block.
+                requested_months = outcome['period_months']
                 replacement = (outcome['status'] == 'not_met' and len(matching) == 1
-                               and any(m in range(start, start + outcome['duration'])
-                                       for m in matching[0]['months'] for start in outcome['starts']))
+                               and any(m in requested_months for m in matching[0]['months']))
                 outcome['replacement_months'] = ([prepared['planning_months'][m]['month']
                                                    for m in matching[0]['months']] if replacement else [])
                 outcome['matched_months'] = [
