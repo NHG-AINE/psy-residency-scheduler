@@ -6,9 +6,9 @@ neither confirms that year nor authorizes credit for an identity, shared label
 mapping or remediation entry. Credit and duration accounting belong elsewhere.
 """
 if __package__:
-    from .workbook_import import normalized_label
+    from .workbook_import import normalized_label, normalized_posting_label
 else:
-    from workbook_import import normalized_label
+    from workbook_import import normalized_label, normalized_posting_label
 
 
 PROGRAMME_REQUIREMENTS = {
@@ -99,7 +99,7 @@ def validate_posting(requirement_year, resolved_target, elective_catalogue=(), *
         if requirement is not None:
             rows = [row for row in elective_catalogue
                     if normalized_label(row.get("residency_year")) == year.casefold()
-                    and normalized_label(row.get("elective")) == normalized_label(posting)]
+                    and normalized_posting_label(row.get("elective")) == normalized_posting_label(posting)]
             eligible = next((row for row in rows if normalized_label(row.get("institution")) == institution.casefold()), None)
             if not elective_catalogue:
                 result["reasons"].append("elective_catalogue_missing")
@@ -113,11 +113,11 @@ def validate_posting(requirement_year, resolved_target, elective_catalogue=(), *
         for name, candidate in PROGRAMME_REQUIREMENTS[year].items():
             if name == "Elective":
                 continue
-            if normalized_label(name) == normalized_label(posting):
+            if normalized_posting_label(name) == normalized_posting_label(posting):
                 requirement = candidate
                 result["posting"] = name
                 if not any(normalized_label(row.get("residency_year")) == year.casefold()
-                           and normalized_label(row.get("posting")) == normalized_label(label)
+                           and normalized_posting_label(row.get("posting")) == normalized_posting_label(label)
                            for row in core_catalogue):
                     result["reasons"].append("institution_not_allowed")
                 break
