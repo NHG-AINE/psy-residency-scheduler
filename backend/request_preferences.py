@@ -78,6 +78,7 @@ def resolve_requests(person, requests, options, planning_months):
             item['reason'] = 'Period is unclear or outside the planning year'
             continue
         item.update(status='evaluable', requirement_id=requirement_id, duration=duration, starts=starts,
+                    period_months=period_starts(row.get('period'), planning_months, 1),
                     option_keys=sorted({(o['requirement_id'], o['institution'], o['label']) for o in matches}))
     seen = {}
     for item in outcomes:
@@ -141,7 +142,12 @@ def unmet_request_reason(person, request, placements, options, stages):
     if requested and all(o.get('capacity') == 0 for o in requested):
         return 'zero_capacity', 'The requested posting has zero capacity in the Postings tab.'
     if not request['starts']:
-        return 'no_valid_start', 'The requested period does not contain a permitted block start for this posting.'
+        duration = request['duration']
+        window = len(request['period_months'])
+        posting = f"{requirement['requirement_year']} {requirement['posting']}"
+        period = request['request']['period']
+        return 'no_valid_start', (f"{posting} requires {duration} {'month' if duration == 1 else 'months'}, "
+                                 f"but the requested {period} period is only {window} {'month' if window == 1 else 'months'}.")
     # Use the scheduler's actual placement choices, including history and LOA.
     possible = [p for p in placements if p['option'].get('capacity') != 0 and placement_fulfils_request(p, request)]
     if not possible:
