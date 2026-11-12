@@ -338,6 +338,108 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(status, "feasible")
         self.assertEqual(len(stages), 1)
 
+    def test_initial_draft_then_real_priority_optimisation(self):
+        model = cp_model.CpModel()
+        choice = model.new_bool_var("choice")
+        solver, status, stages, _ = _solve_priorities(
+            model, [("first", choice), ("second", 1 - choice)], [choice, choice], 2,
+            initial_feasibility=True)
+        self.assertEqual(status, "optimal")
+        self.assertEqual(solver.value(choice), 0)
+        self.assertEqual([s["priority"] for s in stages], ["initial_feasibility", "first", "second"])
+        self.assertEqual(stages[0]["status"], "feasible")
+        self.assertNotIn("best_objective_bound", stages[0])
+        self.assertEqual(len(model.proto.solution_hint.vars), 1)
+
+    def test_initial_fallback_shares_budget_and_survives_unknown(self):
+        real_solve = cp_model.CpSolver.solve
+        for budget, expected_calls in ((5, 2), (1, 1)):
+            with self.subTest(budget=budget):
+                model = cp_model.CpModel()
+                choice = model.new_bool_var("choice")
+                now, calls = [0.0], []
+                add_hint = model.add_hint
+                def hint(variable, value):
+                    now[0] += .25
+                    add_hint(variable, value)
+                def solve(solver, current, callback):
+                    calls.append((solver.parameters.max_time_in_seconds,
+                                  solver.parameters.stop_after_first_solution))
+                    if len(calls) == 1:
+                        result = real_solve(solver, current, callback)
+                        now[0] += 2
+                        return result
+                    now[0] += solver.parameters.max_time_in_seconds
+                    return cp_model.UNKNOWN
+                with patch("scheduler.cp_model.CpSolver.solve", new=solve), patch(
+                        "scheduler.monotonic", side_effect=lambda: now[0]), patch.object(model, "add_hint", side_effect=hint):
+                    solver, status, stages, elapsed = _solve_priorities(
+                        model, [("first", choice)], [choice, choice], budget, initial_feasibility=True)
+                self.assertIsNotNone(solver)
+                self.assertEqual(status, "feasible")
+                self.assertEqual(len(calls), expected_calls)
+                self.assertTrue(calls[0][1])
+                self.assertEqual(stages[0]["status"], "feasible")
+                self.assertEqual(len(model.proto.constraints), 0)  # No fallback-score or assignment locks.
+                if expected_calls == 2:
+                    self.assertEqual(calls[1], (2.75, False))
+                    self.assertEqual(elapsed, budget)
+                    self.assertEqual(stages[1]["status"], "unknown")
+
+    def test_unproven_normal_solution_cannot_worsen_fallback_lexicographically(self):
+        real_solve = cp_model.CpSolver.solve
+        for fallback, candidate, expected, normal_status in (
+                ((0, 0), (0, 1), (0, 0), cp_model.FEASIBLE),
+                ((1, 0), (0, 1), (0, 1), cp_model.FEASIBLE),
+                ((0, 1), (0, 0), (0, 0), cp_model.FEASIBLE),
+                ((0, 0), (0, 1), (0, 0), cp_model.OPTIMAL)):
+            with self.subTest(fallback=fallback, candidate=candidate, normal_status=normal_status):
+                model = cp_model.CpModel()
+                x, y = model.new_bool_var("x"), model.new_bool_var("y")
+                calls = []
+                def solve(solver, current, callback):
+                    calls.append(1)
+                    if len(calls) == 3:
+                        return cp_model.UNKNOWN
+                    fixed = current.clone()
+                    for variable, value in zip((x, y), fallback if len(calls) == 1 else candidate):
+                        fixed.add(variable == value)
+                    actual = real_solve(solver, fixed, callback)
+                    self.assertIn(actual, (cp_model.OPTIMAL, cp_model.FEASIBLE))
+                    return actual if len(calls) == 1 else normal_status
+                with patch("scheduler.cp_model.CpSolver.solve", new=solve):
+                    solver, status, stages, _ = _solve_priorities(
+                        model, [("first", x), ("second", y)], [x, y], 2, initial_feasibility=True)
+                self.assertEqual(tuple(solver.value(v) for v in (x, y)), expected)
+                self.assertEqual(status, "feasible")
+                proven = normal_status == cp_model.OPTIMAL
+                self.assertEqual(len(calls), 3 if proven else 2)
+                self.assertEqual(len(model.proto.constraints), 1 if proven else 0)
+                self.assertEqual(stages[1].get("retained_previous_solution", False), candidate > fallback)
+                if proven:
+                    self.assertEqual(stages[1]["score"], solver.value(x))  # Retained fallback satisfies the proof lock.
+                    self.assertEqual(list(model.proto.solution_hint.values), list(expected))
+
+    def test_bound_submodels_do_not_repeat_initial_feasibility(self):
+        model, bound_model = cp_model.CpModel(), cp_model.CpModel()
+        x, y = model.new_bool_var("x"), model.new_bool_var("y")
+        bound = bound_model.new_bool_var("bound")
+        real_solve, bound_calls = cp_model.CpSolver.solve, []
+        def solve(solver, current, callback):
+            if current is bound_model:
+                bound_calls.append(solver.parameters.stop_after_first_solution)
+            return real_solve(solver, current, callback)
+        with patch("scheduler.cp_model.CpSolver.solve", new=solve), patch(
+                "scheduler.r1_rules.ratio_relaxation", return_value=(bound_model, bound, [bound])), patch(
+                "scheduler.R1_RATIO_BOUND_SECONDS", .1):
+            _, status, stages, _ = _solve_priorities(model,
+                [("incoming_route_distribution", x), ("monthly_medicine_neurology_ratio", y)],
+                [x, y], 2, r1_ratio_data=(None,), initial_feasibility=True)
+        self.assertEqual(status, "optimal")
+        self.assertEqual(bound_calls, [False])
+        self.assertEqual([s["priority"] for s in stages],
+                         ["initial_feasibility", "incoming_route_distribution", "monthly_medicine_neurology_ratio"])
+
     def test_blocked_unknown_and_model_invalid_never_return_fake_solution(self):
         workbook = r1_book()
         unknown = draft_schedule(workbook, STORE, max_seconds=0)

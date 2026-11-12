@@ -25,3 +25,27 @@ test('older drafts need no diagnostics and nested smaller-model time is not coun
   assert.equal(stages.length, 1)
   assert.equal(stages[0].seconds, 12)
 })
+
+
+test('initial draft is shown before preferences without claiming preference optimality', () => {
+  const draft = {
+    soft_priority: ['incoming_route_distribution', 'resident_requests'],
+    optimisation_stages: [
+      { priority: 'initial_feasibility', status: 'feasible', wall_time_seconds: 4 },
+      { priority: 'incoming_route_distribution', status: 'unknown', wall_time_seconds: 2 },
+    ],
+  } as DraftSchedule
+  const stages = draftTiming(draft)
+  assert.deepEqual(stages.map(({ priority, outcome, complete }) => [priority, outcome, complete]), [
+    ['initial_feasibility', 'Valid draft found', true],
+    ['incoming_route_distribution', 'No new solution', false],
+    ['resident_requests', 'Not reached', false],
+  ])
+  assert.equal(stages[0].label, 'Find initial draft')
+  assert.equal(stages.reduce((total, stage) => total + (stage.seconds || 0), 0), 6)
+  draft.soft_priority = ['initial_feasibility', ...draft.soft_priority!]
+  assert.equal(draftTiming(draft).length, 3)
+  draft.optimisation_stages![0].status = 'unknown'
+  assert.equal(draftTiming(draft)[0].outcome, 'No draft found')
+  assert.equal(draftTiming(draft)[0].complete, false)
+})
