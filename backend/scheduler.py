@@ -8,13 +8,13 @@ from threading import Event, Thread
 from ortools.sat.python import cp_model
 
 if __package__:
-    from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request
+    from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
 else:
-    from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request
+    from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from scheduler_inputs import prepare_scheduler_inputs
@@ -49,6 +49,20 @@ def _institution_balance(model, counts, maximum, name):
             deviation = model.new_int_var(0, maximum, f"allocation_{name}_{left}_{right}")
             model.add_abs_equality(deviation, counts[left] - counts[right])
             deviations.append(deviation)
+    return deviations
+
+
+def _allocation_penalties(model, counts, total, maximum, name):
+    if "IMH" not in counts:
+        return _institution_balance(model, list(counts.values()), maximum, name)
+    baseline = model.new_int_var(0, maximum, f"baseline_{name}")
+    model.add_division_equality(baseline, total, len(counts) - 1 + IMH_ALLOCATION_SHARES)
+    targets = {site: total - (len(counts) - 1) * baseline if site == "IMH" else baseline for site in counts}
+    deviations = []
+    for site, target in targets.items():
+        deviation = model.new_int_var(0, maximum, f"allocation_{name}_{site}")
+        model.add_abs_equality(deviation, counts[site] - target)
+        deviations.append(deviation)
     return deviations
 
 
@@ -418,9 +432,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         seen_r5.add(key)
         blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
     options += r5_options
+    request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"]) for person in selected]
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
                      next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
-                     + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i])
+                     + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i],
+                     requests_need_r5_split(request_outcomes[i]))
                  if "r5" in person["recorded_years"] else [[]] for i, person in enumerate(selected)]
     keep = [i for i, reasons in enumerate(local_blockers) if not reasons]
     for i, reasons in enumerate(local_blockers):
@@ -435,9 +451,13 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r3_blocks = [r3_blocks[i] for i in keep]
     r4_blocks = [r4_blocks[i] for i in keep]
     r5_routes = [r5_routes[i] for i in keep]
+    request_outcomes = [request_outcomes[i] for i in keep]
     r5_blocks = [routes[0] for routes in r5_routes]
     combined_r5 = any(r["requirement_id"] == r5_rules.COMBINED["id"]
                       for routes in r5_routes for route in routes for r, _, _ in route)
+    flexible_r5_blocks = any(len(routes) > 1 or any(
+        sum(r["requirement_id"] == "r5.elective" for r, _, _ in route) > 1 for route in routes)
+        for routes in r5_routes)
     result["selected_sources"] = [deepcopy(p["source"]) for p in selected]
     by_key = {(o["requirement_id"], o["institution"], o["label"]): o for o in options}
     # No occupancy is silently reserved or ignored for residents outside this draft.
@@ -600,21 +620,26 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             eligible = sorted({p["option"]["institution"] for p in ps if p["option"]["capacity"] != 0})
         if len(eligible) < 2:
             continue
-        if "IMH" not in eligible:
-            counts = [sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible]
-            penalties = r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
-            penalties.extend(_institution_balance(model, counts, len(selected), group))
-            continue
-        total = sum(p["variable"] for p in ps)
-        baseline = model.new_int_var(0, len(selected), f"baseline_{group}")
-        model.add_division_equality(baseline, total, len(eligible) - 1 + IMH_ALLOCATION_SHARES)
-        for site in eligible:
-            target = total - (len(eligible) - 1) * baseline if site == "IMH" else baseline
-            count = sum(p["variable"] for p in ps if p["option"]["institution"] == site)
-            d = model.new_int_var(0, len(selected), f"allocation_{group}_{site}")
-            model.add_abs_equality(d, count - target)
-            (r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation).append(d)
-    request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"]) for person in selected]
+        if group[0] == "r5.elective":
+            # One resident's adjacent 3+3 at the same service/site counts like a
+            # single six-month visit. Different sites each receive one visit.
+            visits = defaultdict(list)
+            for i, person_placements in enumerate(placements):
+                for site in eligible:
+                    choices = [p["variable"] for p in person_placements if p["months"]
+                               and (p["option"]["requirement_id"], normalized_label(p["option"]["posting"])) == group
+                               and p["option"]["institution"] == site]
+                    if choices:
+                        visit = model.new_bool_var(f"elective_visit_{i}_{group}_{site}")
+                        model.add_max_equality(visit, choices)
+                        visits[site].append(visit)
+            counts = {site: sum(visits[site]) for site in eligible}
+            allocation_total = sum(counts.values())
+        else:
+            counts = {site: sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible}
+            allocation_total = sum(p["variable"] for p in ps)
+        penalties = r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
+        penalties.extend(_allocation_penalties(model, counts, allocation_total, len(selected) * (2 if group[0] == "r5.elective" else 1), group))
     request_objective = add_request_objective(model, request_outcomes, placements)
     objectives = [
         ("incoming_route_distribution", preferences["distribution"]),
@@ -638,9 +663,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
                               [] if combined_r5 else r5_monthly_totals, {} if combined_r5 else weights) if weights else None,
         # These projections assume one block per requirement and separate core
-        # counts. Combined cores need route-aware projections; retain the safe
+        # counts. Split electives and combined cores need route-aware projections; retain the safe
         # R2/R4 count bound rather than claiming an invalid lower bound.
-        posting_block_data=None if combined_r5 else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
+        posting_block_data=None if combined_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
         initial_feasibility=True)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],

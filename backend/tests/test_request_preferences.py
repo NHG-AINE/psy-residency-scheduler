@@ -112,7 +112,60 @@ class RequestPreferenceTests(unittest.TestCase):
         self.assertEqual(resolve_requests(person, [row], [early], months)[0]['status'], 'pending')
         other = dict(current, posting='Other', label='IMH Other')
         competing = [row, dict(row, posting_request='IMH Other (Elective)')]
-        self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other], months)], ['pending', 'pending'])
+        self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other], months)], ['evaluable', 'evaluable'])
+        third = dict(current, posting='Third', label='IMH Third')
+        competing.append(dict(row, posting_request='IMH Third (Elective)'))
+        self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other, third], months)],
+                         ['pending', 'pending', 'pending'])
+
+
+    def test_partial_r5_continuation_and_next_block_do_not_exceed_remaining_credit(self):
+        source = {"sheet": "AY", "row": 2}
+        person = {"source": source, "recorded_years": ["r5"], "requirements": [{
+            "requirement_id": "r5.elective", "requirement_year": "R5", "required_months": 6,
+            "expected_months": 2, "remaining_months": 4}], "months": [{
+                "month": f"2027-{m:02d}", "status": "expected", "requirement_id": "r5.elective",
+                "posting": "A", "institution": "IMH"} for m in (5, 6)]}
+        options = [{"valid": True, "requirement_id": "r5.elective", "residency_year": "R5", "category": "elective",
+                    "posting": service, "institution": "IMH", "label": "IMH " + service}
+                   for service in ("A", "B")]
+        requests = [{"matched_resident_source": source, "posting_request": service, "period": None}
+                    for service in ("A", "B")]
+        months = [{"month": f"2027-{m:02d}"} for m in range(7, 13)]
+        outcomes = resolve_requests(person, requests, options, months)
+        self.assertEqual([o["status"] for o in outcomes], ["evaluable", "evaluable"])
+        self.assertEqual([o["remaining_duration"] for o in outcomes], [1, 3])
+        self.assertEqual([o["duration"] for o in outcomes], [3, 3])
+
+
+    def test_only_evaluable_three_month_requests_enable_a_fresh_r5_split(self):
+        from request_preferences import requests_need_r5_split
+        source = {"sheet": "Planning", "row": 3}
+        person = {"source": source, "recorded_years": ["r5"], "months": [], "requirements": [{
+            "requirement_id": "r5.elective", "requirement_year": "R5", "required_months": 6,
+            "expected_months": 0, "remaining_months": 6}]}
+        options = [{"valid": True, "requirement_id": "r5.elective", "residency_year": "R5", "category": "elective",
+                    "posting": service, "institution": "IMH", "label": "IMH " + service, "remarks": []}
+                   for service in ("A", "B", "C")]
+        months = [{"month": f"{2027 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}"} for i in range(12)]
+        def resolved(service="A", period=None, catalogue=None):
+            return resolve_requests(person, [{"matched_resident_source": source, "posting_request": service,
+                                              "period": period}], catalogue or options, months)
+        for period, enabled in ((None, False), ("Jan - Jun 2028", False), ("Jan - Mar 2028", True),
+                                ("Apr - Jun 2028", True), ("Not a period", False)):
+            with self.subTest(period=period):
+                self.assertEqual(requests_need_r5_split(resolved(period=period)), enabled)
+        self.assertFalse(requests_need_r5_split(resolved("Unknown", "Jan - Mar 2028")))
+        six_only = [{**options[0], "remarks": [{"text": "(all required 6 months duration)"}]}]
+        self.assertFalse(requests_need_r5_split(resolved(period="Apr - Jun 2028", catalogue=six_only)))
+        three_only = [{**options[0], "remarks": [{"text": "(3 months- that can be paired with any other institution)"}]}]
+        self.assertTrue(requests_need_r5_split(resolved(catalogue=three_only)))
+        pair = [{"matched_resident_source": source, "posting_request": service, "period": "Jan - Jun 2028"}
+                for service in ("A", "B")]
+        self.assertFalse(requests_need_r5_split(resolve_requests(person, pair, options, months)))
+        self.assertFalse(requests_need_r5_split(resolve_requests(person, [pair[0], pair[0]], options, months)))
+        pair.append({**pair[0], "posting_request": "C"})
+        self.assertFalse(requests_need_r5_split(resolve_requests(person, pair, options, months)))
 
 
 

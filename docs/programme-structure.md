@@ -59,3 +59,12 @@ Geriatric and three-month Child & Adolescent postings, or as one six-month
 **Child and Geriatric Psychiatry** core posting at an institution offering it
 in the Postings tab. The combined posting fulfils both core requirements; it
 is not an elective. The six-month elective requirement still applies.
+
+R5 electives normally use one continuous six-month block. An evaluable resident
+request calling for a three-month elective permits two continuous three-month
+blocks instead; one such request permits a free choice of the other eligible
+three-month block. The blocks may use different eligible postings and institutions. Mandatory workbook duration notes restrict each option; a
+fresh four-month plus two-month split is not permitted. Recognised partial
+blocks continue for their remaining months at the same posting and institution,
+even if the original request is unavailable. A completed recognised three-month
+block leaves one three-month block to complete.

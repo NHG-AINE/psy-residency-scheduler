@@ -197,5 +197,118 @@ class R5Tests(unittest.TestCase):
         self.assertIn("missing_r5_catalogue_option", [r["code"] for r in result["skipped_residents"][0]["reasons"]])
 
 
+class R5ElectiveBlockTests(unittest.TestCase):
+    def option(self, posting, institution="IMH", remarks=()):
+        return {"requirement_id": "r5.elective", "category": "elective", "posting": posting,
+                "institution": institution, "label": institution + " " + posting, "remarks": list(remarks)}
+
+    def routes(self, history, options=None, earlier=0, allow_split=False):
+        from rules.r5_rules import elective_routes
+        credited = sum(m["status"] == "expected" for m in history)
+        person = {"source": {"sheet": "Planning", "row": 3}, "months": history,
+                  "requirements": [{"requirement_id": "r5.elective", "required_months": 6,
+                                    "expected_months": credited, "remaining_months": max(0, 6 - credited)}]}
+        errors = []
+        routes = elective_routes(person, options or [self.option("A"), self.option("B", "TTSH")],
+                                 "2027-07", earlier, errors, allow_split)
+        return routes, errors
+
+    def history(self, start, count, posting="A", institution="IMH"):
+        return [{"month": f"2027-{month:02d}", "status": "expected", "requirement_id": "r5.elective",
+                 "posting": posting, "institution": institution} for month in range(start, start + count)]
+
+    def test_fresh_choices_and_mandatory_workbook_durations(self):
+        from rules.r5_rules import elective_durations, supported_option
+        routes, errors = self.routes([])
+        self.assertFalse(errors)
+        self.assertEqual([[r["remaining_months"] for r, _, _ in route] for route in routes], [[6]])
+        routes, errors = self.routes([], allow_split=True)
+        self.assertFalse(errors)
+        self.assertEqual([[r["remaining_months"] for r, _, _ in route] for route in routes], [[6], [3, 3]])
+        self.assertEqual(len({r["block_id"] for r, _, _ in routes[1]}), 2)
+        six = self.option("A", remarks=[{"text": "(all required 6 months duration)"}])
+        three = self.option("B", "TTSH", [{"text": "(3 months- that can be paired with any other institution)"}])
+        label_six = self.option("C (6 months)", "TTSH")
+        self.assertEqual(elective_durations(six), (6,))
+        self.assertEqual(elective_durations(three), (3,))
+        self.assertEqual(elective_durations(label_six), (6,))
+        self.assertFalse(supported_option(self.option("D", remarks=[{"text": "(which will meet the core 3months R5 requirements)"}])))
+        routes, errors = self.routes([], [six, three, label_six], allow_split=True)
+        self.assertFalse(errors)
+        self.assertEqual([[o["posting"] for o in eligible] for _, eligible, _ in routes[0]], [["A", "C (6 months)"]])
+        self.assertTrue(all([o["posting"] for o in eligible] == ["B"] for _, eligible, _ in routes[1]))
+
+    def test_completed_three_can_change_site_but_partial_blocks_must_resume(self):
+        three = self.option("A", remarks=[{"text": "(3 months- that can be paired with any other institution)"}])
+        options = [three, self.option("B", "TTSH")]
+        for count in (1, 3, 4):
+            with self.subTest(count=count):
+                history = self.history(7 - count, count)
+                routes, errors = self.routes(history, options if count == 1 else None)
+                self.assertFalse(errors)
+                if count == 1:
+                    self.assertEqual([[r["remaining_months"] for r, _, _ in route] for route in routes], [[2, 3]])
+                    first, eligible, partial = routes[0][0]
+                    self.assertTrue(partial)
+                    self.assertEqual(first["required_months"], 3)
+                    self.assertEqual([(o["posting"], o["institution"]) for o in eligible], [("A", "IMH")])
+                elif count == 3:
+                    self.assertTrue(any(not partial and any(o["institution"] == "TTSH" for o in eligible)
+                                        for route in routes for _, eligible, partial in route))
+                else:
+                    self.assertEqual([[r["remaining_months"] for r, _, _ in route] for route in routes], [[2]])
+                    self.assertEqual(routes[0][0][0]["required_months"], 6)
+                    self.assertTrue(routes[0][0][2])
+        history = self.history(1, 3) + [{"month": "2027-04", "status": "blank"}]
+        routes, errors = self.routes(history)
+        self.assertFalse(errors)
+        self.assertEqual(len(routes), 1)
+        self.assertFalse(routes[0][0][2])
+        # A gap after an unfinished block cannot be silently continued.
+        self.assertFalse(self.routes(self.history(4, 1))[0])
+        # LOA pauses the final partial block and keeps its site binding.
+        history = self.history(2, 3) + self.history(5, 1, "B", "TTSH") + [{"month": "2027-06", "status": "loa"}]
+        routes, errors = self.routes(history)
+        self.assertFalse(errors)
+        self.assertEqual(routes[0][0][0]["remaining_months"], 2)
+        self.assertEqual(routes[0][0][0]["required_months"], 3)
+        self.assertEqual(routes[0][0][1][0]["institution"], "TTSH")
+        self.assertFalse(self.routes(history, earlier=1)[0])
+        # Already counted six-month totals are preserved, including old 4+2 history.
+        routes, errors = self.routes(self.history(1, 4) + self.history(5, 2, "B", "TTSH"))
+        self.assertEqual(routes, [[]])
+        self.assertFalse(errors)
+
+
+    def test_partial_block_remainder_pauses_for_loa_and_carries_the_next_block(self):
+        from ortools.sat.python import cp_model
+        from rules.r5_rules import add_routes
+        for duration, credited in ((3, 1), (6, 4)):
+            with self.subTest(duration=duration):
+                note = "(3 months- that can be paired with any other institution)" if duration == 3 else "(all required 6 months duration)"
+                options = [self.option("A", remarks=[{"text": note}]), self.option("B", "TTSH")]
+                routes, errors = self.routes(self.history(7 - credited, credited), options)
+                self.assertFalse(errors)
+                person = {"availability": [{"available": False}, {"available": True}, {"available": True}]}
+                model = cp_model.CpModel()
+                placements = add_routes(model, person, routes, 0, 0)
+                if duration == 3:
+                    # The next completed block is allowed at a different service/site.
+                    for p in placements:
+                        if p["block_id"] == "r5.elective.1" and p["option"]["institution"] != "TTSH":
+                            model.add(p["variable"] == 0)
+                self.assertEqual(model.validate(), "")
+                solver = cp_model.CpSolver()
+                self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
+                chosen = [p for p in placements if solver.value(p["variable"])]
+                continuation = next(p for p in chosen if p["months"])
+                self.assertEqual(continuation["months"], [1, 2])
+                self.assertEqual(continuation["block_duration"], duration)
+                self.assertEqual(continuation["option"]["label"], "IMH A")
+                self.assertEqual(sum(p["remaining"] for p in chosen), 3 if duration == 3 else 0)
+                if duration == 3:
+                    self.assertEqual(next(p["option"]["label"] for p in chosen if p["remaining"]), "TTSH B")
+
+
 if __name__ == "__main__":
     unittest.main()

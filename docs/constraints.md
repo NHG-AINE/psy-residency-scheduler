@@ -32,6 +32,16 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   Continue a partial combined block at the same institution; LOA pauses it.
   Do not also schedule the separate core requirements once the combined route
   completes them. The six-month R5 elective remains required.
+- **Complete six months of R5 electives in valid blocks.** Use one continuous
+  six-month block by default. Allow two continuous three-month blocks when an
+  evaluable resident request calls for a three-month elective, subject to mandatory
+  workbook duration notes. One such request permits choosing the other eligible
+  three-month block. Each three-month block may use a different eligible
+  posting and institution. A completed three-month block permits a new choice;
+  an unfinished block resumes at its original posting and institution even if
+  the original request is absent, with LOA
+  pausing the block and any remainder carrying forward. Do not create a fresh
+  four-month plus two-month split.
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
   across yearly tabs, including a posting that continues across June and July.
