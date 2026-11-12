@@ -60,7 +60,7 @@ def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
             # must resume first; LOA is handled by the active-month mapping below.
             starts = {r1_months + partial_months}
             for other, _, other_partial in blocks:
-                if not other_partial and other["requirement_id"] != requirement["requirement_id"]:
+                if not other_partial and other.get("block_id", other["requirement_id"]) != requirement.get("block_id", requirement["requirement_id"]):
                     starts |= {start + other["remaining_months"] for start in starts}
         for start in sorted(starts):
             for option in options:
@@ -70,7 +70,10 @@ def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
                     coverage[tick].append(variable)
                 months = [active[tick] for tick in range(start, start + length) if tick < len(active)]
                 placements.append({"variable": variable, "option": option, "months": months,
-                                   "remaining": length - len(months)})
+                                   "remaining": length - len(months),
+                                   **({"block_id": requirement["block_id"],
+                                       "block_duration": requirement["required_months"]}
+                                      if "block_id" in requirement else {})})
         if enabled is None:
             model.add_exactly_one(choices)
         else:

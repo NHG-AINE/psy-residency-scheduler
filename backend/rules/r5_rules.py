@@ -1,4 +1,5 @@
-"""R5 requirements and the supported six-month elective scope."""
+"""R5 core routes and six-month or paired three-month elective blocks."""
+import re
 from .r2_rules import partial_posting_identity, add_blocks
 
 if __package__ == "backend.rules":
@@ -12,18 +13,98 @@ else:
 COMBINED = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
 
 
+def elective_durations(option):
+    """Read supported mandatory duration notes without interpreting core overlap."""
+    durations = {3, 6}
+    for remark in option.get("remarks") or []:
+        note = remark["text"].strip().casefold()
+        if note == "(team-based continuity of care)":
+            continue  # Informational; every elective block already keeps its posting/site.
+        if note == "(all required 6 months duration)":
+            durations &= {6}
+        elif re.fullmatch(r"\(3 months\s*-\s*that can be paired with any other institution\)", note):
+            durations &= {3}
+        else:
+            return ()
+    for duration in re.findall(r"\(\s*([36]) months\s*\)", option["label"], re.IGNORECASE):
+        durations &= {int(duration)}
+    return tuple(sorted(durations))
+
+
 def supported_option(option):
-    remarks = option["remarks"] or []
-    if not remarks:
-        return True
-    return option["category"] == "elective" and all(
-        r["text"].strip().casefold() == "(all required 6 months duration)" for r in remarks)
+    return bool(elective_durations(option)) if option["category"] == "elective" else not option["remarks"]
+
+
+def elective_routes(person, options, planning_start, earlier_months, blockers, allow_split=False):
+    requirement = next((r for r in person["requirements"] if r["requirement_id"] == "r5.elective"), None)
+    if requirement is None or not requirement["remaining_months"]:
+        return [[]]  # Completed historical credit is not reinterpreted as new blocks.
+    runs, active, previous = [], None, None
+    for month in person["months"]:
+        number = month_number(month["month"])
+        if previous is not None and number != previous + 1:
+            active = None
+        previous = number
+        if month["status"] == "loa":
+            continue
+        if month["status"] != "expected" or month.get("requirement_id") != "r5.elective":
+            active = None
+            continue
+        identity = (month["posting"], month["institution"])
+        if active is None or active["identity"] != identity:
+            active = {"identity": identity, "start": number, "count": 0}
+            runs.append(active)
+        active["count"] += 1
+
+    def continues(run):
+        expected = run["start"]
+        for month in person["months"]:
+            number = month_number(month["month"])
+            if number < run["start"]:
+                continue
+            if number != expected or not (month["status"] == "loa" or
+                    month["status"] == "expected" and month.get("requirement_id") == "r5.elective"
+                    and (month["posting"], month["institution"]) == run["identity"]):
+                return False
+            expected += 1
+        return not earlier_months and expected == month_number(planning_start)
+
+    routes, missing = [], False
+    # Historical block obligations survive even when the old request is absent.
+    for durations in ((6,), (3, 3)) if allow_split or runs else ((6,),):
+        if len(runs) > len(durations) or any(run["count"] > duration for run, duration in zip(runs, durations)):
+            continue
+        if any(run["count"] < durations[i] and (i != len(runs) - 1 or not continues(run))
+               for i, run in enumerate(runs)):
+            continue
+        route = []
+        for index, duration in enumerate(durations):
+            run = runs[index] if index < len(runs) else None
+            credited = run["count"] if run else 0
+            eligible = [o for o in options if o["requirement_id"] == "r5.elective"
+                        and duration in elective_durations(o)
+                        and (run is None or (o["posting"], o["institution"]) == run["identity"])]
+            if not eligible:
+                missing = True
+                break
+            if credited == duration:
+                continue
+            block = {**requirement, "block_id": f"r5.elective.{index}", "required_months": duration,
+                     "expected_months": credited, "remaining_months": duration - credited}
+            route.append((block, eligible, bool(credited)))
+        else:
+            routes.append(route)
+    if not routes:
+        blockers.append({"code": "missing_r5_catalogue_option" if missing else "conflicting_partial_r5_history",
+                         "source": person["source"], "requirement_id": "r5.elective"})
+    return routes
 
 
 def prepare_blocks(person, options, planning_start, earlier_months, blockers):
     blocks = []
     for requirement in person["requirements"]:
-        if requirement["requirement_year"] != "R5" or not requirement["remaining_months"]:
+        if (requirement["requirement_year"] != "R5" or requirement["requirement_id"] == "r5.elective"
+                or not requirement["remaining_months"]):
             continue
         key = requirement["requirement_id"]
         try:
@@ -53,8 +134,12 @@ def prepare_blocks(person, options, planning_start, earlier_months, blockers):
         blockers.append({"code": "conflicting_partial_r5_history", "source": person["source"]})
     return blocks
 
-def prepare_routes(person, options, planning_start, earlier_months, blockers):
-    """Choose separate cores or one combined core, plus the six-month elective."""
+
+def prepare_routes(person, options, planning_start, earlier_months, blockers, allow_split=False):
+    """Combine supported core alternatives with one six or two three-month electives."""
+    electives = elective_routes(person, options, planning_start, earlier_months, blockers, allow_split)
+    if not electives:
+        return []
     requirements = {r["requirement_id"]: r for r in person["requirements"]}
     combined = requirements[COMBINED["id"]]
     partial_combined = combined["expected_months"] and combined["remaining_months"]
@@ -78,7 +163,11 @@ def prepare_routes(person, options, planning_start, earlier_months, blockers):
         if errors:
             failures.extend(errors)
         else:
-            routes.append(route)
+            for elective in electives:
+                if sum(partial for _, _, partial in route + elective) > 1:
+                    failures.append({"code": "conflicting_partial_r5_history", "source": person["source"]})
+                else:
+                    routes.append(route + elective)
     if not routes:
         blockers.extend(failures)
     return routes

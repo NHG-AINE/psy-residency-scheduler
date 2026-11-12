@@ -6,10 +6,12 @@ from math import lcm
 if __package__:
     from .workbook_import import normalized_label, normalized_posting_label
     from .rules.r2_rules import partial_posting_identity
+    from .rules.r5_rules import elective_durations
     from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
     from workbook_import import normalized_label, normalized_posting_label
     from rules.r2_rules import partial_posting_identity
+    from rules.r5_rules import elective_durations
     from rules.r4_rules import completed_r1_inpatient_at_imh
 
 MONTHS = {name: number for number, names in enumerate((('jan','january'), ('feb','february'), ('mar','march'), ('apr','april'), ('may',), ('jun','june'), ('jul','july'), ('aug','august'), ('sep','sept','september'), ('oct','october'), ('nov','november'), ('dec','december')), 1) for name in names}
@@ -78,10 +80,37 @@ def resolve_requests(person, requests, options, planning_months):
         requirement_id, service, category = next(iter(identities))
         req = requirements[requirement_id]
         duration = req['required_months']
+        duration_starts = None
+        if requirement_id == 'r5.elective':
+            durations = sorted({d for option in matches for d in elective_durations(option)})
+            if not durations:
+                item['reason'] = 'No unique eligible catalogue posting'
+                continue
+            duration_starts = {d: period_starts(row.get('period'), planning_months, d) for d in durations}
+            duration = min((d for d in durations if duration_starts[d]), default=min(durations))
         starts = period_starts(row.get('period'), planning_months, duration)
         if starts is None:
             item['reason'] = 'Period is unclear or outside the planning year'
             continue
+        if duration_starts is not None:
+            item['duration_starts'] = duration_starts
+            # A requested continuation consumes only its outstanding months.
+            # Completed three-month blocks do not discount a fresh request.
+            tail, identity = 0, None
+            for month in reversed(person.get('months', [])):
+                if month['status'] == 'loa':
+                    continue
+                if month['status'] != 'expected' or month.get('requirement_id') != requirement_id:
+                    break
+                current = (month['posting'], month['institution'])
+                if identity is not None and current != identity:
+                    break
+                identity = current
+                tail += 1
+            charges = [d - tail for option in matches if (option['posting'], option['institution']) == identity
+                       for d in elective_durations(option) if d > tail and duration_starts.get(d)]
+            item['remaining_duration'] = min([duration] + charges)
+            starts = sorted({start for values in duration_starts.values() for start in values})
         item.update(status='evaluable', requirement_id=requirement_id, duration=duration, starts=starts,
                     period_months=period_starts(row.get('period'), planning_months, 1),
                     option_keys=sorted({(o['requirement_id'], o['institution'], o['label']) for o in matches}))
@@ -89,14 +118,16 @@ def resolve_requests(person, requests, options, planning_months):
     for item in outcomes:
         if item['status'] != 'evaluable':
             continue
-        key = (tuple(item['option_keys']), tuple(item['starts']))
+        key = (tuple(item['option_keys']), tuple(item['starts']),
+               tuple((d, tuple(starts)) for d, starts in item.get('duration_starts', {}).items()),
+               tuple(item['period_months']) if 'duration_starts' in item else ())
         if key in seen:
             item['duplicate_of'] = seen[key]
         else:
             seen[key] = outcomes.index(item)
     for requirement_id, req in requirements.items():
         group = [i for i in outcomes if i['status'] == 'evaluable' and 'duplicate_of' not in i and i['requirement_id'] == requirement_id]
-        if req['remaining_months'] and len(group) > 1 and sum(i['duration'] for i in group) > req['remaining_months']:
+        if req['remaining_months'] and len(group) > 1 and sum(i.get('remaining_duration', i['duration']) for i in group) > req['remaining_months']:
             for item in group:
                 item.update(status='pending', reason='Competing requests need clarification')
             for item in outcomes:
@@ -105,9 +136,27 @@ def resolve_requests(person, requests, options, planning_months):
     return outcomes
 
 
+def requests_need_r5_split(outcomes):
+    """Only resolved requests that call for three-month blocks enable a new split."""
+    rows = [row for row in outcomes if row['status'] == 'evaluable' and 'duplicate_of' not in row
+            and row.get('requirement_id') == 'r5.elective' and row.get('duration_starts', {}).get(3)]
+    for row in rows:
+        period = row['request'].get('period')
+        if (isinstance(period, str) and period.strip() and len(row['period_months']) < 6
+                or 6 not in row['duration_starts']):
+            return True
+    return False
+
+
 def placement_fulfils_request(placement, request):
     """Placements already satisfy training rules; a request recognises their start."""
     option = placement['option']
+    if request.get('duration_starts') is not None:
+        duration = placement.get('block_duration', len(placement['months']) + placement.get('remaining', 0))
+        if (duration not in elective_durations(option) or not placement['months']
+                or placement['months'][0] not in request['duration_starts'].get(duration, [])
+                or any(month not in request['period_months'] for month in placement['months'])):
+            return False
     return bool(placement['months']) and (
         option['requirement_id'], option['institution'], option['label']
     ) in request['option_keys'] and placement['months'][0] in request['starts']
@@ -122,7 +171,7 @@ def add_request_objective(model, outcomes, placements):
         for n, row in enumerate(evaluable):
             candidates = [p['variable'] for p in placements[i] if placement_fulfils_request(p, row)]
             flag = model.new_bool_var(f'request_{i}_{n}')
-            model.add(flag == sum(candidates))
+            model.add_max_equality(flag, candidates or [0])
             row['_flag'] = flag
         groups.append(evaluable)
     scale = lcm(*(len(g) for g in groups)) if groups else 1
@@ -140,7 +189,9 @@ def unmet_request_reason(person, request, placements, options, stages):
             and all(o['institution'] == 'IMH' for o in requested)
             and completed_r1_inpatient_at_imh(person)):
         return 'r1_imh_exclusion', 'R1 Inpatient Psychiatry was completed at IMH. R4 Inpatient must be outside IMH.'
-    partial = partial_posting_identity(person, key)
+    # R5 elective history can include a completed first block and a different
+    # partial second block. Actual placement choices below express continuation.
+    partial = partial_posting_identity(person, key) if key != 'r5.elective' else None
     if partial and requested and all((o['posting'], o['institution']) != partial for o in requested):
         posting, institution = partial
         return 'partial_posting_continuation', f'This requirement must continue as {institution} {posting}, where it was started.'
