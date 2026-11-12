@@ -55,12 +55,17 @@ def resolve_requests(person, requests, options, planning_months):
             continue
         label = normalized_posting_label(raw)
         marker = re.search(r'\s*\((core|elective)\)$', label)
-        category_filter = marker[1] if marker else 'core'
+        category_filter = marker[1] if marker else None
         if marker:
             label = label[:marker.start()].rstrip()
         matches = [o for o in options if o.get('valid') and o.get('requirement_id') in requirements and o.get('residency_year') in eligible_years
-                   and o['category'] == category_filter
+                   and (category_filter is None or o['category'] == category_filter)
                    and label in {normalized_posting_label(o['label']), normalized_posting_label(o['posting'])}]
+        if category_filter is None:
+            matches = [o for o in matches if requirements[o['requirement_id']]['remaining_months'] > 0] or matches
+            matches = [o for o in matches if o['category'] == 'core'
+                       and (o['residency_year'].lower() in person['recorded_years']
+                            or requirements[o['requirement_id']]['remaining_months'])] or matches
         current = [o for o in matches if o['residency_year'].lower() in person['recorded_years']]
         if current:
             matches = current
