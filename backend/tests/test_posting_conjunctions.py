@@ -44,7 +44,7 @@ class PostingConjunctionTests(unittest.TestCase):
                         self.assertEqual(result["option_keys"][0][2], label)
                         self.assertEqual(result["request"]["posting_request"], text)
 
-    def test_elective_markers_and_combined_requirements_are_not_weakened(self):
+    def test_elective_markers_and_unknown_requirements_are_not_weakened(self):
         rows = [{"residency_year": "R5", "institution": "IMH",
                  "elective": "Child and Adolescent Psychiatry", "source": {"sheet": "Postings", "row": 12}}]
         catalogue = posting_catalogue({"electives": rows})
@@ -53,7 +53,7 @@ class PostingConjunctionTests(unittest.TestCase):
         self.assertEqual(matched["selected_candidate"]["category"], "elective")
         target = dict(catalogue[0], label="IMH Child & Adolescent Psychiatry")
         self.assertTrue(validate_posting("R5", target, rows)["valid"])
-        combined = {"residency_year": "R5", "category": "core", "label": "IMH Child and Geriatric Psychiatry"}
+        combined = {"residency_year": "R5", "category": "core", "label": "IMH Child and Unknown Psychiatry"}
         self.assertEqual(validate_posting("R5", combined, core_catalogue=[{
             "residency_year": "R5", "posting": combined["label"]}])["reasons"], ["posting_not_required_for_year"])
         self.assertNotEqual(normalized_label("A & B"), normalized_label("A and B"))

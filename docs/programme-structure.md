@@ -51,4 +51,11 @@ Neurology posting, followed by Inpatient Psychiatry.
 | --- | --- | --- |
 | Geriatric Psychiatry | IMH / CGH / NUH | 3 months |
 | Child & Adolescent Psychiatry | IMH / NUH / KKH | 3 months |
+| Child and Geriatric Psychiatry (alternative to both core postings above) | IMH / NUH / NTFGH / CGH | 6 months |
 | Elective | Depends on the selected elective | 6 months |
+
+R5 core requirements may be completed either as the separate three-month
+Geriatric and three-month Child & Adolescent postings, or as one six-month
+**Child and Geriatric Psychiatry** core posting at an institution offering it
+in the Postings tab. The combined posting fulfils both core requirements; it
+is not an elective. The six-month elective requirement still applies.

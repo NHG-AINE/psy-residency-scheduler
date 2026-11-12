@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 import { evaluateRequirements, visibleRequirements } from '../src/lib/requirement-ledger.ts'
 import type { ReviewStore } from '../src/lib/history-review.ts'
-import type { ResidentLedger } from '../src/lib/requirement-ledger.ts'
+import type { Requirement, ResidentLedger } from '../src/lib/requirement-ledger.ts'
 import type { Workbook } from '../src/lib/workbook.ts'
 
 const person = (): ResidentLedger => ({
@@ -88,6 +88,10 @@ test('requirement filters exclude the unused R1 route and distinguish completed 
   const resident = person()
   assert.deepEqual(visibleRequirements(resident, 'completed').map((row) => row.requirement_id), ['r1.medicine_neurology', 'r1.inpatient_psychiatry'])
   assert.deepEqual(visibleRequirements(resident, 'missing').map((row) => row.requirement_id), ['r3.continuity_clinic', 'r5.elective'])
+  resident.requirements.push({ requirement_id: 'r5.child_geriatric_psychiatry', requirement_year: 'R5',
+    posting: 'Child and Geriatric Psychiatry', required_months: 3, expected_months: 0,
+    remaining_months: 3, evidence_status: 'not_evidenced', alternative: true })
+  // The combined route credits the two core rows; it is not a third obligation.
   assert.equal(visibleRequirements(resident, 'all').length, 4)
   resident.r1_routes.forEach((route) => { route.evidence_status = 'partial' })
   assert.equal(visibleRequirements(resident, 'all').length, 6)
@@ -117,4 +121,22 @@ test('Historical notes use a native collapsed disclosure and disappear when ther
     assert.doesNotMatch(html, /These months still count/)
     assert.doesNotMatch(html, /Acknowledge|role="alert"/)
   } finally { await vite.close() }
+})
+
+
+test('R5 combined history shows one six-month alternative instead of duplicate core obligations', () => {
+  const resident = person()
+  const credits = ['r5.child_adolescent_psychiatry', 'r5.geriatric_psychiatry']
+  resident.requirements = credits.map((requirement_id) => ({ requirement_id, requirement_year: 'R5',
+    posting: requirement_id, required_months: 3, expected_months: 0, remaining_months: 3, evidence_status: 'not_evidenced' }))
+  const combined: Requirement = { requirement_id: 'r5.child_geriatric_psychiatry', requirement_year: 'R5',
+    posting: 'Child and Geriatric Psychiatry', required_months: 6, expected_months: 2,
+    remaining_months: 4, evidence_status: 'partial', alternative: true, credits }
+  resident.requirements.push(combined)
+  assert.deepEqual(visibleRequirements(resident, 'missing'), [combined])
+  combined.expected_months = 6
+  combined.remaining_months = 0
+  combined.evidence_status = 'supported'
+  assert.deepEqual(visibleRequirements(resident, 'completed'), [combined])
+  assert.deepEqual(visibleRequirements(resident, 'missing'), [])
 })

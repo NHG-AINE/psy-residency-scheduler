@@ -221,6 +221,13 @@ def _summaries(months):
             groups.append(active)
         active["expected_months"] += 1
         active["end"] = month["month"]
+    combined = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
+    # As with R1's combined route, partial history belongs to the combined
+    # block, not an assumed split between its components.
+    if counts[combined["id"]] >= combined["months"]:
+        for part in PROGRAMME_REQUIREMENTS["R5"].values():
+            if part["id"] in combined["credits"]:
+                counts[part["id"]] += part["months"]
     result = []
     for year, requirements in PROGRAMME_REQUIREMENTS.items():
         for posting, rule in requirements.items():
@@ -231,6 +238,13 @@ def _summaries(months):
                     "required_months": rule["months"], "expected_months": count,
                     "remaining_months": max(0, rule["months"] - count),
                     "evidence_status": "not_evidenced" if not count else "supported" if count >= rule["months"] else "partial"}
+            if rule.get("credits"):
+                item["alternative"] = True
+                item["credits"] = list(rule["credits"])
+                # A completed separate route also removes the need for a combined block.
+                if all(counts[part["id"]] >= part["months"]
+                       for part in PROGRAMME_REQUIREMENTS["R5"].values() if part["id"] in rule["credits"]):
+                    item["remaining_months"] = 0
             if year == "R3":
                 item["continuity_groups"] = groups
             result.append(item)

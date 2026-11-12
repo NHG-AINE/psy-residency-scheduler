@@ -25,6 +25,13 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   Separate completed blocks, including remediation, may be at different
   institutions. Apply each posting's specific duration and timing rules,
   including any permitted division into separate blocks.
+- **Recognise the R5 combined core alternative.** Six months of Child and
+  Geriatric Psychiatry fulfil both three-month R5 core requirements. Track partial
+  history as progress on the six-month combined block, not an assumed split
+  between its components. Schedule it as one continuous posting.
+  Continue a partial combined block at the same institution; LOA pauses it.
+  Do not also schedule the separate core requirements once the combined route
+  completes them. The six-month R5 elective remains required.
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
   across yearly tabs, including a posting that continues across June and July.
