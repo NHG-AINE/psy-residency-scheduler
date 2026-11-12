@@ -9,6 +9,7 @@ export type LedgerMonth = {
 export type Requirement = {
   requirement_id: string; requirement_year: string; posting: string; required_months: number
   expected_months: number; remaining_months: number; evidence_status: 'not_evidenced' | 'partial' | 'supported'
+  alternative?: boolean; credits?: string[]
   continuity_groups?: { institution: string; posting: string; start: string; end: string; expected_months: number }[]
 }
 export type HistoricalNote = {
@@ -43,7 +44,9 @@ export type RequirementFilter = 'all' | 'completed' | 'missing'
 
 export function visibleRequirements(ledger: ResidentLedger, filter: RequirementFilter): Requirement[] {
   const route = ledger.r1_routes.find((item) => item.evidence_status === 'supported')
+  const combined = ledger.requirements.find((item) => item.alternative && item.expected_months > 0)
   return ledger.requirements.filter((item) =>
-    (item.requirement_year !== 'R1' || !route || route.requirement_ids.includes(item.requirement_id))
+    (!item.alternative || item === combined) && !combined?.credits?.includes(item.requirement_id)
+    && (item.requirement_year !== 'R1' || !route || route.requirement_ids.includes(item.requirement_id))
     && (filter === 'all' || (item.evidence_status === 'supported') === (filter === 'completed')))
 }

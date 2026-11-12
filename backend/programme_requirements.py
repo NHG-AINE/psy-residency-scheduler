@@ -41,6 +41,8 @@ PROGRAMME_REQUIREMENTS = {
         "Forensic Psychiatry": {"id": "r4.forensic_psychiatry", "months": 3},
     },
     "R5": {
+        "Child and Geriatric Psychiatry": {"id": "r5.child_geriatric_psychiatry", "months": 6,
+                                           "credits": ("r5.child_adolescent_psychiatry", "r5.geriatric_psychiatry")},
         "Geriatric Psychiatry": {"id": "r5.geriatric_psychiatry", "months": 3},
         "Child & Adolescent Psychiatry": {"id": "r5.child_adolescent_psychiatry", "months": 3},
         "Elective": {"id": "r5.elective", "months": 6},

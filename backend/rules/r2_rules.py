@@ -39,7 +39,7 @@ def prepare_blocks(person, options, blockers):
     return blocks
 
 
-def add_blocks(model, person, blocks, r1_months, resident_index):
+def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
     """Schedule on active training-month indices, so LOA pauses all blocks.
 
     The virtual tail records carryforward only; no future calendar capacity or
@@ -71,7 +71,13 @@ def add_blocks(model, person, blocks, r1_months, resident_index):
                 months = [active[tick] for tick in range(start, start + length) if tick < len(active)]
                 placements.append({"variable": variable, "option": option, "months": months,
                                    "remaining": length - len(months)})
-        model.add_exactly_one(choices)
+        if enabled is None:
+            model.add_exactly_one(choices)
+        else:
+            model.add(sum(choices) == enabled)
     for variables in coverage.values():
-        model.add_exactly_one(variables)
+        if enabled is None:
+            model.add_exactly_one(variables)
+        else:
+            model.add(sum(variables) == enabled)
     return placements
