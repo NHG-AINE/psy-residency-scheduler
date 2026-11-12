@@ -75,6 +75,11 @@ class DraftCancellationTests(unittest.TestCase):
             self.assertNotIn(next_token, __import__('main')._draft_operations)
 
     def test_cancel_during_solve_stops_active_solver(self):
+        for initial in (False, True):
+            with self.subTest(initial_feasibility=initial):
+                self._assert_cancel_during_solve(initial)
+
+    def _assert_cancel_during_solve(self, initial):
         from threading import Event, Thread
         from scheduler import DraftCancelled, _solve_priorities
         from ortools.sat.python import cp_model
@@ -95,7 +100,7 @@ class DraftCancellationTests(unittest.TestCase):
         errors = []
         def run():
             try:
-                _solve_priorities(model, [('x', x), ('again', x)], [x], 5, cancelled)
+                _solve_priorities(model, [('x', x), ('again', x)], [x], 5, cancelled, initial_feasibility=initial)
             except DraftCancelled:
                 errors.append('cancelled')
         with patch('scheduler.cp_model.CpSolver.solve', new=solve), patch('scheduler.cp_model.CpSolver.stop_search', new=stop_search):

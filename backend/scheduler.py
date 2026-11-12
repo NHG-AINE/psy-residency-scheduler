@@ -2,7 +2,7 @@
 from collections import Counter, defaultdict
 from copy import deepcopy
 from math import isfinite, gcd, floor
-from time import monotonic
+from time import perf_counter as monotonic
 from threading import Event, Thread
 
 from ortools.sat.python import cp_model
@@ -158,13 +158,66 @@ class DraftCancelled(Exception):
     pass
 
 
-def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None):
-    """Lock proven scores, not assignments; retain the last valid solution."""
+def _solve_model(solver, model, callback, cancel):
+    """Use the same cancellation handling for feasibility and preference search."""
+    if cancel and cancel.is_set():
+        raise DraftCancelled()
+    finished = Event()
+    def stop_when_cancelled():
+        while not finished.wait(CANCEL_POLL_SECONDS):
+            if cancel.is_set():
+                solver.stop_search()
+    monitor = Thread(target=stop_when_cancelled, daemon=True) if cancel else None
+    if monitor:
+        monitor.start()
+    try:
+        status = solver.solve(model, callback)
+    finally:
+        finished.set()
+        if monitor:
+            monitor.join()
+    if cancel and cancel.is_set():
+        raise DraftCancelled()
+    return status
+
+
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None, initial_feasibility=False):
+    """Find a fallback, then lock only proven preference scores within one budget."""
     started = monotonic()
     deadline = started + max_seconds
-    best = None
+    best, best_scores = None, None
     stages = []
     status = cp_model.UNKNOWN
+    completed = 0
+    variables = list({variable.index: variable for variable in variables}.values())
+    if cancel and cancel.is_set():
+        raise DraftCancelled()
+    if initial_feasibility and deadline > monotonic():
+        stage_started = monotonic()
+        model.clear_objective()
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = max(0, deadline - monotonic())
+        solver.parameters.num_search_workers = SOLVER_WORKERS
+        solver.parameters.random_seed = SOLVER_RANDOM_SEED
+        solver.parameters.stop_after_first_solution = True
+        callback = _BestScoreTime()
+        feasibility_status = _solve_model(solver, model, callback, cancel)
+        valid = feasibility_status in {cp_model.OPTIMAL, cp_model.FEASIBLE}
+        stages.append({"priority": "initial_feasibility",
+                       "status": "feasible" if valid else solver.status_name(feasibility_status).lower()})
+        if valid:
+            best = solver
+            best_scores = tuple(solver.value(objective) for _, objective in objectives)
+            model.clear_hints()
+            for variable in variables:
+                model.add_hint(variable, solver.value(variable))
+            if callback.best_time is not None:
+                stages[-1]["first_solution_time_seconds"] = callback.best_time
+        stages[-1]["wall_time_seconds"] = monotonic() - stage_started
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
+        if not valid:
+            return None, solver.status_name(feasibility_status).lower(), stages, monotonic() - started
     for name, objective in objectives:
         if cancel and cancel.is_set():
             raise DraftCancelled()
@@ -228,29 +281,19 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         solver.parameters.num_search_workers = SOLVER_WORKERS
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
         callback = _BestScoreTime()
-        finished = Event()
-        def stop_when_cancelled():
-            while not finished.wait(CANCEL_POLL_SECONDS):
-                if cancel.is_set():
-                    solver.stop_search()
-        monitor = Thread(target=stop_when_cancelled, daemon=True) if cancel else None
-        if monitor:
-            monitor.start()
-        try:
-            status = solver.solve(model, callback)
-        finally:
-            finished.set()
-            if monitor:
-                monitor.join()
-        if cancel and cancel.is_set():
-            raise DraftCancelled()
+        status = _solve_model(solver, model, callback, cancel)
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
         if relaxation is not None:
             stages[-1]["posting_relaxation" if name == "posting_balance" else "ratio_relaxation"] = relaxation
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
             break
-        best = solver
+        candidate_scores = tuple(solver.value(item) for _, item in objectives)
+        if best is None or candidate_scores <= best_scores:
+            best, best_scores = solver, candidate_scores
+        else:
+            stages[-1]["retained_previous_solution"] = True
+            stages[-1]["retained_score"] = best.value(objective)
         score = solver.value(objective)
         stages[-1]["score"] = score
         stages[-1]["best_objective_bound"] = solver.best_objective_bound
@@ -261,8 +304,9 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         model.add(objective == score)
         model.clear_hints()
         for variable in variables:
-            model.add_hint(variable, solver.value(variable))
-    complete = len(stages) == len(objectives) and status == cp_model.OPTIMAL
+            model.add_hint(variable, best.value(variable))
+        completed += 1
+    complete = completed == len(objectives) and status == cp_model.OPTIMAL
     final_status = "optimal" if complete else "feasible" if best is not None else cp_model.CpSolver().status_name(status).lower()
     return best, final_status, stages, monotonic() - started
 
@@ -577,7 +621,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if any(preferences["ratio_counts"].values()) else None,
         posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
                               r5_monthly_totals, weights) if weights else None,
-        posting_block_data=(selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes))
+        posting_block_data=(selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes), initial_feasibility=True)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,

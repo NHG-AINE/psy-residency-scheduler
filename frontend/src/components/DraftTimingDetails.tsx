@@ -57,12 +57,12 @@ export default function DraftTimingDetails({ draft, elapsedSeconds, duration }: 
         {draft.wall_time_seconds !== undefined && <small>{draft.wall_time_seconds.toFixed(1)} s solver time</small>}
       </div>
       <div className="timing-bar" aria-hidden="true">{reached.map((stage, index) => <span key={stage.priority}
-        className={stage.status === 'optimal' ? '' : 'timing-limited'}
+        className={stage.complete ? '' : 'timing-limited'}
         style={{ flexGrow: stage.seconds, animationDelay: `${index * 35}ms` }} />)}</div>
-      <ol className="timing-stages">{reached.map((stage) => <li key={stage.priority} className={stage.status === 'optimal' ? '' : 'timing-limited'}>
+      <ol className="timing-stages">{reached.map((stage) => <li key={stage.priority} className={stage.complete ? '' : 'timing-limited'}>
         <div className="timing-stage-title"><span>{stage.label}</span><span>{stage.seconds!.toFixed(1)} s</span></div>
         <p>{stage.outcome}</p>
-        {stage.status === 'unknown' && <small>Draft retained from the previous stage.</small>}
+        {stage.status === 'unknown' && stage.priority !== 'initial_feasibility' && <small>Draft retained from the previous stage.</small>}
       </li>)}</ol>
       {waiting.length > 0 && <details className="timing-remaining"><summary>{waiting.length} later {waiting.length === 1 ? 'stage' : 'stages'} not reached</summary>
         <ul>{waiting.map((stage) => <li key={stage.priority}>{stage.label}</li>)}</ul>
