@@ -25,6 +25,8 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Read docs/cross-cluster.md to understand institution-to-cluster mappings,
   cross-cluster credit and exposure requirements when reviewing, planning or
   implementing scheduling work.
+- Read [docs/scheduler-optimisation.md](docs/scheduler-optimisation.md) to understand
+  search techniques and validation when reviewing or changing scheduler performance.
 - Keep constraint documents focused on scheduling rules, not temporary
   implementation-status notes. Check the code to determine current support.
 
