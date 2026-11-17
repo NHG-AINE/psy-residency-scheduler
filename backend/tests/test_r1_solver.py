@@ -9,7 +9,7 @@ from ortools.sat.python import cp_model
 from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
 from tests.catalogue_fixtures import INSTITUTIONS
-from scheduler import draft_schedule, _allocation_targets, _solve_priorities
+from scheduler import draft_schedule, _allocation_targets, _solve_priorities, _capacity_overflow_lower_bound
 from rules.r1_rules import add_preferences
 from cluster_coverage import CLUSTERS
 from tests.test_requirement_ledger import resident
@@ -179,6 +179,44 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(paused["soft_targets"]["active_incoming_cohort_size"], 0)
         self.assertEqual(sum(item["months"] for item in paused["residents"][0]["carryforward"]), 12)
         self.assertTrue(all(m["status"] == "loa" for m in paused["residents"][0]["months"]))
+
+    def test_capacity_lower_bound_never_exceeds_enumerated_overflow(self):
+        from itertools import product
+        # Choice lengths include LOA/partial carryforward and future-only zero.
+        for capacity, tail in product((0, 1, None), ([], [1], [0, 1])):
+            option = {"requirement_id": "r4.emergency", "institution": "IMH", "label": "IMH Emergency", "capacity": capacity}
+            r1_option = dict(option, requirement_id="r1.neurology", label="IMH Neurology")
+            candidates = [[{"schedule": [r1_option, None]}, {"schedule": [None, r1_option]}]]
+            placements = [[{"option": option, "block_id": "partial", "months": [0]},
+                           {"option": option, "block_id": "partial", "months": [1]},
+                           {"option": option, "block_id": "tail", "months": tail}]]
+            blocks = [[({"requirement_id": option["requirement_id"], "block_id": identity}, [], False)
+                       for identity in ("partial", "tail")]]
+            fixed = {(0, option["requirement_id"], "IMH", option["label"]): [{"name": "Known occupant"}]}
+            bound = _capacity_overflow_lower_bound(candidates, placements, blocks, [option, r1_option], fixed, 2)
+            scores = []
+            for path, partial in product(candidates[0], placements[0][:2]):
+                counts = Counter({(0, option["requirement_id"]): 1})
+                counts.update((m, o["requirement_id"]) for m, o in enumerate(path["schedule"]) if o)
+                counts.update((m, option["requirement_id"]) for m in partial["months"] + tail)
+                scores.append(sum(max(0, count - capacity) for count in counts.values()) if capacity is not None else 0)
+            self.assertLessEqual(bound, min(scores))
+            if capacity == 0:
+                self.assertEqual(bound, 3 + len(tail))
+            if capacity is None:
+                self.assertEqual(bound, 0)
+        capped = {"requirement_id": "r1.neurology", "capacity": 0}
+        unlimited_alternative = dict(capped, institution="Other", capacity=None)
+        split = {"schedule": [capped, capped]}
+        combined_option = {"requirement_id": "r1.combined", "capacity": 0}
+        combined = {"schedule": [combined_option, combined_option]}
+        self.assertEqual(_capacity_overflow_lower_bound([[split]], [[]], [[]],
+                         [capped, unlimited_alternative], {}, 2), 0)
+        # Neither split nor combined demand is mandatory across alternative routes.
+        bound = _capacity_overflow_lower_bound([[split, combined]], [[]], [[]], [capped, combined_option], {}, 2)
+        self.assertEqual(bound, 0)
+        self.assertLessEqual(bound, 2)  # Enumerated optimum: either route consumes two zero-Max months.
+
 
     def test_capacity_blank_zero_and_monthly_overflow_are_soft_targets(self):
         workbook = r1_book(3)
