@@ -392,7 +392,7 @@ def review_import(result, yearly_sheets=None):
     return result
 
 
-def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
+def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
     if len(content) > MAX_UPLOAD_BYTES:
         raise WorkbookError("Workbook exceeds the 10 MB upload limit")
     try:
@@ -413,7 +413,11 @@ def parse_workbook(content: bytes, target_year: int = 2027) -> dict:
         years = sorted([yearly_sheet(s) for s in workbook if s.title.lower().startswith("jul")], key=lambda s: s["year"])
         if len({s["year"] for s in years}) != len(years):
             raise WorkbookError("Workbook contains ambiguous duplicate planning years")
+        if target_year is None and years:
+            target_year = years[-1]["year"]
         target = next((s for s in years if s["year"] == target_year), None)
+        if not years:
+            raise WorkbookError("No supported annual worksheets found")
         if target is None:
             raise WorkbookError(f"No July {target_year} - June {target_year + 1} worksheet found")
         for required in ("Request", "Postings"):
