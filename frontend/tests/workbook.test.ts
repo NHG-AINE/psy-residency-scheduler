@@ -28,6 +28,18 @@ test('uploads the file and target year as multipart without overriding its bound
   assert.deepEqual(await importWorkbook(file, 2027), result)
 })
 
+test('omits the planning year for new and replacement uploads', async (t) => {
+  const result = { target_year: 2030, target_sheet: 'Jul latest', residents: [], available_years: [], months: [], histories: [], requests: [], warnings: [], postings: { core: [], rows: [] } }
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    const body = init.body as FormData
+    assert.equal(body.has('target_year'), false)
+    assert.ok(body.get('file') instanceof File)
+    return Response.json(result)
+  })
+  assert.deepEqual(await importWorkbook(new File(['first'], 'first.xlsx')), result)
+  assert.deepEqual(await importWorkbook(new File(['replacement'], 'replacement.xlsx')), result)
+})
+
 test('reports server validation, unreachable backend and non-JSON responses', async (t) => {
   const file = new File(['workbook'], 'programme.xlsx')
   t.mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Missing required worksheet.' }, { status: 400 }))

@@ -26,7 +26,7 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/api/import")
-async def import_workbook(file: UploadFile = File(...), target_year: int = Form(2027)) -> dict:
+async def import_workbook(file: UploadFile = File(...), target_year: int | None = Form(None)) -> dict:
     try:
         if not file.filename or not file.filename.lower().endswith(".xlsx"):
             raise HTTPException(400, "Choose an .xlsx workbook")

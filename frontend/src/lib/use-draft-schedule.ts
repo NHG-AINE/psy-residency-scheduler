@@ -4,7 +4,7 @@ import type { SavedDraft } from './workbook-session'
 import { readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './history-review'
 import type { Workbook } from './workbook'
 
-export function useDraftSchedule(workbook: Workbook | null, importing: boolean, selectedYear: number) {
+export function useDraftSchedule(workbook: Workbook | null, importing: boolean, selectedYear: number | undefined) {
   const [result, setResult] = useState<SavedDraft | null>(null)
   const [searchSeconds, setSearchSeconds] = useState(120)
   const [busy, setBusy] = useState(false)

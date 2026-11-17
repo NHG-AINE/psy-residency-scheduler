@@ -42,7 +42,58 @@ def workbook_bytes(edit=None):
     return stream.getvalue()
 
 
+def future_workbook_bytes():
+    def edit(w):
+        for sheet in list(w)[:2]:
+            for row in sheet:
+                for cell in row:
+                    if isinstance(cell.value, datetime):
+                        cell.value = cell.value.replace(year=cell.value.year + 3)
+            sheet.title = "Jul latest" if sheet.title.startswith("Jul 2027") else "Jul earlier"
+        w.move_sheet("Jul latest", offset=-1)
+    return workbook_bytes(edit)
+
+
 class WorkbookImportTests(unittest.TestCase):
+    def test_latest_year_uses_month_headings_regardless_of_tab_order(self):
+        content = future_workbook_bytes()
+        latest = parse_workbook(content)
+        self.assertEqual(latest["target_year"], 2030)
+        self.assertEqual(latest["target_sheet"], "Jul latest")
+        self.assertEqual(latest["months"][0]["month"], "2030-07")
+        self.assertEqual([s["year"] for s in latest["available_years"]], [2029, 2030])
+        self.assertEqual([s["year"] for s in latest["histories"]], [2029])
+        earlier = parse_workbook(content, 2029)
+        self.assertEqual(earlier["target_year"], 2029)
+        self.assertEqual(earlier["target_sheet"], "Jul earlier")
+        self.assertEqual(earlier["histories"], [])
+
+    def test_detection_retains_candidate_validation_and_required_sheets(self):
+        def duplicate(w):
+            w.copy_worksheet(w["Jul 2027 - Jun 2028"])
+        cases = [
+            (duplicate, "ambiguous duplicate planning years"),
+            (lambda w: w.create_sheet("Jul malformed"), "Jul malformed: required headers missing"),
+            (lambda w: setattr(w["Jul 2026 - Jun 2027"]["E2"], "value", None), "twelve calendar month headings"),
+            (lambda w: setattr(w["Jul 2027 - Jun 2028"]["G1"], "value", datetime(2027, 8, 1)), "headings must run July through June"),
+            (lambda w: w.remove(w["Request"]), "Required worksheet missing: Request"),
+            (lambda w: w.remove(w["Postings"]), "Required worksheet missing: Postings"),
+        ]
+        for edit, message in cases:
+            for year in (None, 2027):
+                with self.subTest(message=message, year=year):
+                    with self.assertRaisesRegex(WorkbookError, message):
+                        parse_workbook(workbook_bytes(edit), year)
+
+    def test_api_detects_latest_year_and_honours_explicit_year(self):
+        with TestClient(app) as client:
+            for data, expected in (({}, 2030), ({"target_year": "2029"}, 2029)):
+                with self.subTest(data=data):
+                    response = client.post("/api/import", data=data,
+                                           files={"file": ("future.xlsx", future_workbook_bytes())})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()["target_year"], expected)
+
     def test_history_matches_mcr_preserves_blanks_and_excludes_future(self):
         def edit(w):
             target = w["Jul 2027 - Jun 2028"]
@@ -54,7 +105,7 @@ class WorkbookImportTests(unittest.TestCase):
             for cell in future[1]:
                 if isinstance(cell.value, datetime):
                     cell.value = cell.value.replace(year=cell.value.year + 1)
-        r = parse_workbook(workbook_bytes(edit))
+        r = parse_workbook(workbook_bytes(edit), 2027)
         self.assertEqual([h["year"] for h in r["histories"]], [2026])
         history = r["histories"][0]["residents"][0]
         self.assertEqual(history["match_status"], "matched")

@@ -48,10 +48,10 @@ export function workbookError(files: Pick<File, 'name' | 'size'>[]): string {
   return ''
 }
 
-export async function importWorkbook(file: File, year: number): Promise<Workbook> {
+export async function importWorkbook(file: File, year?: number): Promise<Workbook> {
   const body = new FormData()
   body.append('file', file)
-  body.append('target_year', String(year))
+  if (year !== undefined) body.append('target_year', String(year))
   let response: Response
   try {
     response = await fetch('/api/import', { method: 'POST', body, signal: AbortSignal.timeout(30_000) })
