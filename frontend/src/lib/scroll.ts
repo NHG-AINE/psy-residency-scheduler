@@ -1,11 +1,12 @@
 let stopCurrent: (() => void) | undefined
 
-export function scrollToPosition(top: number) {
+export function scrollToPosition(top: number, onComplete?: () => void) {
   stopCurrent?.()
   const start = window.scrollY
   const end = Math.max(0, Math.min(top, document.documentElement.scrollHeight - window.innerHeight))
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (Math.abs(end - start) < 1 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: end, behavior: 'instant' })
+    onComplete?.()
     return () => {}
   }
   const started = performance.now()
@@ -23,7 +24,7 @@ export function scrollToPosition(top: number) {
     const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
     window.scrollTo({ top: start + (end - start) * eased, behavior: 'instant' })
     if (progress < 1) frame = requestAnimationFrame(animate)
-    else cancel()
+    else { cancel(); onComplete?.() }
   }
   window.addEventListener('wheel', cancel, { passive: true })
   window.addEventListener('touchstart', cancel, { passive: true })

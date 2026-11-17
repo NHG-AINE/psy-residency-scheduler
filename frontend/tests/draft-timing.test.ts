@@ -5,16 +5,18 @@ import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 
 test('timeline follows returned priorities and distinguishes unproven, unknown and unreached stages', () => {
   const stages = draftTiming({
-    soft_priority: ['resident_requests', 'posting_balance', 'inpatient_allocation', 'singleton_months'],
+    soft_priority: ['capacity_overflow', 'resident_requests', 'posting_balance', 'inpatient_allocation', 'singleton_months'],
     optimisation_stages: [
+      { priority: 'capacity_overflow', status: 'optimal', wall_time_seconds: 1 },
       { priority: 'posting_balance', status: 'feasible', wall_time_seconds: 10 },
       { priority: 'resident_requests', status: 'optimal', wall_time_seconds: 2 },
       { priority: 'inpatient_allocation', status: 'unknown', wall_time_seconds: 4 },
     ],
   } as DraftSchedule)
   assert.deepEqual(stages.map(({ outcome, seconds }) => [outcome, seconds]), [
-    ['Optimal', 2], ['Best found - not proven', 10], ['No new solution', 4], ['Not reached', undefined],
+    ['Optimal', 1], ['Optimal', 2], ['Best found - not proven', 10], ['No new solution', 4], ['Not reached', undefined],
   ])
+  assert.equal(stages[0].label, 'Posting capacity')
   assert.equal(stages.some(({ priority }) => priority === 'r3_missing_clusters'), false)
 })
 

@@ -24,7 +24,7 @@ import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
   const core = rows.find((row) => row.label === 'Inpatient Psychiatry')!
   assert.equal(core.counts['2027-07'], 2)
   assert.equal(core.institutions[0].allCounts['2027-07'], 2)
-  assert.equal(core.institutions[0].capacity, 9)
+  assert.deepEqual(core.institutions[0].overflows, [])
   assert.deepEqual(core.institutions[1].counts, {})
   assert.equal(rows.find((row) => row.label === 'LOA')!.counts['2027-08'], 1)
   assert.equal(monthlyBreakdown(workbook, draft, [], 'R2').find((row) => row.label === 'Electives')!.counts['2027-07'], 1)
@@ -78,4 +78,29 @@ test('earlier outstanding requirements count in the resident recorded cohort, wi
     assert.equal(rows[0].counts['2027-07'], 1)
     assert.equal(rows[0].institutions[0].allCounts['2027-07'], 3)
   }
+})
+
+
+test('capacity warnings use exact requirement identity and retain full names across recorded cohorts', () => {
+  const sources = [{ sheet: 'Postings', row: 2, column: 'A' }, { sheet: 'Postings', row: 2, column: 'B' }]
+  const people = ['R1', 'R5', 'R4'].map((residency_year, row) => ({ name: `Person ${row}`, residency_year,
+    source: { sheet: 'Plan', row }, postings: [{ month: '2027-07', value: null, status: 'blank', source: { sheet: 'Plan', row, column: 'B' } }],
+  })) as Resident[]
+  const workbook = { residents: people, months: [{ month: '2027-07' }], postings: { core: sources.map((source, i) => ({
+    source, posting: 'IMH Inpatient Psychiatry', residency_year: i ? 'R4' : 'R1', max: i ? '9' : '1',
+  })), electives: [] } } as unknown as Workbook
+  const overflow = { month: '2027-07', requirement_id: 'r1.inpatient_psychiatry', institution: 'IMH', label: 'IMH Inpatient Psychiatry',
+    source: sources[0], residency_year: 'R1', category: 'core' as const, max: 1, assigned: 2, residents: people.slice(0, 2),
+  }
+  const draft = { status: 'optimal', capacity_overflows: [overflow], residents: people.map((person, i) => ({ source: person.source,
+    months: [{ month: '2027-07', status: 'posting', label: overflow.label, target: { source: sources[i === 2 ? 1 : 0], category: 'core', residency_year: i === 2 ? 'R4' : 'R1' } }],
+  })) } as unknown as DraftSchedule
+  for (const year of ['R1', 'R5']) {
+    const site = monthlyBreakdown(workbook, draft, [], year)[0].institutions[0]
+    assert.equal(site.counts['2027-07'], 1)
+    assert.deepEqual(site.overflows, [overflow])
+    assert.deepEqual(site.overflows[0].residents.map((person) => person.name), ['Person 0', 'Person 1'])
+  }
+  assert.deepEqual(monthlyBreakdown(workbook, draft, [], 'R4')[0].institutions[0].overflows, [])
+  assert.equal(draft.capacity_overflows!.length, 1) // Summary stays independent of selected cohort/search.
 })

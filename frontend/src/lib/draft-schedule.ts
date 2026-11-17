@@ -10,14 +10,21 @@ export type RequestOutcome = {
   status: 'met' | 'not_met' | 'pending'; reason?: string | null; reason_code?: string; duplicate_of?: number
   assigned?: { label: string; months: string[] }[]; matched_months?: string[]; replacement_months?: string[]
 }
+export type CapacityOverflow = {
+  month: string; requirement_id: string; institution: string; label: string; source: Source
+  residency_year: string; category: 'core' | 'elective'; max: number; assigned: number
+  residents: { name: string | null; mcr: string | null; source: Source }[]
+}
 export type DraftSchedule = {
+  capacity_overflows?: CapacityOverflow[]
+  capacity_coverage_notes?: { code: string; source: Source }[]
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
   skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
     requests?: RequestOutcome[]
-    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string } | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_priority?: string[]
   wall_time_seconds?: number
@@ -140,6 +147,10 @@ export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): 
 }
 
 const blockerLabels: Record<string, string> = {
+  unresolved_occupied_posting: 'Resolve the occupied posting label and requirement before counting capacity',
+  conflicting_occupied_posting: 'Resolve conflicting posting evidence for the same resident and month',
+  unresolved_retained_posting: 'Resolve the retained posting label and requirement before counting capacity',
+  conditional_retained_posting: 'Review the retained posting; its occupied place is outside the confirmed capacity counts',
   no_schedulable_residents: 'No R1–R5 residents have usable scheduling inputs',
   conflicting_partial_r5_history: 'Review the interrupted or conflicting R5 posting history',
   missing_r5_catalogue_option: 'No supported R5 catalogue option for the remaining requirement',
@@ -149,8 +160,8 @@ const blockerLabels: Record<string, string> = {
   completed_r4_missing_clusters: 'Review completed R4 history with missing cluster coverage',
   unsupported_r4_remarks: 'Review unsupported R4 posting remarks',
   duplicate_r4_catalogue_option: 'Resolve duplicate R4 posting options',
-  r4_schedule_infeasible: 'No valid R4 schedule was found; review eligibility, clusters and capacity',
-  r4_cluster_review: 'Review cluster coverage alongside posting eligibility and capacity',
+  r4_schedule_infeasible: 'No valid R4 schedule was found; review eligibility, clusters and outstanding training',
+  r4_cluster_review: 'Review cluster coverage alongside posting eligibility and outstanding training',
   conflicting_partial_r3_history: 'Review the interrupted or conflicting Continuity Clinic history',
   missing_r3_catalogue_option: 'No matching Continuity Clinic catalogue option',
   unsupported_r3_remarks: 'Review unsupported R3 posting remarks',
@@ -164,7 +175,6 @@ const blockerLabels: Record<string, string> = {
   requirement_year_unconfirmed: 'Confirm the historical requirement year', programme_duration_mismatch: 'Correct the posting duration to match the programme',
   historical_progress_unknown: 'Review missing historical progress', pending_history_review: 'Review unresolved historical postings',
   conflicting_history: 'Review conflicting historical records', invalid_planning_month_evidence: 'Review conflicting planning month evidence',
-  shared_capacity_outside_draft_scope: 'Review capacity shared with residents outside this draft',
   unsupported_r1_remarks: 'Review unsupported R1 posting remarks', duplicate_r1_catalogue_option: 'Resolve duplicate R1 posting options',
   invalid_capacity: 'Correct the posting capacity', invalid_duration: 'Correct the posting duration',
   unclear_intake: 'Review the unclear incoming intake', excess_intake: 'Review the excess incoming intake',
@@ -206,4 +216,22 @@ export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
       : `${monthLabel(range[0])} \u2013 ${monthLabel(range.at(-1)!)}`).join(', ')
     return { reason, sources, dates }
   })
+}
+
+
+export function groupedCapacityWarnings(rows: CapacityOverflow[]) {
+  const groups = new Map<string, { key: string; label: string; periods: { start: string; end: string; assigned: number; max: number }[] }>()
+  const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
+  for (const row of [...rows].sort((a, b) => a.month.localeCompare(b.month))) {
+    const key = JSON.stringify([row.requirement_id, row.residency_year, row.category, row.institution, row.label, row.source.sheet, row.source.row, row.source.column])
+    let group = groups.get(key)
+    if (!group) {
+      group = { key, label: `${row.residency_year} - ${row.label}`, periods: [] }
+      groups.set(key, group)
+    }
+    const last = group.periods.at(-1)
+    if (last && ordinal(row.month) === ordinal(last.end) + 1 && last.assigned === row.assigned && last.max === row.max) last.end = row.month
+    else group.periods.push({ start: row.month, end: row.month, assigned: row.assigned, max: row.max })
+  }
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label))
 }
