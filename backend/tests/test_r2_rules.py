@@ -129,7 +129,10 @@ class R2SolverTests(unittest.TestCase):
         self.assertEqual({p["months"][0]["label"] for p in result["residents"]}, {"IMH ANDS", "IMH Addiction Medicine"})
         for elective in book["postings"]["electives"]:
             elective["max"] = 0
-        self.assertEqual(draft_schedule(book,STORE)["status"], "infeasible")
+        overflow = draft_schedule(book, STORE)
+        self.assertEqual(overflow["status"], "optimal")
+        self.assertEqual(overflow["soft_results"]["capacity_overflow"], 6)
+        self.assertEqual(overflow["capacity_overflow_lower_bound"], 6)
 
     def test_conflicting_partial_history_and_unsupported_remarks_block(self):
         for kind in ("partial", "remarks", "duplicate", "missing"):

@@ -53,7 +53,7 @@
   remaining eligible R1-R4 posting choices may establish structural feasibility.
   Choices beyond the draft horizon do not count as planned exposure or reserve
   capacity, and future availability remains unknown.
-- These priorities never override hard constraints such as LOA, capacity or
+- These priorities never override hard constraints such as LOA or
   posting eligibility. Planned exposure is not completed historical credit.
 
 ## NNI special case

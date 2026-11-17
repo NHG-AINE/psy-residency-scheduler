@@ -131,7 +131,7 @@ class R3Tests(unittest.TestCase):
                 month["value"] = "NUH Geriatric Psychiatry"
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "optimal", result["blockers"])
-        self.assertEqual(result["soft_priority"], ["incoming_route_distribution", "monthly_medicine_neurology_ratio",
+        self.assertEqual(result["soft_priority"], ["capacity_overflow", "incoming_route_distribution", "monthly_medicine_neurology_ratio",
             "posting_balance", "inpatient_allocation", "r3_missing_clusters", "inpatient_destination", "missing_clusters", "singleton_months"])
         nuh = [p for p in result["residents"] if p["months"][0]["label"] == "NUH Continuity Clinic"]
         self.assertEqual(len(nuh), 2)  # Weighted target: four IMH and two NUH.

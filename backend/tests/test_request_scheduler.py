@@ -52,16 +52,20 @@ class RequestSchedulerTests(unittest.TestCase):
                 outcome = result['residents'][0]['requests'][0]
                 self.assertEqual(outcome['status'], expected)
                 if scenario in ('capacity', 'loa', 'mixed'):
-                    self.assertEqual(outcome['reason_code'], {'capacity': 'zero_capacity', 'loa': 'loa_start', 'mixed': 'training_progression'}[scenario])
+                    self.assertEqual(outcome['reason_code'], {'capacity': 'not_selected', 'loa': 'loa_start', 'mixed': 'training_progression'}[scenario])
                 elif scenario == 'met':
                     self.assertIsNone(outcome['reason'])
                 else:
                     self.assertEqual(outcome['reason'], 'No unique eligible catalogue posting')
+                if scenario == 'capacity':
+                    capacity_stage = next(s for s in result['optimisation_stages'] if s['priority'] == 'capacity_overflow')
+                    self.assertEqual((capacity_stage['status'], capacity_stage['score']), ('optimal', 0))
+                    self.assertEqual(result['soft_results']['capacity_overflow'], 0)
                 priorities = result['soft_priority']
                 if scenario == 'pending':
                     self.assertNotIn('resident_requests', priorities)
                 else:
-                    self.assertEqual(priorities.index('resident_requests'), 2)
+                    self.assertEqual(priorities.index('resident_requests'), 3)
                     stage = next(stage for stage in result['optimisation_stages'] if stage['priority'] == 'resident_requests')
                     self.assertEqual(stage['score'], 0 if scenario == 'met' else 1)
 
@@ -170,7 +174,7 @@ class RequestSchedulerTests(unittest.TestCase):
         book["postings"]["electives"][-1]["max"] = "0"
         result = draft_schedule(book, STORE, max_seconds=10)
         self.assertEqual(result["residents"][0]["requests"][3]["status"], "not_met")
-        self.assertEqual(result["residents"][0]["requests"][3]["reason_code"], "zero_capacity")
+        self.assertEqual(result["residents"][0]["requests"][3]["reason_code"], "not_selected")
 
     def test_r5_blank_request_is_one_score_when_both_three_month_blocks_match(self):
         from rules.r5_rules import elective_routes, add_routes

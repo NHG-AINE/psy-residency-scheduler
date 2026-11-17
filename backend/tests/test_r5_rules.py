@@ -91,7 +91,11 @@ class R5Tests(unittest.TestCase):
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         self.assertEqual([m["label"] for m in result["residents"][0]["months"][:2]], ["NUH Geriatric Psychiatry"] * 2)
         next(o for o in book["postings"]["core"] if o["residency_year"] == "R5" and o["posting"] == "NUH Geriatric Psychiatry")["max"] = "0"
-        self.assertEqual(draft_schedule(book, STORE)["status"], "infeasible")
+        overflow = draft_schedule(book, STORE)
+        self.assertEqual(overflow["status"], "optimal")
+        self.assertEqual(overflow["soft_results"]["capacity_overflow"], 2)
+        self.assertEqual([m["label"] for m in overflow["residents"][0]["months"][:2]], ["NUH Geriatric Psychiatry"] * 2)
+        self.assertEqual(len(overflow["capacity_overflows"]), 2)
 
     def test_mixed_r4_r5_and_loa_carryforward(self):
         book = r5_book()

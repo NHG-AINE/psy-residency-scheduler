@@ -25,6 +25,7 @@ PREFERRED_INPATIENT_CLUSTERS = {
     "NUH": ("NHG", "SHS"),
 }
 SOFT_PRIORITIES = (
+    "capacity_overflow",
     "incoming_route_distribution", "monthly_medicine_neurology_ratio",
     "inpatient_allocation", "inpatient_destination", "missing_clusters", "singleton_months",
 )
