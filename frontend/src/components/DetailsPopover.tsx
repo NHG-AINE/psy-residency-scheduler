@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { scrollToPosition } from '../lib/scroll'
 
+const REVEAL_PAUSE_MS = 350
+
 export default function DetailsPopover({ name, hint, className, children, details, openRequest = 0 }: {
   name: string; hint: string; className: string; children: ReactNode; details: ReactNode; openRequest?: number
 }) {
@@ -43,11 +45,32 @@ export default function DetailsPopover({ name, hint, className, children, detail
     if (!rect) return
     panel.current?.hidePopover()
     let frame = 0
-    const show = () => { frame = requestAnimationFrame(() => { position(); panel.current?.showPopover() }) }
-    // Keep the institution cell in view before opening its anchored popup.
+    let timer = 0
+    let cancelScroll: (() => void) | undefined
+    const interruptions = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'resize']
+    const cancel = () => {
+      cancelScroll?.()
+      clearTimeout(timer)
+      cancelAnimationFrame(frame)
+      interruptions.forEach((event) => window.removeEventListener(event, cancel))
+    }
+    const show = () => {
+      const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : REVEAL_PAUSE_MS
+      timer = window.setTimeout(() => {
+        frame = requestAnimationFrame(() => {
+          position()
+          panel.current?.showPopover()
+          cancel()
+        })
+      }, delay)
+    }
+    // Reveal the institution first, then let its cell settle before
+    // opening the popup. A new interaction cancels the pending reveal.
+    interruptions.forEach((event) => window.addEventListener(event, cancel, { passive: true }))
     const offset = rect.top < 24 ? rect.top - 24 : rect.bottom > window.innerHeight - 24 ? rect.bottom - window.innerHeight + 24 : 0
-    const cancelScroll = offset ? scrollToPosition(window.scrollY + offset, show) : (show(), undefined)
-    return () => { cancelScroll?.(); cancelAnimationFrame(frame) }
+    if (offset) cancelScroll = scrollToPosition(window.scrollY + offset, show)
+    else show()
+    return cancel
   }, [openRequest])
   return <>
     <button ref={trigger} type="button" className={className} popoverTarget={id}
