@@ -11,6 +11,61 @@ from tests.test_r1_solver import STORE
 
 
 class RequestSchedulerTests(unittest.TestCase):
+    def test_early_mixed_year_fallback_reports_unbuilt_preferences_and_extends_to_full_model(self):
+        from unittest.mock import patch
+        book = r5_book()
+        for month in book["annual_sheets"][-1]["residents"][0]["postings"][-2:]:
+            month.update(status="loa", value="LOA")
+        person = book["residents"][0]
+        person["residency_year"] = "R4,R5"
+        person["postings"][0].update(status="loa", value="LOA")
+        next(o for o in book["postings"]["core"] if o["residency_year"] == "R4" and o["posting"] == "IMH Forensic Psychiatry")["max"] = 0
+        request = {"posting_request": "NUH Geriatric Psychiatry", "period": None,
+                   "matched_resident_source": person["source"], "source": {"sheet": "Request", "row": 2}}
+        book["requests"] = [request, dict(request, source={"sheet": "Request", "row": 3})]
+        before = deepcopy(book)
+        real_solve = cp_model.CpSolver.solve
+        full_scores = {}
+        def priorities(model, objectives, variables, max_seconds, cancel=None, **kwargs):
+            self.assertTrue(all(v.name.startswith(("resident_", "r1.", "r2.", "r3.", "r4.", "r5.", "r5_route_"))
+                                for v in model.proto.variables))
+            self.assertFalse(any(c.has_lin_max() for c in model.proto.constraints))
+            calls = []
+            def solve(solver, current, callback):
+                calls.append(1)
+                return real_solve(solver, current, callback) if len(calls) == 1 else cp_model.UNKNOWN
+            with patch("scheduler.cp_model.CpSolver.solve", new=solve):
+                result = _solve_priorities(model, objectives, variables, max_seconds, cancel, **kwargs)
+            fallback = result[0]
+            self.assertIsNotNone(fallback)
+            # Every hard-only fallback must extend to the original preference
+            # equations; new auxiliaries must not alter its assignment choices.
+            expressions = [(name, objective() if callable(objective) else objective) for name, objective in objectives]
+            fixed = model.clone()
+            for variable in variables:
+                fixed.add(variable == fallback.value(variable))
+            complete = cp_model.CpSolver()
+            self.assertIn(complete.solve(fixed), (cp_model.OPTIMAL, cp_model.FEASIBLE))
+            full_scores.update((name, complete.value(expression)) for name, expression in expressions)
+            self.assertEqual(kwargs["score_values"](fallback), tuple(full_scores[name] for name, _ in objectives))
+            return result
+        with patch("scheduler._solve_priorities", side_effect=priorities):
+            result = draft_schedule(book, STORE, max_seconds=10)
+        self.assertEqual(result["status"], "feasible")
+        self.assertEqual([s["priority"] for s in result["optimisation_stages"]], ["initial_feasibility", "capacity_overflow"])
+        planned = result["residents"][0]
+        self.assertEqual(planned["months"][0]["status"], "loa")
+        self.assertEqual([m["label"] for m in planned["months"][1:3]], ["IMH Forensic Psychiatry"] * 2)
+        self.assertTrue(all(m["target"]["residency_year"] == "R5" for m in planned["months"][3:]))
+        self.assertEqual(sum(c["months"] for c in planned["carryforward"]), 3)
+        matches = any(m["label"] == "NUH Geriatric Psychiatry" for m in planned["months"])
+        self.assertEqual([row["status"] for row in planned["requests"]], ["met" if matches else "not_met"] * 2)
+        self.assertTrue(all("_flag" not in row for row in planned["requests"]))
+        for field, priority in (("capacity_overflow", "capacity_overflow"), ("posting_balance", "posting_balance"),
+                                ("ratio_deviation", "monthly_medicine_neurology_ratio"), ("singleton_months", "singleton_months")):
+            self.assertEqual(result["soft_results"][field], full_scores[priority])
+        self.assertEqual(book, before)
+
     def test_equal_resident_weight_and_capacity(self):
         model = cp_model.CpModel()
         variables = [model.new_bool_var(f'p{i}') for i in range(3)]

@@ -423,6 +423,11 @@ class R1SolverTests(unittest.TestCase):
                 def hint(variable, value):
                     now[0] += .25
                     add_hint(variable, value)
+                def build():
+                    now[0] += .5
+                    auxiliary = model.new_int_var(0, 1, "deferred_score")
+                    model.add(auxiliary == choice)
+                    return auxiliary
                 def solve(solver, current, callback):
                     calls.append((solver.parameters.max_time_in_seconds,
                                   solver.parameters.stop_after_first_solution))
@@ -435,15 +440,16 @@ class R1SolverTests(unittest.TestCase):
                 with patch("scheduler.cp_model.CpSolver.solve", new=solve), patch(
                         "scheduler.monotonic", side_effect=lambda: now[0]), patch.object(model, "add_hint", side_effect=hint):
                     solver, status, stages, elapsed = _solve_priorities(
-                        model, [("first", choice)], [choice, choice], budget, initial_feasibility=True)
+                        model, [("first", build)], [choice, choice], budget, initial_feasibility=True,
+                        score_values=lambda solution: (solution.value(choice),))
                 self.assertIsNotNone(solver)
                 self.assertEqual(status, "feasible")
                 self.assertEqual(len(calls), expected_calls)
                 self.assertTrue(calls[0][1])
                 self.assertEqual(stages[0]["status"], "feasible")
-                self.assertEqual(len(model.proto.constraints), 0)  # No fallback-score or assignment locks.
+                self.assertEqual(len(model.proto.constraints), 1 if expected_calls == 2 else 0)  # Only the reached score definition; no fallback locks.
                 if expected_calls == 2:
-                    self.assertEqual(calls[1], (2.75, False))
+                    self.assertEqual(calls[1], (2.25, False))
                     self.assertEqual(elapsed, budget)
                     self.assertEqual(stages[1]["status"], "unknown")
 
@@ -458,6 +464,10 @@ class R1SolverTests(unittest.TestCase):
                 model = cp_model.CpModel()
                 x, y = model.new_bool_var("x"), model.new_bool_var("y")
                 calls = []
+                def build():
+                    auxiliary = model.new_int_var(0, 1, "deferred_score")
+                    model.add(auxiliary == x)
+                    return auxiliary
                 def solve(solver, current, callback):
                     calls.append(1)
                     if len(calls) == 3:
@@ -470,13 +480,16 @@ class R1SolverTests(unittest.TestCase):
                     return actual if len(calls) == 1 else normal_status
                 with patch("scheduler.cp_model.CpSolver.solve", new=solve):
                     solver, status, stages, _ = _solve_priorities(
-                        model, [("first", x), ("second", y)], [x, y], 2, initial_feasibility=True)
+                        model, [("first", build), ("second", y)], [x, y], 2, initial_feasibility=True,
+                        score_values=lambda solution: (solution.value(x), solution.value(y)))
                 self.assertEqual(tuple(solver.value(v) for v in (x, y)), expected)
                 self.assertEqual(status, "feasible")
                 proven = normal_status == cp_model.OPTIMAL
                 self.assertEqual(len(calls), 3 if proven else 2)
-                self.assertEqual(len(model.proto.constraints), 1 if proven else 0)
+                self.assertEqual(len(model.proto.constraints), 2 if proven else 1)
                 self.assertEqual(stages[1].get("retained_previous_solution", False), candidate > fallback)
+                if candidate > fallback:
+                    self.assertEqual(stages[1]["retained_score"], fallback[0])
                 if proven:
                     self.assertEqual(stages[1]["score"], solver.value(x))  # Retained fallback satisfies the proof lock.
                     self.assertEqual(list(model.proto.solution_hint.values), list(expected))

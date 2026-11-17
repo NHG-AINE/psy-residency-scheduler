@@ -115,7 +115,7 @@ def prepare_candidates(selected, options, planning_start, blockers):
     return by_key, candidates, active_intake
 
 
-def add_preferences(model, candidates, variables, active_intake, planning_months, group_sizes=None):
+def add_preferences(model, candidates, variables, active_intake, planning_months, group_sizes=None, priority=None):
     """R1-only route, monthly ratio and route-to-inpatient preferences."""
     group_sizes = group_sizes if group_sizes is not None else [1] * len(candidates)
     resident_count = sum(group_sizes)
@@ -138,15 +138,25 @@ def add_preferences(model, candidates, variables, active_intake, planning_months
                     ratio_counts[(month, choice["route"], kind)].append(variable)
     targets = _targets(sum(size for size, active in zip(group_sizes, active_intake) if active))
     distribution_deviations, ratio_deviations = [], []
-    for route, target in targets.items():
-        deviation = model.new_int_var(0, resident_count, f"distribution_{route}")
-        model.add_abs_equality(deviation, sum(route_counts[route]) - target)
-        distribution_deviations.append(deviation)
-    for month in range(len(planning_months)):
-        for route in PAIRED_ROUTES:
-            deviation = model.new_int_var(0, MEDICINE_PER_NEUROLOGY * resident_count, f"ratio_{month}_{route}")
-            model.add_abs_equality(deviation, sum(ratio_counts[(month, route, "medicine")]) - MEDICINE_PER_NEUROLOGY * sum(ratio_counts[(month, route, "neuro")]))
-            ratio_deviations.append(deviation)
+    if priority in (None, "incoming_route_distribution"):
+        for route, target in targets.items():
+            difference = sum(route_counts[route]) - target
+            if model is None:
+                distribution_deviations.append(abs(difference))
+            else:
+                deviation = model.new_int_var(0, resident_count, f"distribution_{route}")
+                model.add_abs_equality(deviation, difference)
+                distribution_deviations.append(deviation)
+    if priority in (None, "monthly_medicine_neurology_ratio"):
+        for month in range(len(planning_months)):
+            for route in PAIRED_ROUTES:
+                difference = sum(ratio_counts[(month, route, "medicine")]) - MEDICINE_PER_NEUROLOGY * sum(ratio_counts[(month, route, "neuro")])
+                if model is None:
+                    ratio_deviations.append(abs(difference))
+                else:
+                    deviation = model.new_int_var(0, MEDICINE_PER_NEUROLOGY * resident_count, f"ratio_{month}_{route}")
+                    model.add_abs_equality(deviation, difference)
+                    ratio_deviations.append(deviation)
     return {"targets": targets, "route_counts": route_counts, "ratio_counts": ratio_counts,
             "distribution": sum(distribution_deviations), "ratio": sum(ratio_deviations),
             "destination": sum(destination_penalties)}
