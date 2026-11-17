@@ -327,6 +327,36 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
     return best, final_status, stages, monotonic() - started
 
 
+def _capacity_overflow_lower_bound(candidates, placements, mandatory_blocks, options, fixed_occupancy, month_count):
+    """Relaxation over one full-horizon window per disjoint requirement.
+
+    Minima include future-only choices (zero months), LOA and partial blocks.
+    All sites supply capacity even when not eligible for a particular resident.
+    Unlimited sites and R5 alternative routes are deliberately omitted. No
+    overlapping windows or optional choices are summed as mandatory demand.
+    """
+    demand = defaultdict(int)
+    for choices in candidates:
+        requirements = {o["requirement_id"] for c in choices for o in c["schedule"] if o}
+        for requirement in requirements:
+            demand[requirement] += min(sum(o is not None and o["requirement_id"] == requirement
+                                           for o in c["schedule"]) for c in choices)
+    for person_placements, blocks in zip(placements, mandatory_blocks):
+        for requirement, _, _ in blocks:
+            identity = requirement.get("block_id", requirement["requirement_id"])
+            choices = [p for p in person_placements
+                       if p.get("block_id", p["option"]["requirement_id"]) == identity]
+            demand[requirement["requirement_id"]] += min((len(p["months"]) for p in choices), default=0)
+    for (_, requirement, _, _), residents in fixed_occupancy.items():
+        demand[requirement] += len(residents)
+    bound = 0
+    for requirement, months in demand.items():
+        supply = [o["capacity"] for o in options if o["requirement_id"] == requirement]
+        if supply and all(capacity is not None for capacity in supply):
+            bound += max(0, months - month_count * sum(supply))
+    return bound
+
+
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None):
     """Schedule remaining R1 through R5 work in progression order.
 
@@ -602,6 +632,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             overflow = model.new_int_var(0, len(values) + fixed, f"overflow_{key}")
             model.add_max_equality(overflow, [0, sum(values) + fixed - capacity])
             overflows.append(overflow)
+    capacity_bound = _capacity_overflow_lower_bound(
+        candidates, placements, [a + b + c for a, b, c in zip(blocks, r3_blocks, r4_blocks)],
+        prepared["catalogue_options"], fixed_occupancy, len(prepared["planning_months"]))
+    model.add(sum(overflows) >= capacity_bound)
+    result["capacity_overflow_lower_bound"] = capacity_bound
     preferences = r1_rules.add_preferences(model, candidates, variables, active_intake, prepared["planning_months"])
     singletons = {}
     for key, values in occupancy.items():
