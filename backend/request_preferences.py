@@ -162,20 +162,25 @@ def placement_fulfils_request(placement, request):
     ) in request['option_keys'] and placement['months'][0] in request['starts']
 
 
-def add_request_objective(model, outcomes, placements):
+def add_request_objective(model, outcomes, placements, value=lambda variable: variable):
     groups = []
     for i, rows in enumerate(outcomes):
         evaluable = [row for row in rows if row['status'] == 'evaluable' and 'duplicate_of' not in row]
         if not evaluable:
             continue
+        flags = []
         for n, row in enumerate(evaluable):
-            candidates = [p['variable'] for p in placements[i] if placement_fulfils_request(p, row)]
-            flag = model.new_bool_var(f'request_{i}_{n}')
-            model.add_max_equality(flag, candidates or [0])
-            row['_flag'] = flag
-        groups.append(evaluable)
+            candidates = [value(p['variable']) for p in placements[i] if placement_fulfils_request(p, row)]
+            if model is None:
+                flag = max(candidates, default=0)
+            else:
+                flag = model.new_bool_var(f'request_{i}_{n}')
+                model.add_max_equality(flag, candidates or [0])
+                row['_flag'] = flag
+            flags.append(flag)
+        groups.append(flags)
     scale = lcm(*(len(g) for g in groups)) if groups else 1
-    return sum((scale // len(g)) * (len(g) - sum(row['_flag'] for row in g)) for g in groups)
+    return sum((scale // len(g)) * (len(g) - sum(g)) for g in groups)
 
 
 def unmet_request_reason(person, request, placements, options, stages):

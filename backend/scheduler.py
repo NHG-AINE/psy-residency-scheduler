@@ -45,6 +45,8 @@ def _allocation_targets(size, sites):
 
 def _institution_balance(model, counts, maximum, name):
     """Prefer even site counts without choosing which site gets the remainder."""
+    if model is None:
+        return [abs(left - right) for i, left in enumerate(counts) for right in counts[i + 1:]]
     deviations = []
     for left in range(len(counts)):
         for right in range(left + 1, len(counts)):
@@ -57,6 +59,9 @@ def _institution_balance(model, counts, maximum, name):
 def _allocation_penalties(model, counts, total, maximum, name):
     if "IMH" not in counts:
         return _institution_balance(model, list(counts.values()), maximum, name)
+    if model is None:
+        targets = _allocation_targets(total, list(counts))
+        return [abs(counts[site] - target) for site, target in targets.items()]
     baseline = model.new_int_var(0, maximum, f"baseline_{name}")
     model.add_division_equality(baseline, total, len(counts) - 1 + IMH_ALLOCATION_SHARES)
     targets = {site: total - (len(counts) - 1) * baseline if site == "IMH" else baseline for site in counts}
@@ -70,6 +75,8 @@ def _allocation_penalties(model, counts, total, maximum, name):
 
 def _posting_balance(model, counts, total, month):
     """Pairwise imbalance with a valid lower bound, not an equal-split quota."""
+    if model is None:
+        return [abs(left - right) for i, left in enumerate(counts) for right in counts[i + 1:]]
     model.add(sum(counts) == total)
     deviations = []
     for i, left in enumerate(counts):
@@ -87,6 +94,9 @@ def _posting_balance(model, counts, total, month):
 
 
 def _weighted_posting_balance(model, counts, weights, maximum, name):
+    if model is None:
+        return [abs(counts[a] * weights[b] - counts[b] * weights[a])
+                for i, a in enumerate(weights) for b in list(weights)[i + 1:]]
     deviations = []
     for left, a in enumerate(weights):
         for b in list(weights)[left + 1:]:
@@ -197,7 +207,7 @@ def _solve_model(solver, model, callback, cancel):
     return status
 
 
-def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None, initial_feasibility=False):
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None, initial_feasibility=False, score_values=None):
     """Find a fallback, then lock only proven preference scores within one budget."""
     started = monotonic()
     deadline = started + max_seconds
@@ -223,7 +233,7 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
                        "status": "feasible" if valid else solver.status_name(feasibility_status).lower()})
         if valid:
             best = solver
-            best_scores = tuple(solver.value(objective) for _, objective in objectives)
+            best_scores = score_values(solver) if score_values else tuple(solver.value(objective) for _, objective in objectives)
             model.clear_hints()
             for variable in variables:
                 model.add_hint(variable, solver.value(variable))
@@ -234,13 +244,22 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
             raise DraftCancelled()
         if not valid:
             return None, solver.status_name(feasibility_status).lower(), stages, monotonic() - started
-    for name, objective in objectives:
+    for objective_index, (name, objective) in enumerate(objectives):
         if cancel and cancel.is_set():
             raise DraftCancelled()
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
         stage_started = monotonic()
+        if callable(objective):
+            objective = objective()
+            objectives[objective_index] = (name, objective)
+            if cancel and cancel.is_set():
+                raise DraftCancelled()
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                stages.append({"priority": name, "status": "unknown", "wall_time_seconds": monotonic() - stage_started})
+                break
         relaxation = None
         if (name == "monthly_medicine_neurology_ratio" and r1_ratio_data
                 and stages and stages[-1]["priority"] == "incoming_route_distribution"
@@ -304,12 +323,12 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
             stages[-1]["posting_relaxation" if name == "posting_balance" else "ratio_relaxation"] = relaxation
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
             break
-        candidate_scores = tuple(solver.value(item) for _, item in objectives)
+        candidate_scores = score_values(solver) if score_values else tuple(solver.value(item) for _, item in objectives)
         if best is None or candidate_scores <= best_scores:
             best, best_scores = solver, candidate_scores
         else:
             stages[-1]["retained_previous_solution"] = True
-            stages[-1]["retained_score"] = best.value(objective)
+            stages[-1]["retained_score"] = best_scores[objective_index]
         score = solver.value(objective)
         stages[-1]["score"] = score
         stages[-1]["best_objective_bound"] = solver.best_objective_bound
@@ -601,7 +620,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             key = (month, option["requirement_id"], option["institution"], option["label"])
             fixed_occupancy[key].append({field: deepcopy(person.get(field)) for field in ("name", "mcr", "source")})
             by_key[key[1:]] = option
-    cluster_penalties, r3_cluster_penalties = [], []
+    cluster_visits, r3_cluster_visits = [], []
     for i, person in enumerate(selected):
         reaches_r3 = any(p["months"] and p["option"]["residency_year"] == "R3" for p in placements[i])
         for cluster, sites in CLUSTERS.items():
@@ -617,131 +636,173 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 future += [p["variable"] for p in placements[i]
                            if not p["months"] and p["option"]["residency_year"] != "R5" and p["option"]["institution"] in sites]
                 model.add(sum(visits + future) >= 1)
-            missing = model.new_bool_var(f"missing_{i}_{cluster}")
-            model.add(sum(visits) == 0).only_enforce_if(missing)
-            model.add(sum(visits) >= 1).only_enforce_if(missing.Not())
             if reaches_r3:
-                r3_cluster_penalties.append(missing)
+                r3_cluster_visits.append(visits)
             elif not ({"r4", "r5"} & set(person["recorded_years"])):
-                cluster_penalties.append(missing)
-    overflows = []
-    for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
-        capacity = by_key[key[1:]]["capacity"]
-        if capacity is not None:
-            values, fixed = occupancy[key], len(fixed_occupancy[key])
-            overflow = model.new_int_var(0, len(values) + fixed, f"overflow_{key}")
-            model.add_max_equality(overflow, [0, sum(values) + fixed - capacity])
-            overflows.append(overflow)
-    capacity_bound = _capacity_overflow_lower_bound(
-        candidates, placements, [a + b + c for a, b, c in zip(blocks, r3_blocks, r4_blocks)],
-        prepared["catalogue_options"], fixed_occupancy, len(prepared["planning_months"]))
-    model.add(sum(overflows) >= capacity_bound)
-    result["capacity_overflow_lower_bound"] = capacity_bound
-    preferences = r1_rules.add_preferences(model, candidates, variables, active_intake, prepared["planning_months"])
-    singletons = {}
-    for key, values in occupancy.items():
-        flag = model.new_bool_var(f"singleton_{key}")
-        model.add(sum(values) == 1).only_enforce_if(flag)
-        model.add(sum(values) != 1).only_enforce_if(flag.Not())
-        singletons[key] = flag
+                cluster_visits.append(visits)
     inpatient_size = sum(any(any(o and o["requirement_id"] == inpatient_id for o in c["schedule"])
                              for c in choices) for choices in candidates)
-    eligible_sites = sorted({o["institution"] for o in options
-                             if o["requirement_id"] == inpatient_id})
+    eligible_sites = sorted({o["institution"] for o in options if o["requirement_id"] == inpatient_id})
     inpatient_targets = _allocation_targets(inpatient_size, eligible_sites)
-    inpatient_deviations = []
-    for site, target in inpatient_targets.items():
-        deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
-        model.add_abs_equality(deviation, sum(inpatient_counts[site]) - target)
-        inpatient_deviations.append(deviation)
-    if "IMH" not in eligible_sites:
-        inpatient_deviations.extend(_institution_balance(
-            model, [sum(inpatient_counts[site]) for site in eligible_sites], len(selected), "r1"))
-    balance, allocation, r3_allocation, r4_allocation, r5_allocation = [], [], [], [], []
     r2_ids = sorted({r["requirement_id"] for bs in blocks for r, _, _ in bs})
     r4_ids = sorted({r["requirement_id"] for bs in r4_blocks for r, _, _ in bs})
-    for month in range(len(prepared["planning_months"])):
-        for year, ids, totals in (("r2", r2_ids, r2_monthly_totals), ("r4", r4_ids, r4_monthly_totals)):
-            counts = [sum(sum(v) for (m, r, site, label), v in occupancy.items() if m == month and r == key) for key in ids]
-            balance.extend(_posting_balance(model, counts, totals[month], f"{year}_{month}"))
-    # R5 has 3/3/6-month requirements; normalise current remaining demand.
     divisor = 0
     for demand in r5_demand.values():
         divisor = gcd(divisor, demand)
     weights = {key: demand // divisor for key, demand in r5_demand.items()} if divisor else {}
-    # Six combined months replace three months of each core. Use doubled
-    # counts to represent that split without fractions, scaling R2/R4 equally.
     balance_scale = 2 if combined_r5 else 1
-    balance = [term * balance_scale for term in balance]
-    for month in range(len(prepared["planning_months"])):
-        counts = {key: sum(sum(v) * (1 if r == r5_rules.COMBINED["id"] else balance_scale)
-                           for (m, r, site, label), v in occupancy.items()
-                           if m == month and (r == key or r == r5_rules.COMBINED["id"] and key in r5_rules.COMBINED["credits"]))
-                  for key in weights}
-        balance.extend(_weighted_posting_balance(model, counts, weights, len(selected) * balance_scale, f"r5_balance_{month}"))
-    # Allocation is per exact posting, not a shared bucket for all electives.
-    allocation_groups = defaultdict(list)
-    for ps in placements:
-        for p in ps:
-            if p["months"]:
-                o = p["option"]
-                allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
-    for group, ps in allocation_groups.items():
-        eligible = sorted({o["institution"] for o in r2_options + r3_options + r4_options + r5_options if (o["requirement_id"], normalized_label(o["posting"])) == group})
-        if group[0].startswith(("r4.", "r5.")):
-            eligible = sorted({p["option"]["institution"] for p in ps})
-        if len(eligible) < 2:
-            continue
-        if group[0] == "r5.elective":
-            # One resident's adjacent 3+3 at the same service/site counts like a
-            # single six-month visit. Different sites each receive one visit.
-            visits = defaultdict(list)
-            for i, person_placements in enumerate(placements):
-                for site in eligible:
-                    choices = [p["variable"] for p in person_placements if p["months"]
-                               and (p["option"]["requirement_id"], normalized_label(p["option"]["posting"])) == group
-                               and p["option"]["institution"] == site]
-                    if choices:
-                        visit = model.new_bool_var(f"elective_visit_{i}_{group}_{site}")
-                        model.add_max_equality(visit, choices)
-                        visits[site].append(visit)
-            counts = {site: sum(visits[site]) for site in eligible}
-            allocation_total = sum(counts.values())
-        else:
-            counts = {site: sum(p["variable"] for p in ps if p["option"]["institution"] == site) for site in eligible}
-            allocation_total = sum(p["variable"] for p in ps)
-        penalties = r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
-        penalties.extend(_allocation_penalties(model, counts, allocation_total, len(selected) * (2 if group[0] == "r5.elective" else 1), group))
-    request_objective = add_request_objective(model, request_outcomes, placements)
-    objectives = [
-        ("capacity_overflow", sum(overflows)),
-        ("incoming_route_distribution", preferences["distribution"]),
-        ("monthly_medicine_neurology_ratio", preferences["ratio"]),
-        ("posting_balance", sum(balance)),
-        ("inpatient_allocation", sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation) + sum(r4_allocation) + sum(r5_allocation)),
-        ("inpatient_destination", preferences["destination"]),
-        ("missing_clusters", sum(cluster_penalties)),
-        ("singleton_months", sum(singletons.values())),
-    ]
+
+    def build_preferences(model, value, priority=None):
+        # Numeric mode uses only original choices, so an early fallback never
+        # reads auxiliary variables introduced by a later preference stage.
+        objectives, preferences, singletons = {}, {}, {}
+        overflows, balance = [], []
+        allocation, r3_allocation, r4_allocation, r5_allocation = [], [], [], []
+        inpatient_deviations, cluster_penalties, r3_cluster_penalties = [], [], []
+        capacity_bound = None
+        if priority in (None, "capacity_overflow"):
+            for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
+                capacity = by_key[key[1:]]["capacity"]
+                if capacity is not None:
+                    values, fixed = occupancy.get(key, []), len(fixed_occupancy.get(key, []))
+                    difference = sum(value(v) for v in values) + fixed - capacity
+                    if model is None:
+                        overflow = max(0, difference)
+                    else:
+                        overflow = model.new_int_var(0, len(values) + fixed, f"overflow_{key}")
+                        model.add_max_equality(overflow, [0, difference])
+                    overflows.append(overflow)
+            capacity_bound = _capacity_overflow_lower_bound(
+                candidates, placements, [a + b + c for a, b, c in zip(blocks, r3_blocks, r4_blocks)],
+                prepared["catalogue_options"], fixed_occupancy, len(prepared["planning_months"]))
+            if model is not None:
+                model.add(sum(overflows) >= capacity_bound)
+            objectives["capacity_overflow"] = sum(overflows)
+        if priority in (None, "incoming_route_distribution", "monthly_medicine_neurology_ratio", "inpatient_destination"):
+            preferences = r1_rules.add_preferences(model, candidates,
+                [[value(v) for v in choices] for choices in variables], active_intake, prepared["planning_months"], priority=priority)
+            objectives.update(incoming_route_distribution=preferences["distribution"],
+                              monthly_medicine_neurology_ratio=preferences["ratio"], inpatient_destination=preferences["destination"])
+        if priority in (None, "resident_requests"):
+            objectives["resident_requests"] = add_request_objective(model, request_outcomes, placements, value)
+        if priority in (None, "posting_balance"):
+            for month in range(len(prepared["planning_months"])):
+                for year, ids, totals in (("r2", r2_ids, r2_monthly_totals), ("r4", r4_ids, r4_monthly_totals)):
+                    counts = [sum(value(v) for (m, r, site, label), values in occupancy.items()
+                                  if m == month and r == key for v in values) for key in ids]
+                    balance.extend(_posting_balance(model, counts, totals[month], f"{year}_{month}"))
+            balance = [term * balance_scale for term in balance]
+            for month in range(len(prepared["planning_months"])):
+                counts = {key: sum(value(v) * (1 if r == r5_rules.COMBINED["id"] else balance_scale)
+                                   for (m, r, site, label), values in occupancy.items()
+                                   if m == month and (r == key or r == r5_rules.COMBINED["id"] and key in r5_rules.COMBINED["credits"])
+                                   for v in values) for key in weights}
+                balance.extend(_weighted_posting_balance(model, counts, weights, len(selected) * balance_scale, f"r5_balance_{month}"))
+            objectives["posting_balance"] = sum(balance)
+        if priority in (None, "inpatient_allocation"):
+            for site, target in inpatient_targets.items():
+                difference = sum(value(v) for v in inpatient_counts[site]) - target
+                if model is None:
+                    deviation = abs(difference)
+                else:
+                    deviation = model.new_int_var(0, len(selected), f"inpatient_deviation_{site}")
+                    model.add_abs_equality(deviation, difference)
+                inpatient_deviations.append(deviation)
+            if "IMH" not in eligible_sites:
+                inpatient_deviations.extend(_institution_balance(
+                    model, [sum(value(v) for v in inpatient_counts[site]) for site in eligible_sites], len(selected), "r1"))
+            allocation_groups = defaultdict(list)
+            for ps in placements:
+                for placement in ps:
+                    if placement["months"]:
+                        option = placement["option"]
+                        allocation_groups[(option["requirement_id"], normalized_label(option["posting"]))].append(placement)
+            for group, ps in allocation_groups.items():
+                eligible = sorted({o["institution"] for o in r2_options + r3_options + r4_options + r5_options
+                                   if (o["requirement_id"], normalized_label(o["posting"])) == group})
+                if group[0].startswith(("r4.", "r5.")):
+                    eligible = sorted({p["option"]["institution"] for p in ps})
+                if len(eligible) < 2:
+                    continue
+                if group[0] == "r5.elective":
+                    visits = defaultdict(list)
+                    for i, person_placements in enumerate(placements):
+                        for site in eligible:
+                            choices = [value(p["variable"]) for p in person_placements if p["months"]
+                                       and (p["option"]["requirement_id"], normalized_label(p["option"]["posting"])) == group
+                                       and p["option"]["institution"] == site]
+                            if choices:
+                                if model is None:
+                                    visit = max(choices)
+                                else:
+                                    visit = model.new_bool_var(f"elective_visit_{i}_{group}_{site}")
+                                    model.add_max_equality(visit, choices)
+                                visits[site].append(visit)
+                    counts = {site: sum(visits[site]) for site in eligible}
+                    allocation_total = sum(counts.values())
+                else:
+                    counts = {site: sum(value(p["variable"]) for p in ps if p["option"]["institution"] == site) for site in eligible}
+                    allocation_total = sum(value(p["variable"]) for p in ps)
+                penalties = r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
+                penalties.extend(_allocation_penalties(model, counts, allocation_total, len(selected) * (2 if group[0] == "r5.elective" else 1), group))
+            objectives["inpatient_allocation"] = sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation) + sum(r4_allocation) + sum(r5_allocation)
+        for name, visits_by_cluster, penalties in (("r3_missing_clusters", r3_cluster_visits, r3_cluster_penalties),
+                                                   ("missing_clusters", cluster_visits, cluster_penalties)):
+            if priority in (None, name):
+                for i, visits in enumerate(visits_by_cluster):
+                    count = sum(value(v) for v in visits)
+                    if model is None:
+                        missing = int(count == 0)
+                    else:
+                        missing = model.new_bool_var(f"{name}_{i}")
+                        model.add(count == 0).only_enforce_if(missing)
+                        model.add(count >= 1).only_enforce_if(missing.Not())
+                    penalties.append(missing)
+                objectives[name] = sum(penalties)
+        if priority in (None, "singleton_months"):
+            for key, values in occupancy.items():
+                count = sum(value(v) for v in values)
+                if model is None:
+                    flag = int(count == 1)
+                else:
+                    flag = model.new_bool_var(f"singleton_{key}")
+                    model.add(count == 1).only_enforce_if(flag)
+                    model.add(count != 1).only_enforce_if(flag.Not())
+                singletons[key] = flag
+            objectives["singleton_months"] = sum(singletons.values())
+        return {"objectives": objectives, "preferences": preferences, "singletons": singletons,
+                "capacity_bound": capacity_bound, "inpatient_deviations": inpatient_deviations,
+                "cluster_penalties": cluster_penalties, "r3_cluster_penalties": r3_cluster_penalties,
+                "balance": balance, "allocation": allocation, "r3_allocation": r3_allocation,
+                "r4_allocation": r4_allocation, "r5_allocation": r5_allocation}
+
+    priorities = ["capacity_overflow", "incoming_route_distribution", "monthly_medicine_neurology_ratio",
+                  "posting_balance", "inpatient_allocation", "inpatient_destination", "missing_clusters", "singleton_months"]
     if any(row['status'] == 'evaluable' and 'duplicate_of' not in row for rows in request_outcomes for row in rows):
-        objectives.insert(3, ("resident_requests", request_objective))
-    if r3_cluster_penalties:
-        destination_index = next(i for i, (name, _) in enumerate(objectives) if name == "inpatient_destination")
-        objectives.insert(destination_index, ("r3_missing_clusters", sum(r3_cluster_penalties)))
+        priorities.insert(3, "resident_requests")
+    if r3_cluster_visits:
+        priorities.insert(priorities.index("inpatient_destination"), "r3_missing_clusters")
+    objectives = [(name, lambda name=name: build_preferences(model, lambda v: v, name)["objectives"][name]) for name in priorities]
+    scored = {}
+    def score_values(solver):
+        diagnostics = build_preferences(None, solver.value)
+        scored[solver] = diagnostics
+        return tuple(diagnostics["objectives"][name] for name in priorities)
     result["soft_priority"] = [name for name, _ in objectives]
     solver, status, stages, elapsed = _solve_priorities(
         model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel,
         r1_ratio_data=(candidates, active_intake, prepared["planning_months"])
-        if any(preferences["ratio_counts"].values()) else None,
+        if any(o and o["requirement_id"] in {r1_rules.R1["General Medicine"]["id"], r1_rules.R1["Neurology"]["id"]}
+               for choices in candidates for choice in choices for o in choice["schedule"]) else None,
         posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
                               [] if combined_r5 else r5_monthly_totals, {} if combined_r5 else weights) if weights else None,
         # These projections assume one block per requirement and separate core
         # counts. Split electives and combined cores need route-aware projections; retain the safe
         # R2/R4 count bound rather than claiming an invalid lower bound.
         posting_block_data=None if combined_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
-        initial_feasibility=True)
+        initial_feasibility=True, score_values=score_values)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
-                  soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": preferences["targets"],
+                  soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": r1_rules._targets(sum(active_intake)),
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
                                 "smaller_cohort_policy": "largest_remainder_12_9_3_except_23_is_12_9_2"})
     if solver is None:
@@ -750,6 +811,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             blockers.extend({"code": "r4_cluster_review", "source": p["source"], "clusters": p["cluster_coverage"]["missing"]}
                             for p in selected if {"r4", "r5"} & set(p["recorded_years"]) and p["cluster_coverage"]["missing"])
         return result
+    diagnostics = scored[solver]
+    preferences = diagnostics["preferences"]
+    singletons = diagnostics["singletons"]
+    result["capacity_overflow_lower_bound"] = diagnostics["capacity_bound"]
     for i, person in enumerate(selected):
         choice = next(choice for j, choice in enumerate(candidates[i]) if solver.boolean_value(variables[i][j]))
         choice = deepcopy(choice)
@@ -767,7 +832,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         outcomes = request_outcomes[i]
         for outcome in outcomes:
             if outcome.get('status') == 'evaluable' and 'duplicate_of' not in outcome:
-                outcome['status'] = 'met' if solver.value(outcome.pop('_flag')) else 'not_met'
+                outcome.pop('_flag', None)
+                outcome['status'] = 'met' if any(placement_fulfils_request(p, outcome) for p in chosen) else 'not_met'
                 if outcome['status'] == 'not_met':
                     outcome['reason_code'], outcome['reason'] = unmet_request_reason(
                         person, outcome, placements[i], options, stages)
@@ -831,16 +897,16 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 "max": option["capacity"], "assigned": len(residents), "residents": residents})
     result["capacity_overflows"].sort(key=lambda item: (item["requirement_id"], item["institution"], item["month"]))
     result["soft_results"] = {
-        "capacity_overflow": solver.value(sum(overflows)),
+        "capacity_overflow": diagnostics["objectives"]["capacity_overflow"],
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
         "inpatient_counts": {site: sum(solver.value(v) for v in values) for site, values in inpatient_counts.items()},
-        "inpatient_deviation": solver.value(sum(inpatient_deviations)),
-        "missing_clusters": solver.value(sum(cluster_penalties) + sum(r3_cluster_penalties)),
-        "r3_missing_clusters": solver.value(sum(r3_cluster_penalties)),
-        "posting_balance": solver.value(sum(balance)), "r2_allocation_deviation": solver.value(sum(allocation)),
-        "r3_allocation_deviation": solver.value(sum(r3_allocation)),
-        "r4_allocation_deviation": solver.value(sum(r4_allocation)),
-        "r5_allocation_deviation": solver.value(sum(r5_allocation)),
+        "inpatient_deviation": solver.value(sum(diagnostics["inpatient_deviations"])),
+        "missing_clusters": solver.value(sum(diagnostics["cluster_penalties"]) + sum(diagnostics["r3_cluster_penalties"])),
+        "r3_missing_clusters": solver.value(sum(diagnostics["r3_cluster_penalties"])),
+        "posting_balance": solver.value(sum(diagnostics["balance"])), "r2_allocation_deviation": solver.value(sum(diagnostics["allocation"])),
+        "r3_allocation_deviation": solver.value(sum(diagnostics["r3_allocation"])),
+        "r4_allocation_deviation": solver.value(sum(diagnostics["r4_allocation"])),
+        "r5_allocation_deviation": solver.value(sum(diagnostics["r5_allocation"])),
     }
     result["singletons"] = [
         {"month": prepared["planning_months"][month]["month"],
