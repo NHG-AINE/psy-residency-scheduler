@@ -36,6 +36,48 @@ class PostingBoundTests(unittest.TestCase):
                 self.assertEqual(solver.value(objective), expected + 7)
                 self.assertEqual(len(variables), len(set(totals)) * len(weights))
 
+    def test_explicit_counts_preserve_fixed_combined_and_split_assignment_scores(self):
+        from tests.test_r5_combined import combined_book, LABEL, COMBINED
+        for variant in ("combined", "split"):
+            with self.subTest(variant=variant):
+                book = combined_book() if variant == "combined" else r5_book()
+                if variant == "combined":
+                    label, period = LABEL, "Jul - Dec 2027"
+                else:
+                    label, period = "IMH Adult Neurodevelopmental Disorders Service (ANDS) (Elective)", "Jan - Mar 2028"
+                    book["postings"]["electives"].append({"residency_year": "R5", "institution": "IMH",
+                        "elective": "Adult Neurodevelopmental Disorders Service (ANDS)",
+                        "remarks": [{"text": "(3 months- that can be paired with any other institution)"}],
+                        "source": {"sheet": "Postings", "row": 910}})
+                book["requests"] = [{"posting_request": label, "period": period,
+                    "matched_resident_source": book["residents"][0]["source"], "source": {"sheet": "Request", "row": 2}}]
+                assignments = {}
+                def capture(model, objectives, variables, *args, **kwargs):
+                    result = _solve_priorities(model, objectives, variables, *args, **kwargs)
+                    if any(name == "posting_balance" for name, _ in objectives):
+                        self.assertEqual(result[1], "optimal")
+                        assignments.update((v.name, result[0].value(v)) for v in variables)
+                    return result
+                with patch("scheduler._solve_priorities", side_effect=capture):
+                    explicit = draft_schedule(book, STORE, max_seconds=20)
+                self.assertEqual(explicit["residents"][0]["requests"][0]["status"], "met")
+                if variant == "combined":
+                    self.assertEqual(sum(m["target"]["requirement_id"] == COMBINED for m in explicit["residents"][0]["months"]), 6)
+                def fixed(model, objectives, variables, *args, **kwargs):
+                    if any(name == "posting_balance" for name, _ in objectives):
+                        for variable in variables:
+                            model.add(variable == assignments[variable.name])
+                    return _solve_priorities(model, objectives, variables, *args, **kwargs)
+                with patch("scheduler._posting_count", side_effect=lambda model, expression, maximum, name: expression), patch(
+                        "scheduler._solve_priorities", side_effect=fixed):
+                    raw = draft_schedule(book, STORE, max_seconds=20)
+                self.assertEqual(raw["status"], "optimal")
+                self.assertEqual(raw["soft_results"], explicit["soft_results"])
+                for draft in (explicit, raw):
+                    stage = next(s for s in draft["optimisation_stages"] if s["priority"] == "posting_balance")
+                    self.assertEqual(stage["score"], explicit["soft_results"]["posting_balance"])
+                self.assertEqual(raw["residents"][0]["months"], explicit["residents"][0]["months"])
+
     def test_block_bound_projects_exact_choices_and_preserves_request_flags(self):
         def options(key):
             return [{'requirement_id': key, 'institution': site, 'label': f'{site} {key}'}
@@ -122,6 +164,15 @@ class PostingBoundTests(unittest.TestCase):
                     expected += sum(abs(counts[a] * weights[b] - counts[b] * weights[a])
                                     for i, a in enumerate(weights) for b in list(weights)[i + 1:])
                 self.assertEqual(result['soft_results']['posting_balance'], expected)
+                # Replacing the explicit counts with the previous raw sums must
+                # preserve the optimum with partial history, LOA and progression.
+                with patch("scheduler._posting_count", side_effect=lambda model, expression, maximum, name: expression):
+                    raw = draft_schedule(book, STORE, max_seconds=30)
+                self.assertEqual(raw['status'], 'optimal', raw['blockers'])
+                self.assertEqual(raw['soft_results']['posting_balance'], expected)
+                for draft in (result, raw):
+                    stage = next(s for s in draft['optimisation_stages'] if s['priority'] == 'posting_balance')
+                    self.assertEqual(stage['score'], expected)
                 self.assertEqual(book, original)
 
     def test_full_restrictions_and_priority_locks_survive_bound_or_timeout(self):

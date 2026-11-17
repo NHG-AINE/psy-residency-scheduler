@@ -73,6 +73,14 @@ def _allocation_penalties(model, counts, total, maximum, name):
     return deviations
 
 
+def _posting_count(model, expression, maximum, name):
+    if model is None:
+        return expression
+    count = model.new_int_var(0, maximum, f"posting_count_{name}")
+    model.add(count == expression)
+    return count
+
+
 def _posting_balance(model, counts, total, month):
     """Pairwise imbalance with a valid lower bound, not an equal-split quota."""
     if model is None:
@@ -688,15 +696,17 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if priority in (None, "posting_balance"):
             for month in range(len(prepared["planning_months"])):
                 for year, ids, totals in (("r2", r2_ids, r2_monthly_totals), ("r4", r4_ids, r4_monthly_totals)):
-                    counts = [sum(value(v) for (m, r, site, label), values in occupancy.items()
-                                  if m == month and r == key for v in values) for key in ids]
+                    counts = [_posting_count(model, sum(value(v) for (m, r, site, label), values in occupancy.items()
+                                                        if m == month and r == key for v in values),
+                                             totals[month], f"{year}_{month}_{key}") for key in ids]
                     balance.extend(_posting_balance(model, counts, totals[month], f"{year}_{month}"))
             balance = [term * balance_scale for term in balance]
             for month in range(len(prepared["planning_months"])):
-                counts = {key: sum(value(v) * (1 if r == r5_rules.COMBINED["id"] else balance_scale)
-                                   for (m, r, site, label), values in occupancy.items()
-                                   if m == month and (r == key or r == r5_rules.COMBINED["id"] and key in r5_rules.COMBINED["credits"])
-                                   for v in values) for key in weights}
+                counts = {key: _posting_count(model, sum(value(v) * (1 if r == r5_rules.COMBINED["id"] else balance_scale)
+                                                        for (m, r, site, label), values in occupancy.items()
+                                                        if m == month and (r == key or r == r5_rules.COMBINED["id"] and key in r5_rules.COMBINED["credits"])
+                                                        for v in values),
+                                             len(selected) * balance_scale, f"r5_{month}_{key}") for key in weights}
                 balance.extend(_weighted_posting_balance(model, counts, weights, len(selected) * balance_scale, f"r5_balance_{month}"))
             objectives["posting_balance"] = sum(balance)
         if priority in (None, "inpatient_allocation"):
