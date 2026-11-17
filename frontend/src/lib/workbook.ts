@@ -69,14 +69,16 @@ export async function importWorkbook(file: File, year: number): Promise<Workbook
     const detail = (result as { detail?: unknown })?.detail
     throw new Error(typeof detail === 'string' ? detail : `Workbook import failed (HTTP ${response.status}). Choose a supported workbook and try again.`)
   }
-  const workbook = result as Workbook | null
-  if (!workbook || typeof workbook !== 'object' || !Number.isInteger(workbook.target_year)
+  if (!isWorkbook(result)) throw new Error('The backend returned an unexpected workbook response. Check the connection and try again.')
+  return result
+}
+
+export function isWorkbook(value: unknown): value is Workbook {
+  const workbook = value as Workbook | null
+  return !(!workbook || typeof workbook !== 'object' || !Number.isInteger(workbook.target_year)
     || (workbook.annual_sheets !== undefined && !Array.isArray(workbook.annual_sheets))
     || (workbook.postings?.electives !== undefined && !Array.isArray(workbook.postings.electives))
-    || ![workbook.residents, workbook.available_years, workbook.months, workbook.histories, workbook.requests, workbook.warnings, workbook.postings?.core, workbook.postings?.rows].every(Array.isArray)) {
-    throw new Error('The backend returned an unexpected workbook response. Check the connection and try again.')
-  }
-  return result as Workbook
+    || ![workbook.residents, workbook.available_years, workbook.months, workbook.histories, workbook.requests, workbook.warnings, workbook.postings?.core, workbook.postings?.rows].every(Array.isArray))
 }
 
 export function sameSource(a: Source, b: Source | null | undefined): boolean {

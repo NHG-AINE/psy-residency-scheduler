@@ -34,6 +34,14 @@ export function decisionKey(decision: ReviewDecision): string {
     : JSON.stringify(['resident', mcr(decision.context.mcr), decision.context.months.map((month) => [month.month, month.value]).sort((a, b) => a[0].localeCompare(b[0]))])
 }
 
+export function reviewSignature(store: ReviewStore): string {
+  return JSON.stringify(store.decisions.map((decision) => [decisionKey(decision),
+    decision.kind === 'resident' ? normalize(decision.context.name) : null,
+    normalize(decision.context.recorded_year), decision.target.key, decision.target.signature,
+    decision.kind === 'resident' ? decision.requirement_year : null,
+  ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+}
+
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2000
 const fields = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every((key) => allowed.includes(key))
