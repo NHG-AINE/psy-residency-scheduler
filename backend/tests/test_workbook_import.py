@@ -368,6 +368,32 @@ class WorkbookImportTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkbookError, "expanded"):
             parse_workbook(stream.getvalue())
 
+    def test_api_distinguishes_unsupported_workbooks_from_missing_selected_year(self):
+        def unsupported(w):
+            for sheet in list(w):
+                if sheet.title.startswith("Jul"):
+                    w.remove(sheet)
+        with TestClient(app) as client:
+            for data in ({}, {"target_year": "2030"}):
+                with self.subTest(data=data):
+                    response = client.post("/api/import", data=data,
+                                           files={"file": ("unsupported.xlsx", workbook_bytes(unsupported))})
+                    self.assertEqual(response.status_code, 400)
+                    detail = response.json()["detail"]
+                    self.assertIn("No supported annual worksheets", detail)
+                    self.assertIn("names start with Jul", detail)
+                    self.assertIn("twelve dated month headings from July through June", detail)
+                    self.assertIn("Name, MCR No. and Residency Year", detail)
+                    self.assertIn("Request and Postings", detail)
+                    self.assertNotIn("2030", detail)
+                    self.assertNotIn("2027", detail)
+            response = client.post("/api/import", data={"target_year": "2027"},
+                                   files={"file": ("future.xlsx", future_workbook_bytes())})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"],
+                             "No July 2027 - June 2028 worksheet found. Available years: "
+                             "July 2029 - June 2030, July 2030 - June 2031")
+
     def test_api_upload_validation(self):
         with TestClient(app) as client:
             good = client.post("/api/import", files={"file": ("example.xlsx", workbook_bytes())})

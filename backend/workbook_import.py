@@ -417,9 +417,13 @@ def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
             target_year = years[-1]["year"]
         target = next((s for s in years if s["year"] == target_year), None)
         if not years:
-            raise WorkbookError("No supported annual worksheets found")
+            raise WorkbookError(
+                "No supported annual worksheets found. Upload a programme workbook with annual worksheets "
+                "whose names start with Jul, twelve dated month headings from July through June, "
+                "and Name, MCR No. and Residency Year headers, plus Request and Postings worksheets.")
         if target is None:
-            raise WorkbookError(f"No July {target_year} - June {target_year + 1} worksheet found")
+            available = ", ".join(f"July {s['year']} - June {s['year'] + 1}" for s in years)
+            raise WorkbookError(f"No July {target_year} - June {target_year + 1} worksheet found. Available years: {available}")
         for required in ("Request", "Postings"):
             if required not in workbook.sheetnames:
                 raise WorkbookError(f"Required worksheet missing: {required}")
