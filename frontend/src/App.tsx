@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { restoreSession, saveSession } from './lib/workbook-session'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
@@ -207,6 +208,9 @@ export default function App() {
   const [workbook, setWorkbook] = useState<Workbook | null>(null)
   const [year, setYear] = useState(2027)
   const [busy, setBusy] = useState(false)
+  const [restoring, setRestoring] = useState(true)
+  const [storageError, setStorageError] = useState('')
+  const currentSession = useRef<{ file: File; workbook: Workbook } | null>(null)
   const [loadingHeight, setLoadingHeight] = useState<number>()
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
@@ -215,7 +219,31 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [historyResident, setHistoryResident] = useState('')
   const [breakdownHost, setBreakdownHost] = useState<HTMLDivElement | null>(null)
-  const draftState = useDraftSchedule(workbook, busy, year)
+  const draftMemory = useDraftSchedule(workbook, busy || restoring, year)
+  const { getSavedResult, restore: restoreDraft } = draftMemory
+  const persistCurrent = useCallback(() => {
+    const current = currentSession.current
+    const record = current ? { version: 1 as const, ...current, fileName: current.file.name,
+      lastModified: current.file.lastModified, draft: getSavedResult() } : null
+    void saveSession(record).then(() => setStorageError('')).catch(() => setStorageError('Browser save failed. The current page still works, but these changes may not survive a refresh.'))
+  }, [getSavedResult])
+  const draftState = draftMemory
+  function discardSavedDraft() { draftMemory.discard(); persistCurrent() }
+  useEffect(() => {
+    let cancelled = false
+    void restoreSession().then((saved) => {
+      if (cancelled || !saved) return
+      currentSession.current = { file: saved.file, workbook: saved.workbook }
+      setFile(saved.file); setWorkbook(saved.workbook); setYear(saved.workbook.target_year)
+      if (saved.draft) restoreDraft(saved.draft)
+    }).catch((problem: unknown) => {
+      if (!cancelled) setStorageError(problem instanceof Error ? problem.message : 'The saved workbook could not be restored.')
+    }).finally(() => { if (!cancelled) setRestoring(false) })
+    return () => { cancelled = true }
+  }, [restoreDraft])
+  useEffect(() => {
+    if (!restoring && currentSession.current) persistCurrent()
+  }, [file, workbook, draftMemory.savedResult, restoring, persistCurrent])
   const hasDraft = draftState.draft?.status === 'optimal' || draftState.draft?.status === 'feasible'
   const [requestSelection, setRequestSelection] = useState<{ draft: DraftSchedule; status: RequestStatus | null } | null>(null)
   const requestFilter = hasDraft && requestSelection?.draft === draftState.draft ? requestSelection.status : null
@@ -234,7 +262,8 @@ export default function App() {
     try {
       const result = await importWorkbook(nextFile, nextYear)
       revealAfterUpload.current = reveal
-      if (reveal) { draftState.discard(); setView('Timetable'); setQuery('') }
+      if (reveal) { draftMemory.discard(); setView('Timetable'); setQuery('') }
+      currentSession.current = { file: nextFile, workbook: result }
       setWorkbook(result); setFile(nextFile); setYear(result.target_year)
       setStatus('')
     } catch (problem: unknown) {
@@ -244,13 +273,13 @@ export default function App() {
     } finally { setBusy(false) }
   }
   function choose(files: File[]) {
-    if (busy || !files.length) return
+    if (busy || restoring || !files.length) return
     const problem = workbookError(files)
     if (problem) { setError(problem); return }
     void load(files[0], year, true)
   }
   function selectYear(nextYear: number) {
-    if (file && !busy) { setYear(nextYear); void load(file, nextYear) }
+    if (file && !busy && !restoring) { setYear(nextYear); void load(file, nextYear) }
   }
   const years = [...new Set(workbook?.available_years.map((item) => item.year) || [year])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
@@ -260,16 +289,16 @@ export default function App() {
     <main id="main" className="site-main" tabIndex={-1}>
       <div className="page-heading"><h1>Posting timetable</h1><p>NHG Psychiatry Residency Programme</p></div>
       <section className="workspace-panel" aria-labelledby="import-title">
-        <div className="panel-heading"><h2 id="import-title">Workbook import</h2><span className="badge">Current session only</span></div>
+        <div className="panel-heading"><h2 id="import-title">Workbook import</h2><span className="badge">Local browser storage</span></div>
         <div className={`workbook-chooser ${dragging ? 'is-dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false) }} onDrop={(event) => { event.preventDefault(); setDragging(false); choose(Array.from(event.dataTransfer.files)) }}>
-          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Review imported records before planning. Refreshing this page clears the import. Historical review decisions are saved separately in this browser.</p></div>
-          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={() => { draftState.discard(); setFile(null); setWorkbook(null); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
+          <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {year}–{year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Your latest successful import and completed draft are kept in this browser. Remove clears the import and draft. Historical review decisions are saved separately.</p></div>
+          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy || restoring} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy || restoring} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{restoring ? 'Restoring workbook...' : busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={() => { currentSession.current = null; discardSavedDraft(); setFile(null); setWorkbook(null); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
         </div>
-        <div className="import-feedback"><p role="status" aria-live="polite">{status}</p>{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
+        <div className="import-feedback"><p role="status" aria-live="polite">{restoring ? 'Restoring saved workbook...' : draftMemory.notice || status}</p>{storageError && <p role="status" className="error-message">{storageError}</p>}{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
-        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{view === 'Timetable' && hasDraft && draftState.draft && <RequestTotals draft={draftState.draft} selected={requestFilter} onChange={(status) => setRequestSelection({ draft: draftState.draft!, status })} />}{view === 'Timetable' ? draftState.canGenerate && <div className="draft-actions">{!hasDraft && !draftState.pending && <DraftSearchLimit value={draftState.searchSeconds} onChange={draftState.setSearchSeconds} disabled={busy} />}<DraftTimer draft={draftState.draft} startedAt={draftState.startedAt} elapsedSeconds={draftState.elapsedSeconds} /><button type="button" className={`button draft-generate${hasDraft && !draftState.busy ? ' button-secondary' : ''}`} disabled={busy || draftState.cancelling || (draftState.pending && !draftState.busy)} onClick={() => draftState.busy ? void draftState.cancelGeneration() : hasDraft ? draftState.discard() : void draftState.generate()}>{draftState.cancelling ? 'Cancelling...' : draftState.busy ? 'Cancel generation' : hasDraft ? 'Discard draft' : 'Generate draft'}</button></div> : workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
+        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{view === 'Timetable' && hasDraft && draftState.draft && <RequestTotals draft={draftState.draft} selected={requestFilter} onChange={(status) => setRequestSelection({ draft: draftState.draft!, status })} />}{view === 'Timetable' ? draftState.canGenerate && <div className="draft-actions">{!hasDraft && !draftState.pending && <DraftSearchLimit value={draftState.searchSeconds} onChange={draftState.setSearchSeconds} disabled={busy} />}<DraftTimer draft={draftState.draft} startedAt={draftState.startedAt} elapsedSeconds={draftState.elapsedSeconds} /><button type="button" className={`button draft-generate${hasDraft && !draftState.busy ? ' button-secondary' : ''}`} disabled={busy || draftState.cancelling || (draftState.pending && !draftState.busy)} onClick={() => draftState.busy ? void draftState.cancelGeneration() : hasDraft ? discardSavedDraft() : void draftState.generate()}>{draftState.cancelling ? 'Cancelling...' : draftState.busy ? 'Cancel generation' : hasDraft ? 'Discard draft' : 'Generate draft'}</button></div> : workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
         {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} requestFilter={requestFilter} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} breakdownHost={breakdownHost} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
       {workbook && view === 'Timetable' && <div ref={setBreakdownHost} />}
