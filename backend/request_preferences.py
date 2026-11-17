@@ -195,8 +195,6 @@ def unmet_request_reason(person, request, placements, options, stages):
     if partial and requested and all((o['posting'], o['institution']) != partial for o in requested):
         posting, institution = partial
         return 'partial_posting_continuation', f'This requirement must continue as {institution} {posting}, where it was started.'
-    if requested and all(o.get('capacity') == 0 for o in requested):
-        return 'zero_capacity', 'The requested posting has zero capacity in the Postings tab.'
     if not request['starts']:
         duration = request['duration']
         window = len(request['period_months'])
@@ -205,12 +203,11 @@ def unmet_request_reason(person, request, placements, options, stages):
         return 'no_valid_start', (f"{posting} requires {duration} {'month' if duration == 1 else 'months'}, "
                                  f"but the requested {period} period is only {window} {'month' if window == 1 else 'months'}.")
     # Use the scheduler's actual placement choices, including history and LOA.
-    possible = [p for p in placements if p['option'].get('capacity') != 0 and placement_fulfils_request(p, request)]
+    possible = [p for p in placements if placement_fulfils_request(p, request)]
     if not possible:
         if all(not person['availability'][m]['available'] for m in request['starts']):
             return 'loa_start', 'Recorded LOA prevents the posting from starting on any permitted date in the requested period.'
-        matching = [p for p in placements if p['option'].get('capacity') != 0
-                    and (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in request['option_keys']]
+        matching = [p for p in placements if (p['option']['requirement_id'], p['option']['institution'], p['option']['label']) in request['option_keys']]
         starts = [p['months'][0] for p in matching if p['months']]
         if matching and (not starts or min(starts) > max(request['starts'])):
             return 'training_progression', 'Outstanding training and required block order prevent a start within the requested period.'

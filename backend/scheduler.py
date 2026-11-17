@@ -11,14 +11,16 @@ if __package__:
     from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
+    from .history_review import evaluate_review
     from .scheduler_inputs import prepare_scheduler_inputs
-    from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
+    from .workbook_import import normalized_label, recorded_years
 else:
     from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
+    from history_review import evaluate_review
     from scheduler_inputs import prepare_scheduler_inputs
-    from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
+    from workbook_import import normalized_label, recorded_years
 
 
 IMH_ALLOCATION_SHARES = 2
@@ -350,7 +352,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
               "limitations": ["R5 electives with core-credit overlap or unsupported remarks are excluded", "Future posting availability and capacity are unknown",
-                              "Finite shared capacity with excluded residents requires review"],
+                              "Unresolved occupied postings are reported separately from known capacity counts"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
     if not selected:
@@ -460,21 +462,34 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         for routes in r5_routes)
     result["selected_sources"] = [deepcopy(p["source"]) for p in selected]
     by_key = {(o["requirement_id"], o["institution"], o["label"]): o for o in options}
-    # No occupancy is silently reserved or ignored for residents outside this draft.
-    finite = {(o["category"], o["residency_year"], normalized_label(o["label"]))
-              for o in options if o["capacity"] is not None}
-    catalogue = posting_catalogue(workbook["postings"])
-    if finite:
-        for person in workbook["residents"]:
-            if any(person["source"] == scheduled["source"] for scheduled in selected):
+    # Known occupied places outside the solved cohort remain part of Max review.
+    fixed_occupancy = defaultdict(list)
+    result["capacity_coverage_notes"] = []
+    retained_entries = []
+    retained_potential = {}
+    for entry in evaluate_review(workbook, reviewstore, scope="timetable")["entries"]:
+        source = entry["sources"][0]
+        person = next((p for p in workbook["residents"] if all(p["source"].get(k) == source.get(k) for k in ("sheet", "row"))), None)
+        if person is None:
+            continue
+        selected_index = next((i for i, p in enumerate(selected) if person["source"] == p["source"]), None)
+        if selected_index is not None:
+            retained_entries.append((selected_index, person, entry))
+            continue
+        target = entry["review"].get("target") if entry["review"]["status"] in {"automatic_match", "reviewed", "label_confirmed", "credit_review_required"} else None
+        option = next((o for o in prepared["catalogue_options"] if target and o["source"] == target["source"]), None)
+        if option is None or len({(src.get("sheet"), src.get("row")) for src in entry["sources"]}) != 1:
+            result["capacity_coverage_notes"].append({"code": "unresolved_occupied_posting", "source": source})
+            continue
+        for posting in entry["months"]:
+            if sum(p["month"] == posting["month"] for p in person["postings"]) != 1:
+                result["capacity_coverage_notes"].append({"code": "conflicting_occupied_posting", "source": source})
                 continue
-            for posting in person["postings"]:
-                if posting["status"] != "posting":
-                    continue
-                match = match_posting(posting, person.get("residency_year"), catalogue)
-                matches = [match["selected_candidate"]] if match.get("selected_candidate") else match["candidates"]
-                if not matches or any((c["category"], c["residency_year"], normalized_label(c["label"])) in finite for c in matches):
-                    blockers.append({"code": "shared_capacity_outside_draft_scope", "source": posting["source"]})
+            month = next((i for i, m in enumerate(prepared["planning_months"]) if m["month"] == posting["month"]), None)
+            if month is not None:
+                key = (month, option["requirement_id"], option["institution"], option["label"])
+                fixed_occupancy[key].append({key: deepcopy(person.get(key)) for key in ("name", "mcr", "source")})
+                by_key[key[1:]] = option
     if blockers:
         return result
 
@@ -538,6 +553,24 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             o = placement["option"]
             for month in placement["months"]:
                 occupancy[(month, o["requirement_id"], o["institution"], o["label"])].append(placement["variable"])
+    # The display retains original cells where no generated block can place work.
+    # Reserve only these certain occupied places; do not infer training credit.
+    for i, person, entry in retained_entries:
+        potential = {month for choice in candidates[i] for month, option in enumerate(choice["schedule"]) if option}
+        potential.update(month for placement in placements[i] for month in placement["months"])
+        retained_potential[i] = potential
+        target = entry["review"].get("target") if entry["review"]["status"] in {"automatic_match", "reviewed", "label_confirmed", "credit_review_required"} else None
+        option = next((o for o in prepared["catalogue_options"] if target and o["source"] == target["source"]), None)
+        for posting in entry["months"]:
+            month = next((m for m, value in enumerate(prepared["planning_months"]) if value["month"] == posting["month"]), None)
+            if month is None or month in potential:
+                continue
+            if option is None or len({(src.get("sheet"), src.get("row")) for src in entry["sources"]}) != 1 or sum(p["month"] == posting["month"] for p in person["postings"]) != 1:
+                result["capacity_coverage_notes"].append({"code": "unresolved_retained_posting", "source": entry["sources"][0]})
+                continue
+            key = (month, option["requirement_id"], option["institution"], option["label"])
+            fixed_occupancy[key].append({field: deepcopy(person.get(field)) for field in ("name", "mcr", "source")})
+            by_key[key[1:]] = option
     cluster_penalties, r3_cluster_penalties = [], []
     for i, person in enumerate(selected):
         reaches_r3 = any(p["months"] and p["option"]["residency_year"] == "R3" for p in placements[i])
@@ -561,10 +594,14 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 r3_cluster_penalties.append(missing)
             elif not ({"r4", "r5"} & set(person["recorded_years"])):
                 cluster_penalties.append(missing)
-    for (month, requirement, institution, label), values in occupancy.items():
-        capacity = by_key[(requirement, institution, label)]["capacity"]
+    overflows = []
+    for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
+        capacity = by_key[key[1:]]["capacity"]
         if capacity is not None:
-            model.add(sum(values) <= capacity)
+            values, fixed = occupancy[key], len(fixed_occupancy[key])
+            overflow = model.new_int_var(0, len(values) + fixed, f"overflow_{key}")
+            model.add_max_equality(overflow, [0, sum(values) + fixed - capacity])
+            overflows.append(overflow)
     preferences = r1_rules.add_preferences(model, candidates, variables, active_intake, prepared["planning_months"])
     singletons = {}
     for key, values in occupancy.items():
@@ -575,7 +612,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     inpatient_size = sum(any(any(o and o["requirement_id"] == inpatient_id for o in c["schedule"])
                              for c in choices) for choices in candidates)
     eligible_sites = sorted({o["institution"] for o in options
-                             if o["requirement_id"] == inpatient_id and o["capacity"] != 0})
+                             if o["requirement_id"] == inpatient_id})
     inpatient_targets = _allocation_targets(inpatient_size, eligible_sites)
     inpatient_deviations = []
     for site, target in inpatient_targets.items():
@@ -615,9 +652,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 o = p["option"]
                 allocation_groups[(o["requirement_id"], normalized_label(o["posting"]))].append(p)
     for group, ps in allocation_groups.items():
-        eligible = sorted({o["institution"] for o in r2_options + r3_options + r4_options + r5_options if (o["requirement_id"], normalized_label(o["posting"])) == group and o["capacity"] != 0})
+        eligible = sorted({o["institution"] for o in r2_options + r3_options + r4_options + r5_options if (o["requirement_id"], normalized_label(o["posting"])) == group})
         if group[0].startswith(("r4.", "r5.")):
-            eligible = sorted({p["option"]["institution"] for p in ps if p["option"]["capacity"] != 0})
+            eligible = sorted({p["option"]["institution"] for p in ps})
         if len(eligible) < 2:
             continue
         if group[0] == "r5.elective":
@@ -642,6 +679,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         penalties.extend(_allocation_penalties(model, counts, allocation_total, len(selected) * (2 if group[0] == "r5.elective" else 1), group))
     request_objective = add_request_objective(model, request_outcomes, placements)
     objectives = [
+        ("capacity_overflow", sum(overflows)),
         ("incoming_route_distribution", preferences["distribution"]),
         ("monthly_medicine_neurology_ratio", preferences["ratio"]),
         ("posting_balance", sum(balance)),
@@ -651,7 +689,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         ("singleton_months", sum(singletons.values())),
     ]
     if any(row['status'] == 'evaluable' and 'duplicate_of' not in row for rows in request_outcomes for row in rows):
-        objectives.insert(2, ("resident_requests", request_objective))
+        objectives.insert(3, ("resident_requests", request_objective))
     if r3_cluster_penalties:
         destination_index = next(i for i, (name, _) in enumerate(objectives) if name == "inpatient_destination")
         objectives.insert(destination_index, ("r3_missing_clusters", sum(r3_cluster_penalties)))
@@ -738,7 +776,27 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                                                      for (requirement, institution), months in choice["carryforward"].items()]
                                     + [{"requirement_id": p["option"]["requirement_id"], "institution": p["option"]["institution"],
                                         "label": p["option"]["label"], "months": p["remaining"]} for p in chosen if p["remaining"]]})
+    for i, person, entry in retained_entries:
+        for posting in entry["months"]:
+            month = next((m for m, value in enumerate(prepared["planning_months"]) if value["month"] == posting["month"]), None)
+            if month in retained_potential[i] and result["residents"][i]["months"][month]["status"] == "outside_draft_scope":
+                result["capacity_coverage_notes"].append({"code": "conditional_retained_posting", "source": entry["sources"][0]})
+    result["capacity_overflows"] = []
+    for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
+        month, requirement, institution, label = key
+        option = by_key[key[1:]]
+        residents = list(fixed_occupancy[key]) + [
+            {field: deepcopy(person.get(field)) for field in ("name", "mcr", "source")}
+            for person in result["residents"] if person["months"][month]["target"]
+            and all(person["months"][month]["target"][field] == option[field]
+                    for field in ("requirement_id", "institution", "label"))]
+        if option["capacity"] is not None and len(residents) > option["capacity"]:
+            result["capacity_overflows"].append({"month": prepared["planning_months"][month]["month"],
+                **{field: deepcopy(option[field]) for field in ("requirement_id", "institution", "label", "source", "residency_year", "category")},
+                "max": option["capacity"], "assigned": len(residents), "residents": residents})
+    result["capacity_overflows"].sort(key=lambda item: (item["requirement_id"], item["institution"], item["month"]))
     result["soft_results"] = {
+        "capacity_overflow": solver.value(sum(overflows)),
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
         "inpatient_counts": {site: sum(solver.value(v) for v in values) for site, values in inpatient_counts.items()},
         "inpatient_deviation": solver.value(sum(inpatient_deviations)),

@@ -235,9 +235,8 @@ class R4Tests(unittest.TestCase):
 
     def test_missing_cluster_cannot_be_credited_by_impossible_site(self):
         book = r4_book()
-        for option in book["postings"]["core"]:
-            if option["residency_year"] == "R4" and option["posting"].split()[0] in {"NUH", "NTFGH"}:
-                option["max"] = 0
+        book["postings"]["core"] = [option for option in book["postings"]["core"]
+            if option["residency_year"] != "R4" or option["posting"].split()[0] not in {"NUH", "NTFGH"}]
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "infeasible")
         self.assertIn("r4_schedule_infeasible", [b["code"] for b in result["blockers"]])

@@ -180,7 +180,7 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(sum(item["months"] for item in paused["residents"][0]["carryforward"]), 12)
         self.assertTrue(all(m["status"] == "loa" for m in paused["residents"][0]["months"]))
 
-    def test_capacity_blank_zero_and_monthly_limits_are_hard_constraints(self):
+    def test_capacity_blank_zero_and_monthly_overflow_are_soft_targets(self):
         workbook = r1_book(3)
         self.assertEqual(draft_schedule(workbook, STORE)["status"], "optimal")
         for row in workbook["postings"]["core"]:
@@ -196,16 +196,39 @@ class R1SolverTests(unittest.TestCase):
             if "Inpatient" not in row["posting"]:
                 row["max"] = "0"
         impossible = draft_schedule(workbook, STORE)
-        self.assertEqual(impossible["status"], "infeasible")
-        self.assertEqual(impossible["residents"], [])
+        self.assertEqual(impossible["status"], "optimal")
+        self.assertEqual(impossible["soft_results"]["capacity_overflow"], 18)
+        self.assertEqual(sum(row["assigned"] - row["max"] for row in impossible["capacity_overflows"]), 18)
+        self.assertTrue(all(row["assigned"] == len(row["residents"]) for row in impossible["capacity_overflows"]))
         shared = r1_book()
         next(row for row in shared["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "1"
         outside = resident([(m["month"], "IMH Inpatient Psychiatry") for m in shared["months"]], "R5", "Planning", 100)
         shared["residents"].append(outside)
         blocked = draft_schedule(shared, STORE)
-        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn(blocked["status"], {"optimal", "feasible"})
         self.assertEqual(len(blocked["skipped_residents"]), 1)
-        self.assertIn({"code": "shared_capacity_outside_draft_scope", "source": outside["postings"][0]["source"]}, blocked["blockers"])
+        self.assertEqual(blocked["blockers"], [])
+        self.assertEqual(blocked["capacity_coverage_notes"], [])
+        next(row for row in shared["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        occupied = draft_schedule(shared, STORE)
+        self.assertEqual(occupied["soft_results"]["capacity_overflow"], 12)
+        self.assertEqual(len(occupied["capacity_overflows"]), 12)
+        self.assertTrue(all(row["assigned"] == 1 and row["residents"][0]["source"] == outside["source"]
+                            for row in occupied["capacity_overflows"]))
+
+    def test_completed_resident_retained_cells_still_consume_known_capacity(self):
+        book = r1_book()
+        set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + ["IMH Inpatient Psychiatry"] * 6)
+        for posting in book["residents"][0]["postings"]:
+            posting.update(status="posting", value="IMH Inpatient Psychiatry")
+        next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        result = draft_schedule(book, STORE)
+        self.assertEqual(result["status"], "optimal")
+        self.assertTrue(all(month["status"] == "outside_draft_scope" for month in result["residents"][0]["months"]))
+        self.assertEqual(result["soft_results"]["capacity_overflow"], 12)
+        self.assertEqual(len(result["capacity_overflows"]), 12)
+        self.assertEqual(result["capacity_coverage_notes"], [])
+        self.assertTrue(all(row["residents"][0]["source"] == book["residents"][0]["source"] for row in result["capacity_overflows"]))
 
     def test_incoming_targets_24_23_are_soft_and_relax_under_capacity(self):
         for size, targets in ((24, {"TTSH/NNI": 12, "SGH": 9, "NUH": 3}), (23, {"TTSH/NNI": 12, "SGH": 9, "NUH": 2})):
@@ -265,7 +288,7 @@ class R1SolverTests(unittest.TestCase):
 
     def test_inpatient_balances_remaining_sites_when_imh_is_unavailable(self):
         book = r1_book(4)
-        next(o for o in book["postings"]["core"] if o["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        book["postings"]["core"] = [row for row in book["postings"]["core"] if row["posting"] != "IMH Inpatient Psychiatry"]
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "optimal")
         counts = result["soft_results"]["inpatient_counts"]

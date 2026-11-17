@@ -45,9 +45,6 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
   across yearly tabs, including a posting that continues across June and July.
-- **Respect posting capacity limits.** Enforce the Max value specified for each
-  posting in the Postings tab. A blank Max means no capacity limit is imposed
-  by that field; it does not mean zero places.
 - **Respect mandatory posting remarks.** The schedule must satisfy compulsory
   requirements stated in the Remarks column of the Postings tab.
 - **Keep R1 Medicine and Neurology postings within their paired institutions.**
@@ -64,6 +61,15 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   recognised historical evidence.
 
 ## Soft constraints
+
+- **Minimise posting capacity overflow first.** Max in the Postings tab is a soft
+  monthly target for the exact posting requirement and institution. Minimise the
+  total `max(0, assigned - Max)` across posting-months before every other
+  preference. Blank Max adds no limit or penalty; zero remains a soft target.
+  Count known occupied places for skipped or excluded residents, and original
+  timetable cells retained outside generated training, alongside the solved cohort. Report unresolved occupied evidence for review without inventing
+  counts. Show each overflowing posting-month and all assigned residents for staff
+  review; exceeding Max does not invalidate a draft.
 
 - **Try to fulfil resident requests.** Requests are preferences, not mandatory
   assignments. They must not override hard constraints.
@@ -108,12 +114,12 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   For five institutions, 24 residents gives IMH 8 and four at each other site;
   22 residents gives IMH 10 and three at each other site.
   These are soft draft targets, not mandatory quotas or a fixed percentage.
-  Allow deviations for capacity limits, cross-cluster requirements, LOA
+  Allow deviations for capacity targets, cross-cluster requirements, LOA
   and resident requests. Small cohorts need not populate every institution. Apply the formula to the residents needing the posting, not
   automatically to the full intake, and choose assignments together rather
   than filling IMH first. When IMH is not an eligible option, aim for an even distribution across
   the eligible institutions offering the same posting. This is a soft preference,
-  not an equal quota; capacity and other hard constraints take precedence.
+  not an equal quota; higher-priority capacity targets and hard constraints take precedence.
 
 ## Draft preference priority
 
@@ -121,16 +127,17 @@ Apply the following soft preferences in order, while satisfying all hard
 constraints. A lower-priority improvement must not worsen a higher-priority
 score; compare scores in order rather than adding them into a total.
 
-1. Usual R1 route distribution.
-2. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
-3. Maximise each resident's fraction of evaluable requests fulfilled.
-4. Balance posting requirements over time.
-5. Institution allocation targets: weighted IMH where offered, even distribution
+1. Monthly posting capacity overflow.
+2. Usual R1 route distribution.
+3. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
+4. Maximise each resident's fraction of evaluable requests fulfilled.
+5. Balance posting requirements over time.
+6. Institution allocation targets: weighted IMH where offered, even distribution
    across eligible institutions otherwise.
-6. Missing cluster exposure for residents whose draft reaches R3.
-7. Preferred route-to-inpatient destination, as described in
+7. Missing cluster exposure for residents whose draft reaches R3.
+8. Preferred route-to-inpatient destination, as described in
    [cross-cluster.md](cross-cluster.md).
-8. Additional R1-R2 cluster exposure.
-9. Avoid singleton months for the same posting and institution.
+9. Additional R1-R2 cluster exposure.
+10. Avoid singleton months for the same posting and institution.
 
 This order applies across the R1-R5 draft. It does not replace the hard R4 completion requirement.
