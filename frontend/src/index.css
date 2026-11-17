@@ -331,7 +331,9 @@
 .request-indicator svg { display: block; width: 12px; height: 12px; }
 
 .request-popover { position: fixed; margin: 0; width: min(24rem, calc(100vw - 2rem)); padding: 1rem; overflow: auto; border: 0; border-radius: .75rem; background: #fff; color: #292524; box-shadow: 0 8px 32px #29252426; text-align: left; font-size: .8125rem; font-weight: 400; line-height: 1.5; }
-.request-popover:popover-open { animation: request-appear 160ms ease-out; }
+.request-popover { opacity: 0; transform: scale(.98); transition: opacity 180ms ease-out, transform 240ms cubic-bezier(.16, 1, .3, 1), display 240ms allow-discrete, overlay 240ms allow-discrete; }
+.request-popover:popover-open { opacity: 1; transform: scale(1); }
+@starting-style { .request-popover:popover-open { opacity: 0; transform: scale(.98); } }
 .request-popover header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
 .request-popover h3 { margin: .25rem 0 .75rem; font-size: .875rem; font-weight: 600; }
 .request-close { display: grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 50%; cursor: pointer; }
@@ -348,7 +350,6 @@
 .request-popover dt { margin-top: .75rem; color: #6e675e; font-size: .75rem; }
 .request-popover dd { margin-top: .25rem; }
 .request-popover small { display: block; margin-top: .25rem; color: #6e675e; font-size: .75rem; }
-@keyframes request-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 520px) { .request-popover { top: auto !important; bottom: .75rem !important; left: .75rem !important; width: calc(100vw - 1.5rem); max-height: 70dvh !important; } }
 @media (prefers-reduced-motion: reduce) { .request-popover:popover-open { animation: none; } .request-indicator:active, .request-close:active { transform: none; } }
 
@@ -406,3 +407,20 @@
 .draft-search-limit:focus-within { outline: 2px solid #695b82; outline-offset: 3px; }
 .draft-search-value select:focus-visible { outline: none; }
 @media (max-width: 520px) { .draft-search-limit { height: 44px; } .draft-search-value select { min-height: 42px; } }
+
+
+.request-popover ul { list-style: disc; padding-left: 1.25rem; margin-top: .75rem; }
+
+.monthly-breakdown td.capacity-overflow-cell { background: #fff1dc; color: var(--color-warning); }
+.monthly-breakdown .capacity-warning { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; width: 100%; color: inherit; background: transparent; border: 0; padding: 0; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.monthly-breakdown td.capacity-overflow-cell:hover { background: #ffe8bc; }
+
+.breakdown-institution { animation: breakdown-reveal 200ms ease-out; }
+@keyframes breakdown-reveal { from { opacity: 0; } to { opacity: 1; } }
+.monthly-breakdown .capacity-warning:active { opacity: .65; }
+@media (max-width: 520px) { .request-popover { transform-origin: center bottom !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .breakdown-institution { animation: none; }
+  .request-popover, .request-popover:popover-open { transform: none; transition: none; }
+  @starting-style { .request-popover:popover-open { transform: none; } }
+}

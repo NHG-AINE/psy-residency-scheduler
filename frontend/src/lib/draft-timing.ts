@@ -1,6 +1,7 @@
 import type { DraftSchedule } from './draft-schedule.ts'
 
 const labels: Record<string, string> = {
+  capacity_overflow: 'Posting capacity',
   initial_feasibility: 'Find initial draft',
   incoming_route_distribution: 'R1 route distribution',
   monthly_medicine_neurology_ratio: 'R1 Medicine / Neurology ratio',

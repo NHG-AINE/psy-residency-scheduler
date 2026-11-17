@@ -1,20 +1,19 @@
 import type { Workbook } from './workbook.ts'
 import { sameSource } from './workbook.ts'
 import { resolvedCatalogueTarget } from './history-review.ts'
-import type { DraftSchedule } from './draft-schedule.ts'
+import type { CapacityOverflow, DraftSchedule } from './draft-schedule.ts'
 import type { HistoryEntry } from './history-review.ts'
 import { draftPostings } from './draft-schedule.ts'
 import { postingCategory, postingDisplay, postingHistoryEntry } from './posting-blocks.ts'
 
 type Counts = Record<string, number>
 export type BreakdownGroup = { key: string; label: string; counts: Counts; institutions: {
-  label: string; counts: Counts; allCounts: Counts; capacity: number | null
+  label: string; counts: Counts; allCounts: Counts; overflows: CapacityOverflow[]
 }[] }
 
 export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null, entries: HistoryEntry[], year = '') {
   const groupElectives = year === 'R2' || year === 'R5'
   const groups = new Map<string, BreakdownGroup>()
-  const capacities = new Map<string, Set<string | null>>()
   const groupFor = (label: string, category: string) => {
     const key = JSON.stringify([category, label.toLowerCase()])
     if (!groups.has(key)) groups.set(key, { key, label: category === 'elective' ? (groupElectives ? 'Electives' : `${label} (Elective)`) : label, counts: {}, institutions: [] })
@@ -28,16 +27,13 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
     const rowLabel = groupedElective ? label : institution
     let site = group.institutions.find((item) => item.label === rowLabel)
     if (!site) {
-      site = { label: rowLabel, counts: {}, allCounts: {}, capacity: null }
+      site = { label: rowLabel, counts: {}, allCounts: {}, overflows: [] }
       group.institutions.push(site)
     }
     return { group, site }
   }
   for (const row of workbook.postings.core) {
     if (!row.posting) continue
-    const values = capacities.get(row.posting) || new Set<string | null>()
-    values.add(row.max)
-    capacities.set(row.posting, values)
     siteFor(row.posting, 'core')
   }
   for (const row of workbook.postings.electives || []) {
@@ -66,10 +62,16 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
       if (category === 'core' || category === 'elective') {
         const { group, site } = siteFor(display.label, category)
         increment(site.allCounts, posting.month)
-        if (included) { increment(group.counts, posting.month); increment(site.counts, posting.month) }
-        const limits = capacities.get(display.label)
-        const value = limits?.size === 1 ? [...limits][0] : null
-        if (category === 'core' && value != null && /^\d+$/.test(value.trim())) site.capacity = Number(value)
+        if (included) {
+          increment(group.counts, posting.month); increment(site.counts, posting.month)
+          const exactTarget = posting.draft ? planned?.months.find((m) => m.month === posting.month)?.target : target
+          for (const overflow of draft?.capacity_overflows || []) {
+            if (overflow.month === posting.month && overflow.category === category && overflow.label === display.label
+              && overflow.residency_year === (exactTarget?.residency_year || requirementYear)
+              && (!exactTarget?.source || (sameSource(exactTarget.source, overflow.source) && exactTarget.source.column === overflow.source.column))
+              && !site.overflows.includes(overflow)) site.overflows.push(overflow)
+          }
+        }
       } else if (included) {
         const label = category === 'loa' ? 'LOA' : category === 'unallocated' ? 'Unallocated' : 'Unresolved'
         increment(groupFor(label, category).counts, posting.month)
