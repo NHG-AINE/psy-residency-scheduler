@@ -73,7 +73,7 @@ function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Res
   </details>
 }
 
-function Review({ workbook, view, query, requestFilter, year, years, onYearChange, onHistoryReview, historyResident, draftState, breakdownHost, loading = false }: { workbook: Workbook; view: View; query: string; requestFilter: RequestStatus | null; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState; breakdownHost: HTMLDivElement | null; loading?: boolean }) {
+function Review({ workbook, view, query, requestFilter, year, years, onYearChange, onHistoryReview, historyResident, draftState, breakdownHost, onTimetableReady, loading = false }: { workbook: Workbook; view: View; query: string; requestFilter: RequestStatus | null; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState; breakdownHost: HTMLDivElement | null; onTimetableReady: (target: HTMLElement) => (() => void) | undefined; loading?: boolean }) {
   const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
@@ -87,14 +87,14 @@ function Review({ workbook, view, query, requestFilter, year, years, onYearChang
       ? draftState.draft.residents.flatMap((person) => person.requests || []).filter((outcome) => outcome.status === 'pending') : []
     return <><p className="table-note">Requests are not assigned to a planning year. The selected year changes resident links, not request dates or the recorded request rows.</p>{requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small>{pending.filter((outcome) => sameSource(outcome.request.source, request.source)).map((outcome, i) => <small key={i}>Draft pending: {outcome.reason}</small>)}</td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>}</>
   }
-  if (view === 'Timetable') return <Timetable residents={filterRequestResidents(residents, draftState.draft, requestFilter)} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} draftState={draftState} breakdownHost={breakdownHost} />
+  if (view === 'Timetable') return <Timetable residents={filterRequestResidents(residents, draftState.draft, requestFilter)} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} draftState={draftState} breakdownHost={breakdownHost} onReady={onTimetableReady} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
   return <div className="resident-list">{residents.map((resident) => <ResidentDetail key={JSON.stringify(resident.source)} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
 const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null }) {
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined }) {
   const { draft, busy: generating, error: draftError } = draftState
   const hasDraft = draft?.status === 'optimal' || draft?.status === 'feasible'
   const timetable = useRef<HTMLDivElement>(null)
@@ -122,6 +122,17 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const resolution = !importLoading && loaded?.workbook === workbook && loaded.attempt === attempt ? loaded.data : null
   const error = !importLoading && failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
   const loading = importLoading || generating || (!resolution && !error)
+  useEffect(() => {
+    if (loading || !breakdownHost || !timetable.current) return
+    let stop: (() => void) | undefined
+    // Let the final timetable and breakdown paint before starting the scroll.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (timetable.current) stop = onReady(timetable.current)
+      })
+    })
+    return () => { cancelAnimationFrame(frame); stop?.() }
+  }, [loading, breakdownHost, onReady, workbook])
   useEffect(() => {
     if (importLoading || workbook.target_year !== year) { revealAfterGeneration.current = false; return }
     if (generating) { revealAfterGeneration.current = true; return }
@@ -234,6 +245,7 @@ export default function App() {
     void restoreSession().then((saved) => {
       if (cancelled || !saved) return
       currentSession.current = { file: saved.file, workbook: saved.workbook }
+      revealAfterUpload.current = saved.workbook.residents.length > 0
       setFile(saved.file); setWorkbook(saved.workbook); setYear(saved.workbook.target_year)
       if (saved.draft) restoreDraft(saved.draft)
     }).catch((problem: unknown) => {
@@ -248,13 +260,12 @@ export default function App() {
   const [requestSelection, setRequestSelection] = useState<{ draft: DraftSchedule; status: RequestStatus | null } | null>(null)
   const requestFilter = hasDraft && requestSelection?.draft === draftState.draft ? requestSelection.status : null
 
-  useEffect(() => {
-    if (busy || !workbook || !revealAfterUpload.current) return
+  const revealTimetable = useCallback((target: HTMLElement) => {
+    if (!revealAfterUpload.current) return
     revealAfterUpload.current = false
-    const target = review.current?.querySelector<HTMLElement>('.timetable') || review.current
-    if (!target) return
-    return revealElement(target)
-  }, [busy, workbook])
+    const card = review.current || target
+    return scrollToPosition(window.scrollY + card.getBoundingClientRect().top - 16)
+  }, [])
 
   async function load(nextFile: File, nextYear: number, reveal = false) {
     setLoadingHeight(review.current?.getBoundingClientRect().height)
@@ -299,7 +310,7 @@ export default function App() {
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
         <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
         {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{view === 'Timetable' && hasDraft && draftState.draft && <RequestTotals draft={draftState.draft} selected={requestFilter} onChange={(status) => setRequestSelection({ draft: draftState.draft!, status })} />}{view === 'Timetable' ? draftState.canGenerate && <div className="draft-actions">{!hasDraft && !draftState.pending && <DraftSearchLimit value={draftState.searchSeconds} onChange={draftState.setSearchSeconds} disabled={busy} />}<DraftTimer draft={draftState.draft} startedAt={draftState.startedAt} elapsedSeconds={draftState.elapsedSeconds} /><button type="button" className={`button draft-generate${hasDraft && !draftState.busy ? ' button-secondary' : ''}`} disabled={busy || draftState.cancelling || (draftState.pending && !draftState.busy)} onClick={() => draftState.busy ? void draftState.cancelGeneration() : hasDraft ? discardSavedDraft() : void draftState.generate()}>{draftState.cancelling ? 'Cancelling...' : draftState.busy ? 'Cancel generation' : hasDraft ? 'Discard draft' : 'Generate draft'}</button></div> : workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
-        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} requestFilter={requestFilter} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} breakdownHost={breakdownHost} loading={busy} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
+        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} requestFilter={requestFilter} year={year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} breakdownHost={breakdownHost} onTimetableReady={revealTimetable} loading={busy || restoring} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
       {workbook && view === 'Timetable' && <div ref={setBreakdownHost} />}
     </main>
