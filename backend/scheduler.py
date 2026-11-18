@@ -382,6 +382,15 @@ def _capacity_overflow_lower_bound(candidates, placements, mandatory_blocks, opt
     return bound
 
 
+def _add_catalogue_blockers(option, seen, blockers):
+    key = (option["requirement_id"], option["institution"], normalized_label(option["label"]))
+    if key in seen:
+        year = option["residency_year"].lower()
+        blockers.append({"code": f"duplicate_{year}_catalogue_option", "source": option["source"]})
+    seen.add(key)
+    blockers.extend({"code": code, "source": option["source"]} for code in option["reasons"])
+
+
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None):
     """Schedule remaining R1 through R5 work in progression order.
 
@@ -433,11 +442,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     if has_r2:
         seen_r2 = set()
         for o in r2_options:
-            key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
-            if key in seen_r2:
-                blockers.append({"code": "duplicate_r2_catalogue_option", "source": o["source"]})
-            seen_r2.add(key)
-            blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+            _add_catalogue_blockers(o, seen_r2, blockers)
             remarks = o["remarks"]
             if remarks and not (isinstance(remarks, list) and all(r["text"].strip().lower() == "(3 months duration)" for r in remarks)):
                 blockers.append({"code": "unsupported_r2_remarks", "source": o["source"]})
@@ -453,11 +458,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r3_blocks = [[] for _ in selected]
     seen_r3 = set()
     for o in r3_options:
-        key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
-        if key in seen_r3:
-            blockers.append({"code": "duplicate_r3_catalogue_option", "source": o["source"]})
-        seen_r3.add(key)
-        blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+        _add_catalogue_blockers(o, seen_r3, blockers)
         if o["remarks"]:
             blockers.append({"code": "unsupported_r3_remarks", "source": o["source"]})
     for i, person in enumerate(selected):
@@ -467,11 +468,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any({"r4", "r5"} & set(p["recorded_years"]) for p in selected) else []
     seen_r4 = set()
     for o in r4_options:
-        key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
-        if key in seen_r4:
-            blockers.append({"code": "duplicate_r4_catalogue_option", "source": o["source"]})
-        seen_r4.add(key)
-        blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+        _add_catalogue_blockers(o, seen_r4, blockers)
         if o["remarks"]:
             blockers.append({"code": "unsupported_r4_remarks", "source": o["source"]})
     r4_blocks = [r4_rules.prepare_blocks(person, r4_options, prepared["planning_start"],
@@ -483,11 +480,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r5_options = [o for o in r5_options if r5_rules.supported_option(o)]
     seen_r5 = set()
     for o in r5_options:
-        key = (o["requirement_id"], o["institution"], normalized_label(o["label"]))
-        if key in seen_r5:
-            blockers.append({"code": "duplicate_r5_catalogue_option", "source": o["source"]})
-        seen_r5.add(key)
-        blockers.extend({"code": code, "source": o["source"]} for code in o["reasons"])
+        _add_catalogue_blockers(o, seen_r5, blockers)
     options += r5_options
     request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"]) for person in selected]
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
