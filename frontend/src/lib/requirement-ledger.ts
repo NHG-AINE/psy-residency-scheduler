@@ -19,6 +19,7 @@ export type ResidentLedger = {
   name: string | null; mcr: string | null; recorded_year: string | null; source: Source
   identity_safe: boolean; warnings: string[]; months: LedgerMonth[]; requirements: Requirement[]
   historical_notes?: HistoricalNote[]
+  mixed_progress?: { label: string; start: string; end: string; months: number }[]
   r1_routes: { requirement_ids: string[]; evidence_status: string }[]
 }
 export type RequirementLedger = {
