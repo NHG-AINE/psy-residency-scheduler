@@ -123,6 +123,8 @@
   .posting-marker { @apply inline-block rounded px-1 py-0.5 text-[11px]; background: #f0ebf5; color: #6b527a; }
   .posting-marker-remediation { background: #fff1dc; color: #815b24; }
   .posting-word { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  .posting-name { @apply block truncate; }
+  .posting-tooltip { @apply fixed inset-auto m-0 w-max rounded-md border border-hairline bg-surface px-3 py-2 text-left text-xs leading-relaxed text-ink; max-width: min(20rem, calc(100vw - 16px)); overflow-wrap: anywhere; box-shadow: 0 4px 16px #2925241a; }
   .posting-value.core { background: #edf3f8; color: #315c7f; }
   .posting-value.unresolved { background: #f0efed; color: #4e4e4e; }
   .posting-value.elective { background: #f0ebf5; color: #6b527a; }
