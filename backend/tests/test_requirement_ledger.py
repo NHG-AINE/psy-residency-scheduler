@@ -54,13 +54,15 @@ class RequirementLedgerTests(unittest.TestCase):
                              "R5", "Later")
             core = resident([(f"2027-{m:02d}", f"IMH {requirement_name}") for m in (1, 2, 3)], "R5", "Core")
             for history, elective_months, core_months in (
-                    ([first], 3, 0), ([first, later], 6, 3), ([first, later, core], 6, 3)):
+                    ([first], 0, 0), ([first, later], 3, 3), ([first, later, core], 3, 6)):
                 with self.subTest(requirement=key, elective_months=elective_months, separate_core=core in history):
                     workbook = book(history, "2028-07")
                     workbook["postings"] = catalogue
                     progress = ledger(workbook)
                     self.assertEqual(requirement(progress, "r5.elective")["expected_months"], elective_months)
                     self.assertEqual(requirement(progress, key)["expected_months"], core_months)
+                    self.assertEqual([block["months"] for block in progress["residents"][0]["mixed_progress"]],
+                                     [3] if history == [first] else [])
                     if core in history:
                         self.assertEqual(sum(m.get("requirement_id") == key for m in progress["residents"][0]["months"]), 3)
             # A differently resolved option interrupts the six-month run.
@@ -68,7 +70,7 @@ class RequirementLedgerTests(unittest.TestCase):
             workbook = book([first, later], "2028-07")
             workbook["postings"] = catalogue
             progress = ledger(workbook)
-            self.assertEqual(requirement(progress, "r5.elective")["expected_months"], 6)
+            self.assertEqual(requirement(progress, "r5.elective")["expected_months"], 1)
             self.assertEqual(requirement(progress, key)["expected_months"], 0)
 
     def test_intake_slots_have_full_r1_requirements_without_historical_credit(self):
