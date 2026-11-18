@@ -10,15 +10,28 @@ class RequestPreferenceTests(unittest.TestCase):
         option = {'requirement_id': 'r2.child', 'institution': 'IMH', 'posting': 'Child', 'label': 'IMH Child', 'capacity': 1}
         request = {'requirement_id': 'r2.child', 'option_keys': [('r2.child', 'IMH', 'IMH Child')], 'starts': [0]}
         placement = {'option': option, 'months': [0, 1, 2]}
-        for stages, code in (([], 'request_search_incomplete'),
-                             ([{'priority': 'resident_requests', 'status': 'feasible'}], 'request_search_incomplete'),
-                             ([{'priority': 'resident_requests', 'status': 'optimal'}], 'not_selected')):
+        capacity = {'priority': 'capacity_overflow', 'status': 'optimal'}
+        initial = {'priority': 'initial_feasibility', 'status': 'feasible'}
+        for stages, code, message in (
+            ([initial, {**capacity, 'status': 'feasible'}], 'request_search_incomplete',
+             'The search ended while reducing capacity overflow, before resident requests were prioritised. More search time may help.'),
+            ([initial, capacity, {'priority': 'incoming_route_distribution', 'status': 'unknown'}],
+             'request_search_incomplete',
+             'The search ended while balancing incoming R1 routes, before resident requests were prioritised. More search time may help.'),
+            ([initial, capacity], 'request_search_incomplete',
+             'The search ended before resident requests were prioritised. More search time may help.'),
+            ([initial], 'request_search_incomplete',
+             'The search ended before resident requests were prioritised. More search time may help.'),
+            ([{'priority': 'resident_requests', 'status': 'feasible'}], 'request_search_incomplete',
+             'The search ended before finding the best overall request allocation. More search time may help.'),
+            ([{'priority': 'resident_requests', 'status': 'optimal'}, {'priority': 'posting_balance', 'status': 'feasible'}],
+             'not_selected', 'This request was not met in the selected timetable.'),
+        ):
             with self.subTest(stages=stages):
-                reason_code, message = unmet_request_reason(person, request, [placement], [option], stages)
-                self.assertEqual(reason_code, code)
-                self.assertNotIn('capacity', message.lower())  # Capacity 1 alone does not establish why it lost.
+                self.assertEqual(unmet_request_reason(person, request, [placement], [option], stages),
+                                 (code, message))
         request.update(starts=[], duration=3, period_months=[0, 1], request={'period': 'Jul - Aug 2027'})
-        self.assertEqual(unmet_request_reason(person, request, [], [option], []),
+        self.assertEqual(unmet_request_reason(person, request, [], [option], [initial]),
                          ('no_valid_start', 'R2 Child Psychiatry requires 3 months, but the requested Jul - Aug 2027 period is only 2 months.'))
         req['remaining_months'] = 0
         self.assertEqual(unmet_request_reason(person, request, [], [option], [])[0], 'requirement_completed')

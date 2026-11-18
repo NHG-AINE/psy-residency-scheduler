@@ -217,6 +217,18 @@ def unmet_request_reason(person, request, placements, options, stages):
             return 'training_progression', 'Outstanding training and required block order prevent a start within the requested period.'
         return 'no_valid_placement', "No placement matches this request under the resident's remaining training and timing rules."
     stage = next((s for s in stages if s['priority'] == 'resident_requests'), None)
-    if stage is None or stage['status'] != 'optimal':
-        return 'request_search_incomplete', 'The search time limit was reached before request optimisation was completed. This request may still be achievable.'
-    return 'not_selected', 'This request was not fulfilled in the best overall request allocation found. A specific individual restriction has not been established.'
+    if stage is None:
+        unfinished = next((s['priority'] for s in stages
+                           if s['priority'] != 'initial_feasibility' and s['status'] != 'optimal'), None)
+        activity = {
+            'capacity_overflow': 'reducing capacity overflow',
+            'incoming_route_distribution': 'balancing incoming R1 routes',
+            'monthly_medicine_neurology_ratio': 'balancing Medicine and Neurology by month',
+        }.get(unfinished)
+        when = f' while {activity},' if activity else ''
+        return 'request_search_incomplete', (
+            f'The search ended{when} before resident requests were prioritised. More search time may help.')
+    if stage['status'] != 'optimal':
+        return 'request_search_incomplete', (
+            'The search ended before finding the best overall request allocation. More search time may help.')
+    return 'not_selected', 'This request was not met in the selected timetable.'
