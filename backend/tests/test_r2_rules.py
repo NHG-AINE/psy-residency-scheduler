@@ -125,6 +125,8 @@ class R2SolverTests(unittest.TestCase):
             past.update(name=person["name"],mcr=person["mcr"])
             book["annual_sheets"].insert(1,{"residents":[past]})
         book["residents"][:] = book["residents"][:2]
+        book["postings"]["core"].append({"residency_year": "R3", "posting": "IMH Continuity Clinic",
+            "duration_months": "12", "source": {"sheet": "Postings", "row": 201}})
         result = self.solve(book)
         self.assertEqual({p["months"][0]["label"] for p in result["residents"]}, {"IMH ANDS", "IMH Addiction Medicine"})
         for elective in book["postings"]["electives"]:

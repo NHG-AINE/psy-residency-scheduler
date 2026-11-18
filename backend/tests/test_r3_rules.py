@@ -34,7 +34,8 @@ class R3Tests(unittest.TestCase):
         for m in book["annual_sheets"][0]["residents"][0]["postings"]:
             m["month"] = str(int(m["month"][:4]) - 1) + m["month"][4:]
         book["annual_sheets"].append({"residents": [resident([("2027-05", "TTSH Continuity Clinic"), ("2027-06", "TTSH Continuity Clinic")], "R3", "Clinic")]})
-        book["residents"][0]["postings"][1].update(status="loa", value="LOA")
+        for index in (1, -1):
+            book["residents"][0]["postings"][index].update(status="loa", value="LOA")
         before = deepcopy(book)
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])

@@ -49,6 +49,12 @@ def set_history(workbook, values):
     return history
 
 
+
+def leave_after(workbook, active_months):
+    for month in workbook["residents"][0]["postings"][active_months:]:
+        month.update(status="loa", value="LOA")
+
+
 class R1SolverTests(unittest.TestCase):
     def test_fresh_resident_can_split_medicine_around_neurology_at_both_pairings(self):
         prepared = prepare_scheduler_inputs(r1_book(), STORE)
@@ -146,14 +152,18 @@ class R1SolverTests(unittest.TestCase):
         workbook = r1_book()
         set_history(workbook, ["TTSH General Medicine"] * 2 + ["NNI Neurology"] * 2 + ["TTSH General Medicine"] * 2
                     + ["LOA"] * 3 + ["IMH Inpatient Psychiatry"] * 3)
+        from tests.test_r2_rules import r2_book
+        r2 = r2_book()["postings"]
+        workbook["postings"]["core"].extend(o for o in r2["core"] if o["residency_year"] == "R2")
+        workbook["postings"]["electives"] = r2["electives"]
         result = draft_schedule(workbook, STORE)
         self.assertEqual(result["status"], "optimal")
         person = result["residents"][0]
         self.assertEqual(person["route"], "TTSH/NNI")
         self.assertEqual(person["credited_r1_months"], 9)
         self.assertEqual([m["label"] for m in person["months"][:3]], ["IMH Inpatient Psychiatry"] * 3)
-        self.assertTrue(all(m["status"] == "outside_draft_scope" for m in person["months"][3:]))
-        self.assertEqual(person["carryforward"], [])
+        self.assertTrue(all(m["target"]["residency_year"] == "R2" for m in person["months"][3:]))
+        self.assertEqual(sum(item["months"] for item in person["carryforward"]), 3)
         self.assertEqual(result["soft_targets"]["active_incoming_cohort_size"], 0)
         # Past timing exceptions and blank/missing calendar months do not undo credit.
         for gap in (False, True):
@@ -169,6 +179,7 @@ class R1SolverTests(unittest.TestCase):
                 if gap:
                     history["postings"].pop(2)
                     exceptional["residents"][0]["intake"] = None
+                leave_after(exceptional, 5)
                 original = deepcopy(exceptional)
                 draft = draft_schedule(exceptional, STORE)
                 self.assertEqual(draft["status"], "optimal")
@@ -177,11 +188,12 @@ class R1SolverTests(unittest.TestCase):
                 self.assertEqual(person["credited_r1_months"], 7)
                 self.assertEqual(Counter(m["label"] for m in person["months"] if m["status"] == "posting"),
                                  {"SGH General Medicine": 3, "SGH Neurology": 2})
-                self.assertEqual(sum(m["status"] == "outside_draft_scope" for m in person["months"]), 7)
+                self.assertEqual(sum(m["status"] == "loa" for m in person["months"]), 7)
                 self.assertEqual(exceptional, original)
         # Cross-pair history still counts; future assignments form one valid pair.
         exceptional = r1_book()
         set_history(exceptional, ["TTSH General Medicine", "SGH Neurology"] + ["IMH Inpatient Psychiatry"] * 6 + [None] * 4)
+        leave_after(exceptional, 4)
         person = draft_schedule(exceptional, STORE)["residents"][0]
         future = [m for m in person["months"] if m["status"] == "posting"]
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in future),
@@ -191,6 +203,7 @@ class R1SolverTests(unittest.TestCase):
         exceptional = r1_book()
         set_history(exceptional, ["TTSH General Medicine"] * 5 + ["SGH Neurology"] * 3
                     + ["IMH Inpatient Psychiatry"] * 2 + ["SGH Inpatient Psychiatry"] * 2)
+        leave_after(exceptional, 2)
         person = draft_schedule(exceptional, STORE)["residents"][0]
         self.assertEqual(person["credited_r1_months"], 10)
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
@@ -199,6 +212,7 @@ class R1SolverTests(unittest.TestCase):
         # A completed combined route beats unused alternative requirements.
         exceptional = r1_book()
         set_history(exceptional, ["NUH Medicine & Neurology"] * 6 + ["TTSH General Medicine"] + [None] * 5)
+        leave_after(exceptional, 6)
         person = draft_schedule(exceptional, STORE)["residents"][0]
         self.assertEqual(person["route"], "NUH")
         self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"] if m["status"] == "posting"),
@@ -302,11 +316,20 @@ class R1SolverTests(unittest.TestCase):
                             for row in occupied["capacity_overflows"]))
 
     def test_completed_resident_retained_cells_still_consume_known_capacity(self):
-        book = r1_book()
-        set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + ["IMH Inpatient Psychiatry"] * 6)
+        from tests.test_r5_rules import r5_book
+        book = r5_book()
+        for sheet in book["annual_sheets"]:
+            for past in sheet["residents"]:
+                if past is not book["residents"][0]:
+                    for month in past["postings"]:
+                        month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+        labels = (["IMH Geriatric Psychiatry"] * 3 + ["IMH Child & Adolescent Psychiatry"] * 3
+                  + ["IMH Forensic Psychiatry (Elective)"] * 6)
+        book["annual_sheets"].append({"residents": [resident([
+            (f"{2026 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}", label) for i, label in enumerate(labels)], "R5")]})
         for posting in book["residents"][0]["postings"]:
-            posting.update(status="posting", value="IMH Inpatient Psychiatry")
-        next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+            posting.update(status="posting", value="IMH Forensic Psychiatry (Elective)")
+        next(row for row in book["postings"]["electives"] if row["residency_year"] == "R5")["max"] = "0"
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "optimal")
         self.assertTrue(all(month["status"] == "outside_draft_scope" for month in result["residents"][0]["months"]))
@@ -384,6 +407,7 @@ class R1SolverTests(unittest.TestCase):
         book = r1_book()
         set_history(book, ["TTSH General Medicine"] * 4 + ["NNI Neurology"] * 2 + [None] * 6)
         next(row for row in book["postings"]["core"] if row["posting"] == "IMH Inpatient Psychiatry")["max"] = "0"
+        leave_after(book, 6)
         draft = draft_schedule(book, STORE)
         person = draft["residents"][0]
         self.assertEqual(person["months"][0]["label"], "NUH Inpatient Psychiatry")

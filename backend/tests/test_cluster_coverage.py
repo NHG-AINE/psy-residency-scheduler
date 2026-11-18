@@ -6,7 +6,7 @@ from requirement_ledger import build_requirement_ledger
 from scheduler_inputs import prepare_scheduler_inputs
 from scheduler import draft_schedule
 from tests.test_requirement_ledger import book, resident
-from tests.test_r1_solver import STORE, r1_book, set_history
+from tests.test_r1_solver import STORE, r1_book, set_history, leave_after
 
 
 class ClusterCoverageTests(unittest.TestCase):
@@ -46,6 +46,7 @@ class ClusterCoverageTests(unittest.TestCase):
         for posting in workbook["postings"]["core"]:
             if "Inpatient" in posting["posting"] and not posting["posting"].startswith("NUH "):
                 posting["max"] = "0"
+        leave_after(workbook, 6)
         original = deepcopy(workbook)
         historical = {"visited": ["NHG", "SHS"], "missing": ["NUHS"]}
         result = draft_schedule(workbook, STORE)

@@ -393,6 +393,23 @@ def _add_catalogue_blockers(option, seen, blockers):
     blockers.extend({"code": code, "source": option["source"]} for code in option["reasons"])
 
 
+
+def _schedule_through(person, r1_remaining):
+    """Keep recorded obligations and include later blocks that can start in this draft."""
+    through = max(int(year[1:]) for year in person["recorded_years"])
+    if r1_remaining is None:
+        return through  # An infeasible R1 path cannot unlock later years.
+    available = sum(month["available"] for month in person["availability"])
+    remaining = r1_remaining
+    for year in range(2, 6):
+        if remaining >= available:
+            break
+        through = max(through, year)
+        remaining += sum(r["remaining_months"] for r in person["requirements"]
+                         if r["requirement_year"] == f"R{year}" and not r.get("alternative"))
+    return through
+
+
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None):
     """Schedule remaining R1 through R5 work in progression order.
 
@@ -428,16 +445,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     options = [o for o in prepared["catalogue_options"] if "r1" in recorded_years(o["residency_year"])]
     by_key, candidates, active_intake = r1_rules.prepare_candidates(
         selected, options, prepared["planning_start"], blockers)
-    # A completed R3 resident may be awaiting a roster-year update.
-    for person in selected:
-        if cancel and cancel.is_set():
-            raise DraftCancelled()
-        if "r3" in person["recorded_years"] and "r4" not in person["recorded_years"]:
-            required = [r for r in person["requirements"] if r["requirement_year"] in {"R2", "R3"}]
-            r1_done = any(route["evidence_status"] == "supported" for route in person["r1_routes"])
-            if r1_done and all(not r["remaining_months"] for r in required):
-                person["recorded_years"].append("r4")
-    has_r2 = any({"r2", "r3", "r4", "r5"} & set(person["recorded_years"]) for person in selected)
+    r1_remaining = [next((r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in choices), None)
+                    for choices in candidates]
+    for person, remaining in zip(selected, r1_remaining):
+        person["schedule_through"] = _schedule_through(person, remaining)
+    has_r2 = any(p["schedule_through"] >= 2 for p in selected)
     r2_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R2"] if has_r2 else []
     local_blockers = [[] for _ in selected]
     blocks = [[] for _ in selected]
@@ -452,10 +464,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             if summary.get("residency_year") == "R2" and summary.get("remarks"):
                 blockers.append({"code": "unsupported_r2_remarks", "source": summary["source"]})
         for i, person in enumerate(selected):
-            if {"r2", "r3", "r4", "r5"} & set(person["recorded_years"]):
+            if person["schedule_through"] >= 2:
                 blocks[i] = r2_rules.prepare_blocks(person, r2_options, local_blockers[i])
         options += r2_options
-    has_r3 = any({"r3", "r4", "r5"} & set(person["recorded_years"]) for person in selected)
+    has_r3 = any(p["schedule_through"] >= 3 for p in selected)
     r3_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R3"] if has_r3 else []
     r3_blocks = [[] for _ in selected]
     seen_r3 = set()
@@ -464,21 +476,21 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if o["remarks"]:
             blockers.append({"code": "unsupported_r3_remarks", "source": o["source"]})
     for i, person in enumerate(selected):
-        if {"r3", "r4", "r5"} & set(person["recorded_years"]):
+        if person["schedule_through"] >= 3:
             r3_blocks[i] = r3_rules.prepare_block(person, r3_options, local_blockers[i])
     options += r3_options
-    r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any({"r4", "r5"} & set(p["recorded_years"]) for p in selected) else []
+    r4_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R4"] if any(p["schedule_through"] >= 4 for p in selected) else []
     seen_r4 = set()
     for o in r4_options:
         _add_catalogue_blockers(o, seen_r4, blockers)
         if o["remarks"]:
             blockers.append({"code": "unsupported_r4_remarks", "source": o["source"]})
     r4_blocks = [r4_rules.prepare_blocks(person, r4_options, prepared["planning_start"],
-                     next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
+                     (r1_remaining[i] or 0)
                      + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i]), local_blockers[i])
-                 if {"r4", "r5"} & set(person["recorded_years"]) else [] for i, person in enumerate(selected)]
+                 if person["schedule_through"] >= 4 else [] for i, person in enumerate(selected)]
     options += r4_options
-    r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any("r5" in p["recorded_years"] for p in selected) else []
+    r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any(p["schedule_through"] >= 5 for p in selected) else []
     r5_options = [o for o in r5_options if r5_rules.supported_option(o)]
     seen_r5 = set()
     for o in r5_options:
@@ -487,10 +499,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"])
                         for person in selected]
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
-                     next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
+                     (r1_remaining[i] or 0)
                      + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i],
                      requests_need_r5_split(request_outcomes[i]))
-                 if "r5" in person["recorded_years"] else [[]] for i, person in enumerate(selected)]
+                 if person["schedule_through"] >= 5 else [[]] for i, person in enumerate(selected)]
     keep = [i for i, reasons in enumerate(local_blockers) if not reasons]
     for i, reasons in enumerate(local_blockers):
         if reasons:
@@ -584,7 +596,18 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         r2_months = sum(r["remaining_months"] for r, _, _ in blocks[i])
         placements[-1] += r2_rules.add_blocks(model, person, r3_blocks[i], r1_months + r2_months, i)
         r3_months = sum(r["remaining_months"] for r, _, _ in r3_blocks[i])
-        placements[-1] += r2_rules.add_blocks(model, person, r4_blocks[i], r1_months + r2_months + r3_months, i)
+        r4_placements = r2_rules.add_blocks(model, person, r4_blocks[i], r1_months + r2_months + r3_months, i)
+        placements[-1] += r4_placements
+        imh_inpatient = [p for p in r4_placements if p["option"]["requirement_id"] == "r4.inpatient_psychiatry"
+                         and p["option"]["institution"] == "IMH"]
+        if imh_inpatient and r1_months:
+            imh_choices = [variable for choice, variable in zip(candidates[i], variables[i])
+                           if r4_rules.completed_r1_inpatient_at_imh(person,
+                               sum(o is not None and o["requirement_id"] == inpatient_id and o["institution"] == "IMH"
+                                   for o in choice["schedule"]) + choice["carryforward"][(inpatient_id, "IMH")])]
+            if imh_choices:
+                for placement in imh_inpatient:
+                    model.add(placement["variable"] + sum(imh_choices) <= 1)
         for month in active[r1_months:r1_months + r2_months]:
             r2_monthly_totals[month] += 1
         r4_months = sum(r["remaining_months"] for r, _, _ in r4_blocks[i])
@@ -597,7 +620,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if len(active) > r5_start:
             combined_progress = next(r for r in person["requirements"] if r["requirement_id"] == r5_rules.COMBINED["id"])
             for requirement in person["requirements"]:
-                if "r5" in person["recorded_years"] and requirement["requirement_year"] == "R5" and not requirement.get("alternative") and requirement["remaining_months"]:
+                if person["schedule_through"] >= 5 and requirement["requirement_year"] == "R5" and not requirement.get("alternative") and requirement["remaining_months"]:
                     demand = 2 * requirement["remaining_months"]
                     if (requirement["requirement_id"] in r5_rules.COMBINED["credits"]
                             and combined_progress["expected_months"] and combined_progress["remaining_months"]):
@@ -640,7 +663,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                              "clusters": list(missing)}],
             })
             continue
-        enforce_deadline = bool({"r4", "r5"} & set(person["recorded_years"]))
+        enforce_deadline = person["schedule_through"] >= 4
         if enforce_deadline:
             cluster_review.append({"code": "r4_cluster_review", "source": person["source"], "clusters": missing})
         reaches_r3 = any(p["months"] and p["option"]["residency_year"] == "R3" for p in placements[i])
@@ -852,7 +875,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 assert choice["schedule"][month] is None
                 choice["schedule"][month] = placement["option"]
         completion_month = None
-        if "r5" in person["recorded_years"] and not choice["carryforward"] and not any(p["remaining"] for p in chosen):
+        if person["schedule_through"] >= 5 and not choice["carryforward"] and not any(p["remaining"] for p in chosen):
             projected = [
                 {**option, "month": availability["month"], "status": "expected", "target": option}
                 if option else {"month": availability["month"], "status": "blank" if availability["available"] else "loa"}
@@ -902,8 +925,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             if 'duplicate_of' in outcome:
                 original = outcomes[outcome['duplicate_of']]
                 outcome.update({key: deepcopy(original[key]) for key in ('status', 'reason', 'reason_code', 'assigned', 'matched_months') if key in original})
+        recorded_max = max(person["recorded_years"])
+        advanced = sorted({o["residency_year"] for o in choice["schedule"]
+                           if o and o["residency_year"].lower() > recorded_max})
+        projected_year = ",".join([person["recorded_year"], *advanced])
         result["residents"].append({"requests": outcomes, **deepcopy({key: person[key] for key in ("name", "mcr", "source", "slot_id", "recorded_year")}),
-                                    "route": choice["route"], "months": months,
+                                    "projected_year": projected_year, "route": choice["route"], "months": months,
                                     "cluster_coverage": {
                                         "historical": deepcopy(person["cluster_coverage"]),
                                         "projected": cluster_coverage(person["months"] + [
