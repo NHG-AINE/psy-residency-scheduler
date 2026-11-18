@@ -620,14 +620,29 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             fixed_occupancy[key].append({field: deepcopy(person.get(field)) for field in ("name", "mcr", "source")})
             by_key[key[1:]] = option
     cluster_visits, r3_cluster_visits = [], []
+    historical_cluster_warnings, cluster_review = [], []
     for i, person in enumerate(selected):
+        missing = person["cluster_coverage"]["missing"]
+        if not missing:
+            continue
+        if (any(route["evidence_status"] == "supported" for route in person["r1_routes"])
+                and all(not r["remaining_months"] for r in person["requirements"]
+                        if r["requirement_year"] in {"R2", "R3", "R4"})):
+            historical_cluster_warnings.append({
+                **deepcopy({field: person[field] for field in ("name", "mcr", "source")}),
+                "reasons": [{"code": "historical_cluster_gap", "source": deepcopy(person["source"]),
+                             "clusters": list(missing)}],
+            })
+            continue
+        enforce_deadline = bool({"r4", "r5"} & set(person["recorded_years"]))
+        if enforce_deadline:
+            cluster_review.append({"code": "r4_cluster_review", "source": person["source"], "clusters": missing})
         reaches_r3 = any(p["months"] and p["option"]["residency_year"] == "R3" for p in placements[i])
-        for cluster, sites in CLUSTERS.items():
-            if cluster in person["cluster_coverage"]["visited"]:
-                continue
+        for cluster in missing:
+            sites = CLUSTERS[cluster]
             visits = [variables[i][j] for j, c in enumerate(candidates[i]) if any(o and o["institution"] in sites for o in c["schedule"])]
             visits += [p["variable"] for p in placements[i] if p["months"] and p["option"]["residency_year"] != "R5" and p["option"]["institution"] in sites]
-            if {"r4", "r5"} & set(person["recorded_years"]):
+            if enforce_deadline:
                 # Future R1-R4 choices witness feasibility only; they do
                 # not contribute projected credit or reserve future capacity.
                 future = [variables[i][j] for j, choice in enumerate(candidates[i])
@@ -637,7 +652,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                 model.add(sum(visits + future) >= 1)
             if reaches_r3:
                 r3_cluster_visits.append(visits)
-            elif not ({"r4", "r5"} & set(person["recorded_years"])):
+            elif not enforce_deadline:
                 cluster_visits.append(visits)
     inpatient_size = sum(any(any(o and o["requirement_id"] == inpatient_id for o in c["schedule"])
                              for c in choices) for choices in candidates)
@@ -811,9 +826,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     if solver is None:
         if status == "infeasible" and r4_options:
             blockers.append({"code": "r4_schedule_infeasible"})
-            blockers.extend({"code": "r4_cluster_review", "source": p["source"], "clusters": p["cluster_coverage"]["missing"]}
-                            for p in selected if {"r4", "r5"} & set(p["recorded_years"]) and p["cluster_coverage"]["missing"])
+            blockers.extend(cluster_review)
         return result
+    if historical_cluster_warnings:
+        result["historical_cluster_warnings"] = historical_cluster_warnings
     diagnostics = scored[solver]
     preferences = diagnostics["preferences"]
     singletons = diagnostics["singletons"]

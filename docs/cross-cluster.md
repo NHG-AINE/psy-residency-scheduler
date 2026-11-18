@@ -46,6 +46,9 @@
   cover all three clusters. If no valid schedule can meet this requirement,
   report the missing cluster and the scheduling blocker instead of silently
   relaxing the requirement.
+- When recognised history shows all R1-R4 postings are complete, report missing
+  clusters as a historical warning and plan any remaining R5 training. The
+  coverage gap remains open for review and R5 postings cannot fill it.
 - Consider remaining eligible postings, not just the recorded R-year. Do not
   defer a missing cluster when doing so would leave no suitable opportunity
   before R4 completion; secure that exposure earlier. Do not assume future

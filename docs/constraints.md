@@ -55,8 +55,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   The six-month NUH Medicine & Neurology posting is a separate combined route.
 - **Visit all three clusters during R1-R4.** Each resident must have at least
   one posting in NHG, SHS and NUHS by the end of R4. Count recognised posting
-  history towards this cumulative requirement. See [cross-cluster.md](cross-cluster.md)
-  for the institution mapping and examples.
+  history towards this cumulative requirement. Once recognised history shows
+  R1-R4 postings are complete, report gaps as historical warnings and proceed
+  with remaining R5 planning. See [cross-cluster.md](cross-cluster.md) for the
+  institution mapping and examples.
 - **Do R4 Inpatient Psychiatry outside IMH after completing it at IMH in R1.**
   If a resident completed R1 Inpatient Psychiatry at IMH, their R4 Inpatient
   Psychiatry must be at TTSH, CGH, SGH or NUH. Determine the R1 posting from
