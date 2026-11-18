@@ -18,13 +18,15 @@ type CapacityRow = {
 export type CapacityOverflow = CapacityRow & {
   residents: { name: string | null; mcr: string | null; source: Source }[]
 }
+type ResidentWarning = { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }
 export type DraftSchedule = {
   capacity_overflows?: CapacityOverflow[]
   capacity_coverage_notes?: { code: string; source: Source }[]
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
-  skipped_residents?: { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }[]
+  skipped_residents?: ResidentWarning[]
+  historical_cluster_warnings?: ResidentWarning[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
     requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
@@ -157,6 +159,7 @@ const blockerLabels: Record<string, string> = {
   conflicting_partial_r4_history: 'Review the interrupted or conflicting R4 posting history',
   missing_r4_catalogue_option: 'No matching R4 catalogue option for the remaining requirement',
   completed_r4_missing_clusters: 'Review completed R4 history with missing cluster coverage',
+  historical_cluster_gap: 'Completed R1-R4 with missing cluster coverage',
   unsupported_r4_remarks: 'Review unsupported R4 posting remarks',
   duplicate_r4_catalogue_option: 'Resolve duplicate R4 posting options',
   r4_schedule_infeasible: 'No valid R4 schedule was found; review eligibility, clusters and outstanding training',

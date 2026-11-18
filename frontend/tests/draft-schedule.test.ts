@@ -213,9 +213,19 @@ test('request summaries and markers share draft outcomes and exclude duplicates'
 })
 
 
-test('request details show the outcome reason without workbook row metadata', async () => {
+test('draft feedback shows historical warnings and request outcomes with the relevant details', async () => {
   const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   try {
+    const { default: DraftResidentWarnings } = await vite.ssrLoadModule('/src/components/DraftResidentWarnings.tsx')
+    assert.equal(renderToStaticMarkup(createElement(DraftResidentWarnings, { draft })), '')
+    const warnings = renderToStaticMarkup(createElement(DraftResidentWarnings, {
+      draft: { ...draft, historical_cluster_warnings: [{ name: 'Example', mcr: null, source: resident.source,
+        reasons: [{ code: 'historical_cluster_gap', source: resident.source, clusters: ['SHS'] }] }] },
+    }))
+    assert.match(warnings, /^<details><summary>1 resident has historical cluster warnings<\/summary>/)
+    assert.match(warnings, /<strong>Example<\/strong>/)
+    assert.match(warnings, /Completed R1-R4 with missing cluster coverage - SHS/)
+    assert.match(warnings, /Source: Timetable \u00b7 row 3/)
     const { default: RequestDetails } = await vite.ssrLoadModule('/src/components/RequestDetails.tsx')
     const row = { request: { posting_request: 'IMH Inpatient Psychiatry', period: null, source: { sheet: 'Request', row: 37 } },
       status: 'not_met', reason: 'R4 Inpatient must be outside IMH.',
