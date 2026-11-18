@@ -213,19 +213,10 @@ class R5Tests(unittest.TestCase):
         book = r5_book()
         book["postings"]["electives"].append({"residency_year": "R5", "institution": "SGH", "elective": "Psychogeriatrics Psychiatry",
             "remarks": [{"text": "(which will meet the core 3months R5 Psychogeriatrics requirements)"}], "source": {"sheet": "Postings", "row": 501}})
-        imported = parse_workbook(structured_workbook_bytes())
-        credit = next(row for row in imported["postings"]["electives"] if row.get("additional_requirement"))
-        book["postings"]["electives"].append(credit)
-        book["requests"] = [{"posting_request": "IMH Child and EPIP (Elective)",
-                             "matched_resident_source": book["residents"][0]["source"]}]
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
-        person = result["residents"][0]
-        self.assertFalse(any(m["label"] in {"SGH Psychogeriatrics Psychiatry", "IMH Child and EPIP"} for m in person["months"]))
-        outcome, = person["requests"]
-        self.assertEqual(outcome["status"], "pending")
-        self.assertIn("Additional core credit", outcome["reason"])
-        self.assertTrue(any("overlap" in item for item in result["limitations"]))
+        self.assertFalse(any(m["label"] == "SGH Psychogeriatrics Psychiatry" for m in result["residents"][0]["months"]))
+        self.assertTrue(any("unsupported remarks" in item for item in result["limitations"]))
         # A partial unsupported elective cannot be switched to the standard one.
         for sheet in book["annual_sheets"]:
             for past in sheet["residents"]:
@@ -237,6 +228,82 @@ class R5Tests(unittest.TestCase):
         result = draft_schedule(book, STORE)
         self.assertEqual(result["status"], "blocked")
         self.assertIn("missing_r5_catalogue_option", [r["code"] for r in result["skipped_residents"][0]["reasons"]])
+
+    def test_structured_additional_credit_request_preserves_long_route_and_supports_early_completion(self):
+        book = r5_book()
+        imported = parse_workbook(structured_workbook_bytes())
+        credit = next(row for row in imported["postings"]["electives"] if row.get("additional_requirement"))
+        book["postings"]["electives"].append(credit)
+        roster = book["residents"][0]
+        label = "IMH Child and EPIP"
+        request = {"posting_request": f"{label} (Elective)", "period": "Jan - Jun 2028",
+                   "matched_resident_source": roster["source"]}
+        book["requests"] = [request]
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual(person["requests"][0]["status"], "met")
+        self.assertEqual([m["label"] for m in person["months"][6:]], [label] * 6)
+        self.assertTrue(all(m["status"] == "posting" for m in person["months"]))
+
+        request["period"] = "Jul - Dec 2027"
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual(person["requests"][0]["status"], "met")
+        self.assertEqual([m["label"] for m in person["months"][:6]], [label] * 6)
+        self.assertEqual([m["status"] for m in person["months"][9:]], ["outside_draft_scope"] * 3)
+
+        # The additional credit also permits a route when the separate core is unavailable.
+        book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"
+                                    or "Child & Adolescent Psychiatry" not in o["posting"]]
+        credit["max"] = "0"
+        request["period"] = "Oct 2027 - Mar 2028"
+        roster["postings"][9].update(status="posting", value="IMH Forensic Psychiatry (Elective)")
+        roster["postings"][10].update(status="loa", value="LOA")
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual(person["requests"][0]["status"], "met")
+        self.assertEqual([m["label"] for m in person["months"][3:9]], [label] * 6)
+        self.assertEqual([m["status"] for m in person["months"][9:]],
+                         ["outside_draft_scope", "loa", "outside_draft_scope"])
+        self.assertEqual(person["carryforward"], [])
+        self.assertEqual([(row["label"], row["assigned"]) for row in draft["capacity_overflows"]], [(label, 1)] * 6)
+
+        for cell in roster["postings"][7:12]:
+            cell.update(status="loa", value="LOA")
+        draft = draft_schedule(book, STORE)
+        person, = draft["residents"]
+        self.assertTrue(person["carryforward"])
+
+    def test_additional_credit_does_not_drop_partly_completed_core_or_interrupted_historical_posting(self):
+        book = r5_book()
+        imported = parse_workbook(structured_workbook_bytes())
+        credit = next(row for row in imported["postings"]["electives"] if row.get("additional_requirement"))
+        book["postings"]["electives"].append(credit)
+        for sheet in book["annual_sheets"]:
+            for past in sheet["residents"]:
+                if past is not book["residents"][0]:
+                    for month in past["postings"]:
+                        month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+        partial = resident([("2027-06", "IMH Child & Adolescent Psychiatry")], "R5", "R5 history")
+        book["annual_sheets"].append({"residents": [partial]})
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual([m["label"] for m in person["months"][:2]],
+                         ["IMH Child & Adolescent Psychiatry"] * 2)
+        self.assertTrue(all(m["status"] == "posting" for m in person["months"][:11]))
+        self.assertEqual(person["months"][-1]["status"], "outside_draft_scope")
+
+        partial["postings"][0]["value"] = "IMH Child and EPIP (Elective)"
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual([m["label"] for m in person["months"][:5]], ["IMH Child and EPIP"] * 5)
+        # The six-month run can continue into July and count the historical June.
+        self.assertEqual(person["months"][-1]["status"], "outside_draft_scope")
 
     def test_absent_core_catalogue_is_reported_not_synthesised(self):
         book = r5_book()

@@ -3,10 +3,12 @@ from copy import deepcopy
 
 if __package__:
     from .programme_requirements import validate_posting
+    from .rules.r5_rules import supported_option
     from .requirement_ledger import build_requirement_ledger, source_key
     from .workbook_import import normalized_label, optional_integer, posting_catalogue, recorded_years
 else:
     from programme_requirements import validate_posting
+    from rules.r5_rules import supported_option
     from requirement_ledger import build_requirement_ledger, source_key
     from workbook_import import normalized_label, optional_integer, posting_catalogue, recorded_years
 
@@ -62,16 +64,13 @@ def prepare_scheduler_inputs(workbook, reviewstore):
                 "requirement_id", "required_months", "institution", "posting", "training_months", "progress_key", "continuity")},
                 "duration_months": duration, "capacity": capacity, "raw": deepcopy(row),
                 "remarks": deepcopy(row.get("remarks")),
-                "policy_review_required": bool(row.get("remarks") or row.get("additional_requirement")),
+                "policy_review_required": bool(row.get("remarks")),
                 "valid": not reasons, "reasons": reasons}
             options.append(option)
             catalogue_blockers.extend({"code": reason, "source": deepcopy(row["source"])} for reason in reasons)
-            if row.get("additional_requirement"):
-                policy_reviews.append({"code": "unsupported_additional_credit", "label": target["label"],
-                                       "source": deepcopy(row["field_sources"]["additional_requirement"]),
-                                       "additional_requirement": row["additional_requirement"],
-                                       "additional_credit_months": row["additional_credit_months"]})
-            elif option["policy_review_required"]:
+            if option["residency_year"] == "R5" and option["label"]:
+                option["policy_review_required"] = not supported_option(option)
+            if option["policy_review_required"]:
                 policy_reviews.append({"code": "unsupported_posting_remarks", "source": deepcopy(row["source"]),
                                        "label": target["label"], "remarks": deepcopy(row["remarks"])})
 

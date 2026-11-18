@@ -552,15 +552,6 @@ def review_import(result, yearly_sheets=None):
                        "message": f"{len({entry[0] for entry in unmapped})} distinct posting values have no reference in the core or elective catalogue.",
                        "source": next(iter(unmapped.values())), "values": [entry[0] for entry in unmapped],
                        "sources": list(unmapped.values())})
-    for row in result["postings"].get("electives", []):
-        if row.get("additional_requirement"):
-            issues.append({
-                "code": "unsupported_additional_credit", "severity": "warning",
-                "title": "Additional elective credit needs review",
-                "message": (f"{row['institution']} {row['elective']} is excluded from draft scheduling because "
-                            "additional core credit is not yet supported."),
-                "source": row["field_sources"]["additional_requirement"],
-            })
     result["issues"] = issues
     return result
 

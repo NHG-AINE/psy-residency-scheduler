@@ -73,11 +73,6 @@ def resolve_requests(person, requests, options, planning_months):
             matches = current
         else:
             matches = [o for o in matches if requirements[o['requirement_id']]['remaining_months']]
-        supported = [o for o in matches if not o.get('additional_requirement')]
-        if matches and not supported:
-            item['reason'] = 'Additional core credit from this elective is not supported in draft scheduling'
-            continue
-        matches = supported
         identities = {(o['requirement_id'], normalized_posting_label(o['posting']), o['category']) for o in matches}
         if len(identities) != 1:
             item['reason'] = 'No unique eligible catalogue posting'

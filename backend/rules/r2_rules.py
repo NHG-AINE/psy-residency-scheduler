@@ -69,7 +69,7 @@ def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
                 for tick in range(start, start + length):
                     coverage[tick].append(variable)
                 months = [active[tick] for tick in range(start, start + length) if tick < len(active)]
-                placements.append({"variable": variable, "option": option, "months": months,
+                placements.append({"variable": variable, "option": option, "months": months, "start": start,
                                    "remaining": length - len(months),
                                    **({"block_id": requirement["block_id"],
                                        "block_duration": requirement["required_months"]}
