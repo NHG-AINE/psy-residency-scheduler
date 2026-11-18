@@ -501,7 +501,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
                      (r1_remaining[i] or 0)
                      + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i],
-                     requests_need_r5_split(request_outcomes[i]))
+                     requests_need_r5_split(request_outcomes[i]), request_outcomes[i])
                  if person["schedule_through"] >= 5 else [[]] for i, person in enumerate(selected)]
     keep = [i for i, reasons in enumerate(local_blockers) if not reasons]
     for i, reasons in enumerate(local_blockers):
@@ -518,8 +518,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r5_routes = [r5_routes[i] for i in keep]
     request_outcomes = [request_outcomes[i] for i in keep]
     r5_blocks = [routes[0] for routes in r5_routes]
-    combined_r5 = any(r["requirement_id"] == r5_rules.COMBINED["id"]
-                      for routes in r5_routes for route in routes for r, _, _ in route)
+    shared_r5 = any(len(r5_rules.balance_components(eligible[0])) > 1
+                    for routes in r5_routes for route in routes for _, eligible, _ in route)
     # Longer and overlap routes can occupy a different number of months.
     variable_r5_totals = any(len({sum(r["remaining_months"] for r, _, _ in route) for route in routes}) > 1
                              for routes in r5_routes)
@@ -618,14 +618,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         for month in active[r5_start:r5_start + sum(r["remaining_months"] for r, _, _ in r5_blocks[i])]:
             r5_monthly_totals[month] += 1
         if len(active) > r5_start:
-            combined_progress = next(r for r in person["requirements"] if r["requirement_id"] == r5_rules.COMBINED["id"])
-            for requirement in person["requirements"]:
-                if person["schedule_through"] >= 5 and requirement["requirement_year"] == "R5" and not requirement.get("alternative") and requirement["remaining_months"]:
-                    demand = 2 * requirement["remaining_months"]
-                    if (requirement["requirement_id"] in r5_rules.COMBINED["credits"]
-                            and combined_progress["expected_months"] and combined_progress["remaining_months"]):
-                        demand = combined_progress["remaining_months"]
-                    r5_demand[requirement["requirement_id"]] += demand
+            # The first feasible route keeps the default component mix where
+            # available. Only request scoring decides whether to vary it.
+            for block, eligible, _ in r5_blocks[i]:
+                components = r5_rules.balance_components(eligible[0])
+                for key in components:
+                    r5_demand[key] += (2 // len(components)) * block["remaining_months"]
         for placement in placements[-1]:
             o = placement["option"]
             for month in placement["months"]:
@@ -693,9 +691,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     for demand in r5_demand.values():
         divisor = gcd(divisor, demand)
     weights = {key: demand // divisor for key, demand in r5_demand.items()} if divisor else {}
-    # Preserve the programme balance targets. An overlap elective occupies
-    # only one elective place even when it fulfils an additional requirement.
-    balance_scale = 2 if combined_r5 else 1
+    balance_scale = 2 if shared_r5 else 1
+    r5_components = {key: r5_rules.balance_components(option) for key, option in by_key.items()
+                     if option["residency_year"] == "R5"}
     capacity_bound = None
 
     def build_preferences(model, value, priority=None):
@@ -741,10 +739,11 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                     balance.extend(_posting_balance(model, counts, totals[month], f"{year}_{month}"))
             balance = [term * balance_scale for term in balance]
             for month in range(len(prepared["planning_months"])):
-                counts = {key: _posting_count(model, sum(value(v) * (1 if r == r5_rules.COMBINED["id"] else balance_scale)
-                                                        for (m, r, site, label), values in occupancy.items()
-                                                        if m == month and (r == key or r == r5_rules.COMBINED["id"] and key in r5_rules.COMBINED["credits"])
-                                                        for v in values),
+                counts = {key: _posting_count(model, sum(
+                              value(v) * (balance_scale // len(r5_components[(r, site, label)]))
+                              for (m, r, site, label), values in occupancy.items()
+                              if m == month and key in r5_components.get((r, site, label), ())
+                              for v in values),
                                              len(selected) * balance_scale, f"r5_{month}_{key}") for key in weights}
                 balance.extend(_weighted_posting_balance(model, counts, weights, len(selected) * balance_scale, f"r5_balance_{month}"))
             objectives["posting_balance"] = sum(balance)
@@ -844,12 +843,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if any(o and o["requirement_id"] in {r1_rules.R1["General Medicine"]["id"], r1_rules.R1["Neurology"]["id"]}
                for choices in candidates for choice in choices for o in choice["schedule"]) else None,
         posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
-                              [] if combined_r5 or variable_r5_totals else r5_monthly_totals,
-                              {} if combined_r5 or variable_r5_totals else weights) if weights else None,
+                              [] if shared_r5 or variable_r5_totals else r5_monthly_totals,
+                              {} if shared_r5 or variable_r5_totals else weights) if weights else None,
         # These projections assume one block per requirement and separate core
         # counts. Split electives and combined cores need route-aware projections; retain the safe
         # R2/R4 count bound rather than claiming an invalid lower bound.
-        posting_block_data=None if combined_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
+        posting_block_data=None if shared_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
         initial_feasibility=True, score_values=score_values)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": r1_rules._targets(sum(active_intake)),
@@ -894,11 +893,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
         outcomes = request_outcomes[i]
         for outcome in outcomes:
-            if outcome.get('status') == 'evaluable' and 'duplicate_of' not in outcome:
-                outcome['status'] = 'met' if any(placement_fulfils_request(p, outcome) for p in chosen) else 'not_met'
-                if outcome['status'] == 'not_met':
-                    outcome['reason_code'], outcome['reason'] = unmet_request_reason(
-                        person, outcome, placements[i], options, stages)
+            if outcome['status'] in {'evaluable', 'not_met'} and 'duplicate_of' not in outcome:
+                if outcome['status'] == 'evaluable':
+                    outcome['status'] = 'met' if any(placement_fulfils_request(p, outcome) for p in chosen) else 'not_met'
+                    if outcome['status'] == 'not_met':
+                        outcome['reason_code'], outcome['reason'] = unmet_request_reason(
+                            person, outcome, placements[i], options, stages)
                 matching = [p for p in chosen if p['option']['requirement_id'] == outcome['requirement_id'] and p['months']]
                 if not matching and outcome['requirement_id'] in {*r5_rules.COMBINED['credits'], r5_rules.COMBINED['id']}:
                     alternatives = (set(r5_rules.COMBINED['credits']) if outcome['requirement_id'] == r5_rules.COMBINED['id']

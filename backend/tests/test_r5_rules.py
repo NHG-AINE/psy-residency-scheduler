@@ -54,7 +54,7 @@ class R5Tests(unittest.TestCase):
                 if recorded == "R4":
                     histories["R3"]["postings"] = histories["R3"]["postings"][:10]
                     book["requests"] = [{"posting_request": "IMH Forensic Psychiatry (Elective)",
-                                         "period": "Mar - Jun 2028", "matched_resident_source": roster["source"]}]
+                                         "period": None, "matched_resident_source": roster["source"]}]
                 before = deepcopy(book)
                 result = draft_schedule(book, STORE)
                 self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
@@ -280,7 +280,7 @@ class R5Tests(unittest.TestCase):
                                      or not o["posting"].endswith("Child & Adolescent Psychiatry")]
         shortened = draft_schedule(early, STORE)
         self.assertIn(shortened["status"], {"optimal", "feasible"}, shortened["blockers"])
-        self.assertEqual(shortened["residents"][0]["months"][-1]["status"], "requirements_completed")
+        self.assertTrue(all(m["status"] == "posting" for m in shortened["residents"][0]["months"]))
         self.assertEqual(shortened["historical_cluster_warnings"], result["historical_cluster_warnings"])
 
         # The same R5 record label and completed R4 blocks don't exempt someone
@@ -325,54 +325,76 @@ class R5Tests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("missing_r5_catalogue_option", [r["code"] for r in result["skipped_residents"][0]["reasons"]])
 
-    def test_structured_additional_credit_request_preserves_long_route_and_supports_early_completion(self):
+    def test_mixed_credit_and_separate_core_requests_fill_twelve_months(self):
         book = r5_book()
-        imported = parse_workbook(structured_workbook_bytes())
-        credit = next(row for row in imported["postings"]["electives"] if row.get("additional_requirement"))
+        imports = parse_workbook(structured_workbook_bytes())
+        credit = next(row for row in imports["postings"]["electives"] if row.get("additional_requirement"))
         book["postings"]["electives"].append(credit)
         roster = book["residents"][0]
         label = "IMH Child and EPIP"
-        request = {"posting_request": f"{label} (Elective)", "period": "Jan - Jun 2028",
-                   "matched_resident_source": roster["source"]}
-        book["requests"] = [request]
+        book["requests"] = [
+            {"posting_request": posting, "period": period, "matched_resident_source": roster["source"]}
+            for posting, period in (("KKH Child & Adolescent Psychiatry (Core)", "Jul - Sep 2027"),
+                                    (f"{label} (Elective)", "Jan - Jun 2028"))]
         draft = draft_schedule(book, STORE)
         self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
         person, = draft["residents"]
-        self.assertEqual(person["requests"][0]["status"], "met")
+        self.assertEqual([row["status"] for row in person["requests"]], ["met", "met"])
         self.assertEqual([m["label"] for m in person["months"][6:]], [label] * 6)
         self.assertTrue(all(m["status"] == "posting" for m in person["months"]))
+        self.assertFalse(person["carryforward"])
 
-        request["period"] = "Jul - Dec 2027"
+        combined = {"residency_year": "R5", "posting": "CGH Child and Geriatric Psychiatry",
+                    "duration_months": "6", "source": {"sheet": "Postings", "row": 900}}
+        book["postings"]["core"].append(combined)
+        book["requests"][0].update(posting_request=combined["posting"], period="Jul - Dec 2027")
         draft = draft_schedule(book, STORE)
         self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
         person, = draft["residents"]
-        self.assertEqual(person["requests"][0]["status"], "met")
-        self.assertEqual([m["label"] for m in person["months"][:6]], [label] * 6)
-        self.assertEqual([m["status"] for m in person["months"][9:]], ["requirements_completed"] * 3)
+        self.assertEqual([row["status"] for row in person["requests"]], ["met", "met"])
+        self.assertEqual([m["label"] for m in person["months"]], [combined["posting"]] * 6 + [label] * 6)
+        book["postings"]["core"].remove(combined)
 
-        # The additional credit also permits a route when the separate core is unavailable.
+        # The mixed posting can replace the separate Child core with a regular
+        # three-month elective making up the remainder. Capacity counts it once.
         book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"
-                                    or "Child & Adolescent Psychiatry" not in o["posting"]]
+                                    or not o["posting"].endswith("Child & Adolescent Psychiatry")]
         credit["max"] = "0"
-        request["period"] = "Oct 2027 - Mar 2028"
-        roster["postings"][9].update(status="posting", value="IMH Forensic Psychiatry (Elective)")
-        roster["postings"][10].update(status="loa", value="LOA")
+        book["requests"] = book["requests"][1:]
+        book["requests"][0]["period"] = "Jul - Dec 2027"
+        book["requests"].append({"posting_request": "IMH Forensic Psychiatry (Elective)", "period": "Jan - Mar 2028",
+                                 "matched_resident_source": roster["source"]})
         draft = draft_schedule(book, STORE)
         self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
         person, = draft["residents"]
-        self.assertEqual(person["requests"][0]["status"], "met")
-        self.assertEqual([m["label"] for m in person["months"][3:9]], [label] * 6)
-        self.assertEqual([m["status"] for m in person["months"][9:]],
-                         ["outside_draft_scope", "loa", "requirements_completed"])
-        self.assertEqual(person["carryforward"], [])
+        self.assertEqual([row["status"] for row in person["requests"]], ["met", "met"])
+        self.assertTrue(all(m["status"] == "posting" for m in person["months"]))
+        self.assertEqual(Counter(m["label"] for m in person["months"])["IMH Forensic Psychiatry"], 3)
         self.assertEqual([(row["label"], row["assigned"]) for row in draft["capacity_overflows"]], [(label, 1)] * 6)
 
-        for cell in roster["postings"][7:12]:
-            cell.update(status="loa", value="LOA")
-        draft = draft_schedule(book, STORE)
-        person, = draft["residents"]
-        self.assertTrue(person["carryforward"])
-        self.assertNotIn("requirements_completed", [m["status"] for m in person["months"]])
+    def test_requested_extended_r5_cores_are_six_continuous_months(self):
+        for child, geri, elective in ((3, 3, 6), (6, 3, 3), (3, 6, 3), (6, 6, 0)):
+            with self.subTest(child=child, geri=geri):
+                book = r5_book()
+                source = book["residents"][0]["source"]
+                periods = []
+                if child == 6:
+                    periods.append(("IMH Child & Adolescent Psychiatry", "Jul - Dec 2027"))
+                if geri == 6:
+                    periods.append(("IMH Geriatric Psychiatry", "Jan - Jun 2028"))
+                book["requests"] = [{"posting_request": label, "period": period, "matched_resident_source": source}
+                                    for label, period in periods]
+                draft = draft_schedule(book, STORE)
+                self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+                person, = draft["residents"]
+                self.assertTrue(all(row["status"] == "met" for row in person["requests"]))
+                self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"]),
+                                 Counter({"r5.child_adolescent_psychiatry": child, "r5.geriatric_psychiatry": geri, "r5.elective": elective}))
+                self.assertFalse(person["carryforward"])
+                for row in person["requests"]:
+                    self.assertEqual(len(row["matched_months"]), 6)
+                    labels = {m["label"] for m in person["months"] if m["month"] in row["matched_months"]}
+                    self.assertEqual(len(labels), 1)
 
     def test_additional_credit_does_not_drop_partly_completed_core_or_interrupted_historical_posting(self):
         book = r5_book()
@@ -402,6 +424,27 @@ class R5Tests(unittest.TestCase):
         # The six-month run can continue into July and count the historical June.
         self.assertEqual(person["months"][-1]["status"], "requirements_completed")
 
+    def test_historical_extended_core_keeps_credit_and_continues_remaining_months(self):
+        for credited in (4, 6):
+            with self.subTest(credited=credited):
+                book = r5_book()
+                for sheet in book["annual_sheets"]:
+                    for person in sheet["residents"]:
+                        if person is not book["residents"][0]:
+                            for month in person["postings"]:
+                                month["month"] = str(int(month["month"][:4]) - 1) + month["month"][4:]
+                role = "Child & Adolescent Psychiatry"
+                # Historical completed blocks may have been at different sites.
+                history = [(f"2027-{month:02d}", f"{'KKH' if credited == 6 and month < 4 else 'IMH'} {role}")
+                           for month in range(7 - credited, 7)]
+                book["annual_sheets"].append({"residents": [resident(history, "R5", "Core history")]})
+                result = draft_schedule(book, STORE)
+                self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                person, = result["residents"]
+                self.assertEqual([m["label"] for m in person["months"][:6-credited]], [f"IMH {role}"] * (6 - credited))
+                self.assertEqual(sum(m["status"] == "posting" for m in person["months"]), 12 - credited)
+                self.assertEqual(person["months"][-1]["status"], "requirements_completed")
+
     def test_absent_core_catalogue_is_reported_not_synthesised(self):
         book = r5_book()
         book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"]
@@ -416,14 +459,18 @@ class R5ElectiveBlockTests(unittest.TestCase):
                 "institution": institution, "label": institution + " " + posting, "remarks": list(remarks)}
 
     def routes(self, history, options=None, earlier=0, allow_split=False):
-        from rules.r5_rules import elective_routes
+        from rules.r5_rules import prepare_routes, R5_CORES
         credited = sum(m["status"] == "expected" for m in history)
-        person = {"source": {"sheet": "Planning", "row": 3}, "months": history,
-                  "requirements": [{"requirement_id": "r5.elective", "required_months": 6,
+        cores = [{"requirement_id": key, "required_months": 3, "remaining_months": 0} for key in R5_CORES]
+        for i, key in enumerate(R5_CORES):
+            history = [{"month": f"2026-{(i * 3) + m:02d}", "requirement_id": key, "posting": key,
+                        "institution": "IMH", "status": "expected"} for m in (1, 2, 3)] + history
+        person = {"source": {"sheet": "Planning", "row": 3}, "months": sorted(history, key=lambda m: m["month"]),
+                  "requirements": cores + [{"requirement_id": "r5.elective", "required_months": 6,
                                     "expected_months": credited, "remaining_months": max(0, 6 - credited)}]}
         errors = []
-        routes = elective_routes(person, options or [self.option("A"), self.option("B", "TTSH")],
-                                 "2027-07", earlier, errors, allow_split)
+        routes = prepare_routes(person, options or [self.option("A"), self.option("B", "TTSH")],
+                                "2027-07", earlier, errors, allow_split)
         return routes, errors
 
     def history(self, start, count, posting="A", institution="IMH"):
@@ -472,6 +519,12 @@ class R5ElectiveBlockTests(unittest.TestCase):
                     self.assertEqual([[r["remaining_months"] for r, _, _ in route] for route in routes], [[2]])
                     self.assertEqual(routes[0][0][0]["required_months"], 6)
                     self.assertTrue(routes[0][0][2])
+        for count in (4, 5):
+            routes, errors = self.routes(self.history(7 - count, count), options)
+            self.assertFalse(errors)
+            block, eligible, partial = routes[0][0]
+            self.assertEqual((block["required_months"], block["remaining_months"], partial), (3, 6 - count, True))
+            self.assertEqual([o["institution"] for o in eligible], ["IMH"])
         history = self.history(1, 3) + [{"month": "2027-04", "status": "blank"}]
         routes, errors = self.routes(history)
         self.assertFalse(errors)
@@ -508,7 +561,7 @@ class R5ElectiveBlockTests(unittest.TestCase):
                 if duration == 3:
                     # The next completed block is allowed at a different service/site.
                     for p in placements:
-                        if p["block_id"] == "r5.elective.1" and p["option"]["institution"] != "TTSH":
+                        if p["block_id"] == "r5.block.3" and p["option"]["institution"] != "TTSH":
                             model.add(p["variable"] == 0)
                 self.assertEqual(model.validate(), "")
                 solver = cp_model.CpSolver()
