@@ -271,7 +271,7 @@ class RequestSchedulerTests(unittest.TestCase):
         self.assertEqual(result["residents"][0]["requests"][3]["status"], "not_met")
         self.assertEqual(result["residents"][0]["requests"][3]["reason_code"], "not_selected")
 
-    def test_blank_request_defaults_to_six_and_explicit_continuation_counts_only_remaining_months(self):
+    def test_blank_request_allows_catalogue_lengths_and_explicit_continuation_counts_remaining_months(self):
         from request_preferences import resolve_requests, placement_fulfils_request
         source = {"sheet": "Planning", "row": 3}
         person = {"source": source, "months": [], "recorded_years": ["r5"],
@@ -285,7 +285,8 @@ class RequestSchedulerTests(unittest.TestCase):
         self.assertEqual(first["requested_months"], 6)
         self.assertEqual(duplicate["duplicate_of"], 0)
         three = {"option": option, "months": [0, 1, 2], "remaining": 0, "block_duration": 3}
-        self.assertFalse(placement_fulfils_request(three, first))
+        self.assertTrue(placement_fulfils_request(three, first))
+        self.assertEqual(first["requested_durations"], [3, 6])
         self.assertTrue(placement_fulfils_request({**three, "remaining": 3, "block_duration": 6}, first))
         narrow, invalid = resolve_requests(person, [dict(request, period="Jul - Sep 2027"),
                                                    dict(request, period="Jul - Oct 2027")], [option], months)

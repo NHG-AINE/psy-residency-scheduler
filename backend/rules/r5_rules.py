@@ -64,7 +64,7 @@ def _requested_components(requests, options):
         if row["status"] != "evaluable" or not row["fresh_duration"]:
             continue
         key, duration = row["requirement_id"], row["duration"]
-        lengths.add((key, duration))
+        lengths.update((key, d) for d in row.get("requested_durations", [duration]))
         if key == R5_ELECTIVE and duration == 6:
             mixed.update(credit for option_key in row["option_keys"]
                          if (credit := _credit_key(by_key.get(option_key, {}))))

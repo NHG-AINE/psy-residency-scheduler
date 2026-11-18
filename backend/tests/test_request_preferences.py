@@ -159,7 +159,7 @@ class RequestPreferenceTests(unittest.TestCase):
         def resolved(service="A", period=None, catalogue=None):
             return resolve_requests(person, [{"matched_resident_source": source, "posting_request": service,
                                               "period": period}], catalogue or options, months)
-        for period, enabled in ((None, False), ("Jan - Jun 2028", False), ("Jan - Mar 2028", True),
+        for period, enabled in ((None, True), ("Jan - Jun 2028", False), ("Jan - Mar 2028", True),
                                 ("Apr - Jun 2028", True), ("Not a period", False)):
             with self.subTest(period=period):
                 self.assertEqual(requests_need_r5_split(resolved(period=period)), enabled)
@@ -168,6 +168,13 @@ class RequestPreferenceTests(unittest.TestCase):
         self.assertFalse(requests_need_r5_split(resolved(period="Apr - Jun 2028", catalogue=six_only)))
         three_only = [{**options[0], "remarks": [{"text": "(3 months- that can be paired with any other institution)"}]}]
         self.assertTrue(requests_need_r5_split(resolved(catalogue=three_only)))
+        # A blank request cannot make an unsupported option eligible merely
+        # because another institution offers the same service with valid lengths.
+        unsupported = {**options[0], "institution": "NUH", "label": "NUH A",
+                       "remarks": [{"text": "Needs clarification"}]}
+        blank, = resolved(catalogue=[three_only[0], unsupported])
+        self.assertEqual(blank["option_keys"], [("r5.elective", "IMH", "IMH A")])
+
         mismatch, = resolved(period="Jan - Jun 2028", catalogue=three_only)
         self.assertEqual((mismatch["status"], mismatch["reason_code"], mismatch["requested_months"]),
                          ("not_met", "duration_mismatch", 6))

@@ -9,6 +9,7 @@ export type RequestOutcome = {
   request: { posting_request: string | null; period: string | null; source: Source }
   status: 'met' | 'not_met' | 'pending'; reason?: string | null; reason_code?: string; duplicate_of?: number
   requested_months?: number
+  requested_durations?: number[]
   assigned?: { label: string; months: string[] }[]; matched_months?: string[]; replacement_months?: string[]
   capacity?: CapacityRow[]
 }
