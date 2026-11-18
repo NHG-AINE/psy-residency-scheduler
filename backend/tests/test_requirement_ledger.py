@@ -99,13 +99,14 @@ class RequirementLedgerTests(unittest.TestCase):
             self.assertEqual(requirement(ledger(known), "r1.general_medicine")["expected_months"], 1)
 
     def test_historical_timing_notes_group_proven_exceptions_without_changing_credit_or_readiness(self):
-        from tests.test_r1_solver import r1_book, set_history
+        from tests.test_r1_solver import r1_book, set_history, leave_after
         from scheduler import draft_schedule
         workbook = r1_book()
         history = set_history(workbook, ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6)
         # A merged source can support several months; display each reference once.
         for posting in history["postings"][6:]:
             posting["source"] = {"sheet": "History", "row": 3, "column": "J"}
+        leave_after(workbook, 5)
         original = deepcopy(workbook)
         result = ledger(workbook)
         person = result["residents"][0]

@@ -34,6 +34,91 @@ def r5_book():
 
 
 class R5Tests(unittest.TestCase):
+    def test_training_progresses_at_every_year_boundary_with_months_left(self):
+        for recorded, year_counts, carry in (
+                ("R1", {"R1": 2, "R2": 10}, 2),
+                ("R2", {"R2": 3, "R3": 9}, 3),
+                ("R3", {"R3": 2, "R4": 10}, 2),
+                ("R4", {"R3": 2, "R4": 6, "R5": 4}, 8)):
+            with self.subTest(recorded=recorded):
+                book = r5_book()
+                roster = book["residents"][0]
+                roster["residency_year"] = recorded
+                histories = {person["residency_year"]: person for sheet in book["annual_sheets"]
+                             for person in sheet["residents"] if person is not roster}
+                latest = int(recorded[1])
+                for sheet in book["annual_sheets"]:
+                    sheet["residents"] = [person for person in sheet["residents"]
+                                          if person is roster or int(person["residency_year"][1]) <= latest]
+                histories[recorded]["postings"] = histories[recorded]["postings"][:{1: 10, 2: 9, 3: 10, 4: 6}[latest]]
+                if recorded == "R4":
+                    histories["R3"]["postings"] = histories["R3"]["postings"][:10]
+                    book["requests"] = [{"posting_request": "IMH Forensic Psychiatry (Elective)",
+                                         "period": "Mar - Jun 2028", "matched_resident_source": roster["source"]}]
+                before = deepcopy(book)
+                result = draft_schedule(book, STORE)
+                self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                person, = result["residents"]
+                expected = [year for year, count in year_counts.items() for _ in range(count)]
+                self.assertEqual([m["target"]["residency_year"] for m in person["months"]], expected)
+                self.assertEqual(person["recorded_year"], recorded)
+                self.assertEqual(person["projected_year"], f"{recorded},R{latest + 1}")
+                self.assertEqual(sum(c["months"] for c in person["carryforward"]), carry)
+                if recorded == "R4":
+                    self.assertEqual(person["requests"][0]["status"], "met")
+                self.assertEqual(book, before)
+
+    def test_loa_can_prevent_entry_into_next_year_without_validating_its_catalogue(self):
+        book = r5_book()
+        roster = book["residents"][0]
+        roster["residency_year"] = "R2"
+        book["annual_sheets"] = [sheet for sheet in book["annual_sheets"]
+                                 if sheet["residents"][0]["residency_year"] in {"R1", "R2"}]
+        r2_history = book["annual_sheets"][-1]["residents"][0]
+        r2_history["postings"] = r2_history["postings"][:9]
+        for month in roster["postings"][3:]:
+            month.update(status="loa", value="LOA")
+        catalogue = book["postings"]["core"]
+        book["postings"]["core"] = [row for row in catalogue if row["residency_year"] != "R3"]
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        person, = result["residents"]
+        self.assertEqual([m["target"]["residency_year"] for m in person["months"][:3]], ["R2"] * 3)
+        self.assertTrue(all(m["status"] == "loa" for m in person["months"][3:]))
+        self.assertEqual(person["projected_year"], "R2")
+        self.assertEqual(person["carryforward"], [])
+
+        book["postings"]["core"] = catalogue
+        roster["postings"][3].update(status="blank", value=None)
+        book["requests"] = [{"posting_request": "NUH Continuity Clinic", "period": None,
+                             "matched_resident_source": roster["source"]}]
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        person, = result["residents"]
+        self.assertEqual(person["months"][3]["label"], "NUH Continuity Clinic")
+        self.assertEqual(person["requests"][0]["status"], "met")
+        self.assertEqual(person["projected_year"], "R2,R3")
+        carry, = person["carryforward"]
+        self.assertEqual((carry["requirement_id"], carry["institution"], carry["months"]), ("r3.continuity_clinic", "NUH", 11))
+
+    def test_progression_skips_completed_years_and_enforces_projected_imh_exclusion(self):
+        book = r5_book()
+        roster = book["residents"][0]
+        roster["residency_year"] = "R1"
+        book["annual_sheets"].pop()  # R4 has no historical credit.
+        book["annual_sheets"][0]["residents"][0]["postings"].pop()
+        book["requests"] = [{"posting_request": "IMH Inpatient Psychiatry", "period": None,
+                             "matched_resident_source": roster["source"]}]
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        person, = result["residents"]
+        self.assertEqual(person["months"][0]["label"], "IMH Inpatient Psychiatry")
+        self.assertTrue(all(m["target"]["residency_year"] == "R4" for m in person["months"][1:]))
+        self.assertNotIn("IMH Inpatient Psychiatry", [m["label"] for m in person["months"][1:]])
+        self.assertEqual(person["projected_year"], "R1,R4")
+        self.assertEqual(person["requests"][0]["status"], "not_met")
+        self.assertFalse(person["cluster_coverage"]["projected"]["missing"])
+
     def test_full_r5_with_workbook_catalogue(self):
         book = r5_book()
         before = deepcopy(book)

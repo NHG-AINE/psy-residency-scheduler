@@ -90,7 +90,10 @@ class R4Tests(unittest.TestCase):
         self.assertEqual(sum(item["months"] for item in person["carryforward"]), 3)
 
     def test_interrupted_clinic_resumes_before_remaining_r4_without_repeating_credit(self):
-        book = r4_book()
+        from tests.test_r5_rules import r5_book
+        book = r5_book()
+        book["annual_sheets"].pop()  # Keep the R5 catalogue and replace R4 history.
+        book["residents"][0]["residency_year"] = "R4"
         for sheet in book["annual_sheets"]:
             for past in sheet["residents"]:
                 if past is book["residents"][0]:
@@ -106,9 +109,11 @@ class R4Tests(unittest.TestCase):
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         person = result["residents"][0]
         self.assertEqual([m["label"] for m in person["months"][:2]], ["TTSH Continuity Clinic"] * 2)
-        self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"][2:] if m["target"]),
+        self.assertEqual(Counter(m["target"]["requirement_id"] for m in person["months"][2:8]),
                          {"r4.inpatient_psychiatry": 3, "r4.consultation_liaison_psychiatry": 3})
-        self.assertEqual(person["carryforward"], [])
+        self.assertEqual([m["target"]["residency_year"] for m in person["months"][8:]], ["R5"] * 4)
+        self.assertEqual(person["projected_year"], "R4,R5")
+        self.assertEqual(sum(c["months"] for c in person["carryforward"]), 8)
         self.assertEqual(book, before)
 
     def test_future_options_do_not_grant_projected_cluster_credit(self):

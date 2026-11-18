@@ -44,7 +44,8 @@ def period_starts(value, planning_months, duration):
 def resolve_requests(person, requests, options, planning_months):
     """Keep original rows; duplicates share one score and one outcome."""
     requirements = {r['requirement_id']: r for r in person['requirements'] if r['requirement_year'] != 'R1'}
-    eligible_years = {f'R{year}' for year in range(2, max((int(year[1:]) for year in person['recorded_years']), default=1) + 1)}
+    through = person.get('schedule_through') or max((int(year[1:]) for year in person['recorded_years']), default=1)
+    eligible_years = {f'R{year}' for year in range(2, through + 1)}
     outcomes = []
     for row in requests:
         if row.get('matched_resident_source') != person['source'] or not row.get('posting_request'):

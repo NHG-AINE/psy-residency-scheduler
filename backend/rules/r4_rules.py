@@ -9,8 +9,8 @@ else:
     from requirement_ledger import month_number
 
 
-def completed_r1_inpatient_at_imh(person):
-    return sum(
+def completed_r1_inpatient_at_imh(person, planned_months=0):
+    return planned_months + sum(
         m["status"] == "expected" and m.get("requirement_id") == "r1.inpatient_psychiatry"
         and m["institution"] == "IMH" for m in person["months"]) >= PROGRAMME_REQUIREMENTS["R1"]["Inpatient Psychiatry"]["months"]
 
