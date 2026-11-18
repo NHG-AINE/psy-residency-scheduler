@@ -154,10 +154,7 @@ def resolve_requests(person, requests, options, planning_months):
         limit = max([req['remaining_months']] + [i['credit_months'] for i in group]) if requirement_id in R5_CORES else req['remaining_months']
         if limit and len(group) > 1 and sum(i['credit_months'] for i in group) > limit:
             for item in group:
-                item.update(status='pending', reason='Competing requests need clarification')
-            for item in outcomes:
-                if 'duplicate_of' in item and outcomes[item['duplicate_of']]['status'] == 'pending':
-                    item.update(status='pending', reason='Competing requests need clarification')
+                item['alternative_group'] = requirement_id
     return outcomes
 
 
@@ -181,6 +178,44 @@ def placement_fulfils_request(placement, request):
     return duration is None or duration in _request_durations(option, request.get('duration', duration))
 
 
+def request_groups(rows):
+    groups = {}
+    for index, row in enumerate(rows):
+        if 'duplicate_of' not in row:
+            groups.setdefault(row.get('alternative_group', index), []).append(row)
+    return list(groups.values())
+
+
+def grouped_request_outcomes(rows):
+    """Expose one outcome and marker per OR group; retain its original options."""
+    if not any('alternative_group' in row for row in rows):
+        return rows
+    result = []
+    for group in request_groups(rows):
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+        met = [row for row in group if row['status'] == 'met']
+        representative = deepcopy((met or group)[0])
+        representative['alternatives'] = deepcopy(group)
+        representative['status'] = 'met' if met else 'not_met'
+        representative['matched_months'] = sorted({m for row in met for m in row.get('matched_months', [])})
+        representative['replacement_months'] = [] if met else sorted({m for row in group for m in row.get('replacement_months', [])})
+        if not met and len({row.get('reason') for row in group}) > 1:
+            representative.update(reason='None of these alternatives was met in the selected timetable.',
+                                  reason_code='alternatives_not_met')
+        if met:
+            representative.update(reason=None, reason_code=None)
+        # Preserve capacity context for every option without repeating shared cells.
+        capacity = {}
+        for row in group:
+            for cell in row.get('capacity', []):
+                capacity[(cell['month'], cell['requirement_id'], cell['institution'], cell['label'])] = cell
+        representative['capacity'] = list(capacity.values()) if not met else []
+        result.append(representative)
+    return result
+
+
 def add_request_objective(model, outcomes, placements, value=lambda variable: variable):
     groups = []
     for i, rows in enumerate(outcomes):
@@ -188,8 +223,9 @@ def add_request_objective(model, outcomes, placements, value=lambda variable: va
         if not evaluable:
             continue
         flags = []
-        for n, row in enumerate(evaluable):
-            candidates = [value(p['variable']) for p in placements[i] if placement_fulfils_request(p, row)]
+        for n, group in enumerate(request_groups(evaluable)):
+            candidates = [value(p['variable']) for p in placements[i]
+                          if any(placement_fulfils_request(p, row) for row in group)]
             if model is None:
                 flag = max(candidates, default=0)
             else:

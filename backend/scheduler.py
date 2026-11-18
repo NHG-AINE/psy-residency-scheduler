@@ -8,7 +8,7 @@ from threading import Event, Thread
 from ortools.sat.python import cp_model
 
 if __package__:
-    from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
+    from .request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split, grouped_request_outcomes
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .history_review import evaluate_review
@@ -16,7 +16,7 @@ if __package__:
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import normalized_label, recorded_years
 else:
-    from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split
+    from request_preferences import resolve_requests, add_request_objective, unmet_request_reason, placement_fulfils_request, requests_need_r5_split, grouped_request_outcomes
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from history_review import evaluate_review
@@ -980,6 +980,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                         "max": option["capacity"], "assigned": assigned_counts.get((month, *option_key), 0)})
             if rows:
                 outcome["capacity"] = rows
+    for person in result["residents"]:
+        person["requests"] = grouped_request_outcomes(person["requests"])
     result["soft_results"] = {
         "capacity_overflow": diagnostics["objectives"]["capacity_overflow"],
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
