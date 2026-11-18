@@ -13,6 +13,42 @@ from tests.test_r1_solver import STORE
 
 
 class RequestSchedulerTests(unittest.TestCase):
+    def test_alternative_requests_score_once_and_respect_capacity_and_dates(self):
+        for selected in ('ANDS', 'Addiction Medicine', 'Other'):
+            with self.subTest(selected=selected):
+                book = r2_book()
+                options = book['postings']['electives']
+                options.append({**options[0], 'elective': 'Other',
+                                'source': {'sheet': 'Postings', 'row': 102}})
+                for option in options:
+                    option['max'] = 1 if option['elective'] == selected else 0
+                source = book['residents'][0]['source']
+                book['requests'] = [
+                    {'posting_request': f'IMH {label} (Elective)', 'period': period,
+                     'matched_resident_source': source, 'source': {'sheet': 'Requests', 'row': i + 2}}
+                    for i, (label, period) in enumerate((('ANDS', 'Jan - Mar 2028'),
+                                                       ('Addiction Medicine', 'Apr - Jun 2028')))]
+                book['requests'].append(deepcopy(book['requests'][0]))
+                book['requests'].append({**book['requests'][0], 'posting_request': 'Unknown service'})
+                draft = draft_schedule(book, STORE)
+                self.assertEqual(draft['status'], 'optimal', draft['blockers'])
+                group, pending = draft['residents'][0]['requests']
+                met = selected != 'Other'
+                self.assertEqual(group['status'], 'met' if met else 'not_met')
+                self.assertEqual(len(group['alternatives']), 2)
+                self.assertEqual(pending['status'], 'pending')
+                stage = next(s for s in draft['optimisation_stages'] if s['priority'] == 'resident_requests')
+                self.assertEqual(stage['score'], 0 if met else 1)
+                self.assertEqual(draft['soft_results']['capacity_overflow'], 0)
+                if met:
+                    expected = [f'2028-{m:02d}' for m in ((1, 2, 3) if selected == 'ANDS' else (4, 5, 6))]
+                    self.assertEqual(group['matched_months'], expected)
+                    self.assertEqual(group['replacement_months'], [])
+                    self.assertIsNone(group['reason'])
+                else:
+                    self.assertEqual(group['matched_months'], [])
+                    self.assertTrue(group['reason'])
+
     def test_capacity_bound_is_computed_once_per_solved_draft(self):
         book = r2_book()
         book['requests'] = [

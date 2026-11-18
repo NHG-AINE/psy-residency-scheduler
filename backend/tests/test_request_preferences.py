@@ -120,10 +120,11 @@ class RequestPreferenceTests(unittest.TestCase):
         competing = [dict(row, period='Jul - Sep 2027'),
                      dict(row, posting_request='IMH Other (Elective)', period='Jul - Sep 2027')]
         self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other], months)], ['evaluable', 'evaluable'])
+        self.assertTrue(all('alternative_group' not in item for item in resolve_requests(person, competing, [current, other], months)))
         third = dict(current, posting='Third', label='IMH Third')
         competing.append(dict(row, posting_request='IMH Third (Elective)', period='Jul - Sep 2027'))
         self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other, third], months)],
-                         ['pending', 'pending', 'pending'])
+                         ['evaluable', 'evaluable', 'evaluable'])
 
 
     def test_partial_r5_continuation_and_next_block_do_not_exceed_remaining_credit(self):
