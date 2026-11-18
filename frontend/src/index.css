@@ -350,6 +350,13 @@
 .request-popover dt { margin-top: .75rem; color: #6e675e; font-size: .75rem; }
 .request-popover dd { margin-top: .25rem; }
 .request-popover small { display: block; margin-top: .25rem; color: #6e675e; font-size: .75rem; }
+.request-capacity { border-top: 1px solid var(--color-hairline); margin-top: .75rem; }
+.request-capacity summary { cursor: pointer; font-weight: 600; padding-block: .625rem; }
+.request-capacity-posting { margin-bottom: .5rem; }
+.request-capacity-posting p { font-weight: 500; }
+.request-popover .request-capacity-periods { list-style: none; padding: 0; margin: .25rem 0 0; }
+.request-capacity-periods li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .125rem .5rem; font-variant-numeric: tabular-nums; font-size: .75rem; }
+.request-capacity-periods .at-max { color: #815b24; font-weight: 600; }
 @media (max-width: 520px) { .request-popover { top: auto !important; bottom: .75rem !important; left: .75rem !important; width: calc(100vw - 1.5rem); max-height: 70dvh !important; } }
 @media (prefers-reduced-motion: reduce) { .request-popover:popover-open { animation: none; } .request-indicator:active, .request-close:active { transform: none; } }
 

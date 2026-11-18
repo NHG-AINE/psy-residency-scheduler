@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityWarnings, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -217,16 +217,27 @@ test('request details show the outcome reason without workbook row metadata', as
   const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   try {
     const { default: RequestDetails } = await vite.ssrLoadModule('/src/components/RequestDetails.tsx')
-    const html = renderToStaticMarkup(createElement(RequestDetails, {
-      name: 'Example', hint: 'Request details', className: 'request-indicator',
-      rows: [{ request: { posting_request: 'IMH Inpatient Psychiatry', period: null, source: { sheet: 'Request', row: 37 } },
-        status: 'not_met', reason: 'R4 Inpatient must be outside IMH.',
-        assigned: [{ label: 'SGH Inpatient Psychiatry', months: ['2028-04'] }] }],
-    }, 'Details'))
+    const row = { request: { posting_request: 'IMH Inpatient Psychiatry', period: null, source: { sheet: 'Request', row: 37 } },
+      status: 'not_met', reason: 'R4 Inpatient must be outside IMH.',
+      assigned: [{ label: 'SGH Inpatient Psychiatry', months: ['2028-04'] }] }
+    const props = { name: 'Example', hint: 'Request details', className: 'request-indicator', rows: [row] }
+    const html = renderToStaticMarkup(createElement(RequestDetails, props, 'Details'))
     assert.match(html, /Why this wasn&#x27;t met/)
     assert.match(html, /R4 Inpatient must be outside IMH/)
     assert.match(html, /SGH Inpatient Psychiatry/)
-    assert.doesNotMatch(html, /row 37/)
+    assert.doesNotMatch(html, /row 37|Capacity in this draft/)
+    const counts = ['2028-07', '2028-08', '2028-09'].map((month, i) => ({
+      month, requirement_id: 'r4.inpatient_psychiatry', residency_year: 'R4', category: 'core',
+      institution: 'IMH', label: 'IMH Inpatient Psychiatry', source: { sheet: 'Postings', row: 31 },
+      max: 6, assigned: i < 2 ? 6 : 5,
+    }))
+    const withCapacity = renderToStaticMarkup(createElement(RequestDetails, {
+      ...props, rows: [{ ...row, capacity: counts }],
+    }, 'Details'))
+    assert.match(withCapacity, /<\/dl><details[^>]+open=""[^>]*><summary>Capacity in this draft<\/summary>/)
+    assert.match(withCapacity, /Jul\u2013Aug 2028<\/span><span class="at-max">6 assigned \/ 6 max/)
+    assert.match(withCapacity, /Sep 2028<\/span><span>5 assigned \/ 6 max/)
+    assert.match(withCapacity, /These counts show the current draft, not why the request was missed\./)
     const { default: CapacityDetails } = await vite.ssrLoadModule('/src/components/CapacityDetails.tsx')
     const capacity = renderToStaticMarkup(createElement(CapacityDetails, { rows: [{
       month: '2027-07', requirement_id: 'r4.forensic', residency_year: 'R4', institution: 'IMH', label: 'IMH Forensic Psychiatry',
@@ -278,7 +289,7 @@ test('capacity review groups exact postings and only merges consecutive months w
     { ...base, month: '2028-02', assigned: 8 }, { ...base, month: '2028-04', assigned: 8 },
     { ...base, month: '2028-01', requirement_id: 'r5.emergency', residency_year: 'R5' },
   ]
-  const groups = groupedCapacityWarnings(rows)
+  const groups = groupedCapacityRows(rows)
   assert.equal(groups.length, 2)
   assert.deepEqual(groups[0].periods, [
     { start: '2027-12', end: '2028-01', assigned: 7, max: 6 },

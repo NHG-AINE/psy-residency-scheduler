@@ -885,6 +885,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             if month in retained_potential[i] and result["residents"][i]["months"][month]["status"] == "outside_draft_scope":
                 result["capacity_coverage_notes"].append({"code": "conditional_retained_posting", "source": entry["sources"][0]})
     result["capacity_overflows"] = []
+    assigned_counts = {}
+    capacity_fields = ("requirement_id", "institution", "label", "source", "residency_year", "category")
     for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
         month, requirement, institution, label = key
         option = by_key[key[1:]]
@@ -893,11 +895,27 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             for person in result["residents"] if person["months"][month]["target"]
             and all(person["months"][month]["target"][field] == option[field]
                     for field in ("requirement_id", "institution", "label"))]
+        assigned_counts[key] = len(residents)
         if option["capacity"] is not None and len(residents) > option["capacity"]:
             result["capacity_overflows"].append({"month": prepared["planning_months"][month]["month"],
-                **{field: deepcopy(option[field]) for field in ("requirement_id", "institution", "label", "source", "residency_year", "category")},
+                **{field: deepcopy(option[field]) for field in capacity_fields},
                 "max": option["capacity"], "assigned": len(residents), "residents": residents})
     result["capacity_overflows"].sort(key=lambda item: (item["requirement_id"], item["institution"], item["month"]))
+    for person in result["residents"]:
+        for outcome in person["requests"]:
+            if outcome["status"] != "not_met" or "duplicate_of" in outcome:
+                continue
+            rows = []
+            for option_key in outcome["option_keys"]:
+                option = by_key[option_key]
+                if option["capacity"] is None:
+                    continue
+                for month in outcome["period_months"]:
+                    rows.append({"month": prepared["planning_months"][month]["month"],
+                        **{field: deepcopy(option[field]) for field in capacity_fields},
+                        "max": option["capacity"], "assigned": assigned_counts.get((month, *option_key), 0)})
+            if rows:
+                outcome["capacity"] = rows
     result["soft_results"] = {
         "capacity_overflow": diagnostics["objectives"]["capacity_overflow"],
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
