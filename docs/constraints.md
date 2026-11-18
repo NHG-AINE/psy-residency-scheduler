@@ -49,8 +49,10 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   requirements stated in the Remarks column of the Postings tab.
 - **Keep R1 Medicine and Neurology postings within their paired institutions.**
   Pair TTSH General Medicine with NNI Neurology, and SGH General Medicine with
-  SGH Neurology. Do not mix these pairings for a resident. The six-month NUH
-  Medicine & Neurology posting is a separate combined route.
+  SGH Neurology. Do not mix these pairings for a resident. The four months of
+  General Medicine may be split into two months before and two months after
+  the two-month Neurology block, returning to the same Medicine institution.
+  The six-month NUH Medicine & Neurology posting is a separate combined route.
 - **Visit all three clusters during R1-R4.** Each resident must have at least
   one posting in NHG, SHS and NUHS by the end of R4. Count recognised posting
   history towards this cumulative requirement. See [cross-cluster.md](cross-cluster.md)

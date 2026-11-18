@@ -10,7 +10,8 @@ from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
 from tests.catalogue_fixtures import INSTITUTIONS
 from scheduler import draft_schedule, _allocation_targets, _solve_priorities, _capacity_overflow_lower_bound
-from rules.r1_rules import add_preferences
+from rules.r1_rules import add_preferences, prepare_candidates
+from scheduler_inputs import prepare_scheduler_inputs
 from cluster_coverage import CLUSTERS
 from tests.test_requirement_ledger import resident
 from tests import test_workbook_import
@@ -49,6 +50,20 @@ def set_history(workbook, values):
 
 
 class R1SolverTests(unittest.TestCase):
+    def test_fresh_resident_can_split_medicine_around_neurology_at_both_pairings(self):
+        prepared = prepare_scheduler_inputs(r1_book(), STORE)
+        blockers = []
+        _, candidates, _ = prepare_candidates(prepared["residents"], prepared["catalogue_options"],
+                                              prepared["planning_start"], blockers)
+        self.assertEqual(blockers, [])
+        sequences = {(choice["route"], tuple(option["label"] for option in choice["schedule"][:6]))
+                     for choice in candidates[0]}
+        for route, medicine, neurology in (("TTSH/NNI", "TTSH", "NNI"), ("SGH", "SGH", "SGH")):
+            with self.subTest(route=route):
+                expected = ((f"{medicine} General Medicine",) * 2 + (f"{neurology} Neurology",) * 2
+                            + (f"{medicine} General Medicine",) * 2)
+                self.assertIn((route, expected), sequences)
+
     def check_resident(self, person):
         active = [m for m in person["months"] if m["status"] == "posting"]
         counts = Counter(m["target"]["requirement_id"] for m in active)
