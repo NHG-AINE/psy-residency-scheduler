@@ -6,9 +6,10 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
 import RequestTotals from './components/RequestTotals'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
+import DraftResidentWarnings from './components/DraftResidentWarnings'
 import DraftSearchLimit from './components/DraftSearchLimit'
 import MonthlyBreakdown from './components/MonthlyBreakdown'
 import ScrollToTop from './components/ScrollToTop'
@@ -157,13 +158,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })}</ul>
     </details>}
     <div className="draft-feedback" aria-live="polite" role="status">
-      {hasDraft && !generating && !!draft?.skipped_residents?.length && <details><summary>{draft.skipped_residents.length} {draft.skipped_residents.length === 1 ? 'resident left' : 'residents left'} unchanged - review input issues</summary><div className="draft-resident-warnings">{draft.skipped_residents.map((person, index) => <div key={index}>
-        <strong>{person.name || person.mcr || sourceLabel(person.source)}</strong>
-        <ul>{groupedDraftWarnings(person.reasons).map((warning, warningIndex) => <li key={warningIndex}>
-          <span>{warning.reason}{warning.dates && ` \u00b7 ${warning.dates}`}</span>
-          {warning.sources.length > 0 && <p className="draft-warning-source">Source: {warning.sources.join('; ')}</p>}
-        </li>)}</ul>
-      </div>)}</div></details>}
+      {hasDraft && !generating && <DraftResidentWarnings draft={draft} />}
       {hasDraft && !generating && capacityGroups.length > 0 && <details><summary>{capacityGroups.length} {capacityGroups.length === 1 ? 'posting' : 'postings'} over max - review capacity</summary>
         <div className="draft-resident-warnings">{capacityGroups.map((group) => <div key={group.key}>
           <strong>{group.label}</strong>
