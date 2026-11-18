@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityWarnings, requestSummary, requestTotals, filterRequestResidents, updatedResidentCount } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityWarnings, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -31,7 +31,6 @@ test('overlay changes only solver posting months, preserves evidence and discard
   assert.equal(postings[2], resident.postings[2])
   assert.equal(draftPostings(other, draft), other.postings)
   assert.equal(draftPostings(placeholder, draft), placeholder.postings)
-  assert.equal(updatedResidentCount(workbook, draft), 1)
   assert.deepEqual(workbook, before)
   assert.equal(draftPostings(resident, null), resident.postings)
   assert.equal(draftPostings(resident, { ...draft, status: 'blocked' }), resident.postings)

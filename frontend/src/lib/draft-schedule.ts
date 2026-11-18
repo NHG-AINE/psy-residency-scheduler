@@ -142,10 +142,6 @@ export function groupDraftResidents(residents: Resident[], draft: DraftSchedule 
     .map((item) => item.resident)
 }
 
-export function updatedResidentCount(workbook: Workbook, draft: DraftSchedule): number {
-  return workbook.residents.filter((resident) => draftPostings(resident, draft).some((posting) => posting.draft)).length
-}
-
 const blockerLabels: Record<string, string> = {
   unresolved_occupied_posting: 'Resolve the occupied posting label and requirement before counting capacity',
   conflicting_occupied_posting: 'Resolve conflicting posting evidence for the same resident and month',
