@@ -38,6 +38,39 @@ def requirement(result, key):
 
 
 class RequirementLedgerTests(unittest.TestCase):
+    def test_additional_core_credit_requires_a_full_same_option_elective_through_loa(self):
+        from tests.test_workbook_import import structured_workbook_bytes
+        from workbook_import import parse_workbook
+
+        label = "IMH Child and EPIP (Elective)"
+        first = resident([("2027-04", label), ("2027-05", label), ("2027-06", label)], "R5", "Earlier")
+        for requirement_name, key in (("Child and Adolescent Psychiatry", "r5.child_adolescent_psychiatry"),
+                                      ("Geriatric Psychiatry", "r5.geriatric_psychiatry")):
+            def edit(w):
+                w["Postings"]["H7"] = requirement_name
+                w["Postings"].append(["R5", "Core", "IMH", requirement_name, 3, 3, requirement_name])
+            catalogue = parse_workbook(structured_workbook_bytes(edit))["postings"]
+            later = resident([("2027-07", "LOA"), ("2027-08", label), ("2027-09", label), ("2027-10", label)],
+                             "R5", "Later")
+            core = resident([(f"2027-{m:02d}", f"IMH {requirement_name}") for m in (1, 2, 3)], "R5", "Core")
+            for history, elective_months, core_months in (
+                    ([first], 3, 0), ([first, later], 6, 3), ([first, later, core], 6, 3)):
+                with self.subTest(requirement=key, elective_months=elective_months, separate_core=core in history):
+                    workbook = book(history, "2028-07")
+                    workbook["postings"] = catalogue
+                    progress = ledger(workbook)
+                    self.assertEqual(requirement(progress, "r5.elective")["expected_months"], elective_months)
+                    self.assertEqual(requirement(progress, key)["expected_months"], core_months)
+                    if core in history:
+                        self.assertEqual(sum(m.get("requirement_id") == key for m in progress["residents"][0]["months"]), 3)
+            # A differently resolved option interrupts the six-month run.
+            later["postings"][-1]["value"] = "IMH General Psychiatry (Elective)"
+            workbook = book([first, later], "2028-07")
+            workbook["postings"] = catalogue
+            progress = ledger(workbook)
+            self.assertEqual(requirement(progress, "r5.elective")["expected_months"], 6)
+            self.assertEqual(requirement(progress, key)["expected_months"], 0)
+
     def test_intake_slots_have_full_r1_requirements_without_historical_credit(self):
         from tests.test_workbook_import import IncomingIntakeTests
         workbook = IncomingIntakeTests().parse([("Resident 1", None, "R1", 2027)], history_placeholder=True)

@@ -58,6 +58,20 @@ R1_COMPLETION_ROUTES = (
 )
 
 
+
+def additional_r5_credit(option):
+    """Resolve structured six-month elective credit to an existing core requirement."""
+    if (option.get("category") != "elective" or option.get("residency_year") != "R5"
+            or option.get("allowed_block_lengths") != [6] or not option.get("additional_requirement")):
+        return None
+    requirements = PROGRAMME_REQUIREMENTS["R5"]
+    child_and_geriatrics = requirements["Child and Geriatric Psychiatry"]["credits"]
+    name = normalized_posting_label(option["additional_requirement"])
+    return next((rule for label, rule in requirements.items()
+                 if rule["id"] in child_and_geriatrics and normalized_posting_label(label) == name
+                 and rule["months"] == option.get("additional_credit_months")), None)
+
+
 def validate_posting(requirement_year, resolved_target, elective_catalogue=(), *, core_catalogue=()):
     """Validate requirements against programme rules and institutions against the workbook.
 
