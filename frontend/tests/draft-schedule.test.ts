@@ -123,7 +123,7 @@ test('projected R-years sort and filter catch-up and advanced months without cha
   assert.deepEqual(groupDraftResidents([peer, advancing], null), [peer, advancing])
   const workbook = { residents: [advancing], months: advancing.postings.map(({ month }) => ({ month })),
     postings: { core: [], electives: [] } } as unknown as Workbook
-  assert.equal(monthlyBreakdown(workbook, projection, [], 'R4').find((group) => group.label === 'Continuity Clinic')?.counts[advancing.postings[0].month], 1)
+  assert.equal(monthlyBreakdown(workbook, projection, [], 'R3').find((group) => group.label === 'Continuity Clinic')?.counts[advancing.postings[0].month], 1)
   assert.equal(monthlyBreakdown(workbook, projection, [], 'R5').find((group) => group.label === 'Electives')?.counts[advancing.postings[3].month], 1)
   assert.deepEqual(monthlyBreakdown(workbook, null, [], 'R5'), [])
 })
