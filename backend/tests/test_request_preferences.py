@@ -1,6 +1,6 @@
 import unittest
 from ortools.sat.python import cp_model
-from request_preferences import period_starts, resolve_requests, add_request_objective, unmet_request_reason
+from request_preferences import request_period, resolve_requests, add_request_objective, unmet_request_reason
 
 
 class RequestPreferenceTests(unittest.TestCase):
@@ -30,22 +30,15 @@ class RequestPreferenceTests(unittest.TestCase):
             with self.subTest(stages=stages):
                 self.assertEqual(unmet_request_reason(person, request, [placement], [option], stages),
                                  (code, message))
-        request.update(starts=[], duration=3, period_months=[0, 1], request={'period': 'Jul - Aug 2027'})
-        self.assertEqual(unmet_request_reason(person, request, [], [option], [initial]),
-                         ('no_valid_start', 'R2 Child Psychiatry requires 3 months, but the requested Jul - Aug 2027 period is only 2 months.'))
         req['remaining_months'] = 0
         self.assertEqual(unmet_request_reason(person, request, [], [option], [])[0], 'requirement_completed')
 
     def test_periods(self):
         months = [{'month': f'{y}-{m:02d}'} for y, m in [(2027, m) for m in range(7, 13)] + [(2028, m) for m in range(1, 7)]]
-        self.assertEqual(period_starts('Jan - June 2028', months, 3), [6, 9])
-        self.assertEqual(period_starts('Oct 2027 - Mar 2028', months, 3), [3, 6])
-        self.assertEqual(period_starts('Jul - Nov 2027', months, 3), [0])
-        self.assertIsNone(period_starts('Jan - Mar 2029', months, 3))
-        self.assertEqual(period_starts('Jul - Sep 2027', months, 6), [])
-        self.assertEqual(period_starts(None, months, 12), list(range(12)))
-        self.assertEqual(period_starts('Jan - June 2028', months, 12), [6])
-        self.assertEqual(period_starts('Apr - June 2028', months, 6), [9])
+        self.assertEqual(request_period('Jan - June 2028', months), list(range(6, 12)))
+        self.assertEqual(request_period('Oct 2027 - Mar 2028', months), list(range(3, 9)))
+        self.assertIsNone(request_period('Jan - Mar 2029', months))
+        self.assertEqual(request_period(None, months), list(range(12)))
 
     def test_matching_and_valid_start(self):
         months = [{'month': f'2027-{m:02d}'} for m in range(7, 10)]
@@ -124,10 +117,11 @@ class RequestPreferenceTests(unittest.TestCase):
         person['requirements'][0]['remaining_months'] = 0
         self.assertEqual(resolve_requests(person, [row], [early], months)[0]['status'], 'pending')
         other = dict(current, posting='Other', label='IMH Other')
-        competing = [row, dict(row, posting_request='IMH Other (Elective)')]
+        competing = [dict(row, period='Jul - Sep 2027'),
+                     dict(row, posting_request='IMH Other (Elective)', period='Jul - Sep 2027')]
         self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other], months)], ['evaluable', 'evaluable'])
         third = dict(current, posting='Third', label='IMH Third')
-        competing.append(dict(row, posting_request='IMH Third (Elective)'))
+        competing.append(dict(row, posting_request='IMH Third (Elective)', period='Jul - Sep 2027'))
         self.assertEqual([item['status'] for item in resolve_requests(person, competing, [current, other, third], months)],
                          ['pending', 'pending', 'pending'])
 
@@ -144,11 +138,12 @@ class RequestPreferenceTests(unittest.TestCase):
                    for service in ("A", "B")]
         requests = [{"matched_resident_source": source, "posting_request": service, "period": None}
                     for service in ("A", "B")]
+        requests[0]["period"], requests[1]["period"] = "Jul - Jul 2027", "Aug - Oct 2027"
         months = [{"month": f"2027-{m:02d}"} for m in range(7, 13)]
         outcomes = resolve_requests(person, requests, options, months)
         self.assertEqual([o["status"] for o in outcomes], ["evaluable", "evaluable"])
-        self.assertEqual([o["remaining_duration"] for o in outcomes], [1, 3])
-        self.assertEqual([o["duration"] for o in outcomes], [3, 3])
+        self.assertEqual([o["credit_months"] for o in outcomes], [1, 3])
+        self.assertEqual([o["duration"] for o in outcomes], [1, 3])
 
 
     def test_only_evaluable_three_month_requests_enable_a_fresh_r5_split(self):
@@ -173,6 +168,9 @@ class RequestPreferenceTests(unittest.TestCase):
         self.assertFalse(requests_need_r5_split(resolved(period="Apr - Jun 2028", catalogue=six_only)))
         three_only = [{**options[0], "remarks": [{"text": "(3 months- that can be paired with any other institution)"}]}]
         self.assertTrue(requests_need_r5_split(resolved(catalogue=three_only)))
+        mismatch, = resolved(period="Jan - Jun 2028", catalogue=three_only)
+        self.assertEqual((mismatch["status"], mismatch["reason_code"], mismatch["requested_months"]),
+                         ("not_met", "duration_mismatch", 6))
         pair = [{"matched_resident_source": source, "posting_request": service, "period": "Jan - Jun 2028"}
                 for service in ("A", "B")]
         self.assertFalse(requests_need_r5_split(resolve_requests(person, pair, options, months)))

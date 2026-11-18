@@ -183,10 +183,14 @@ class RequestSchedulerTests(unittest.TestCase):
                 self.assertIn(result['status'], {'optimal', 'feasible'}, result['blockers'])
                 planned = result['residents'][0]
                 outcome = planned['requests'][0]
-                met = scenario not in ('wrong_start', 'wrong_institution')
+                met = scenario in ('blank', 'loa')
                 self.assertEqual(outcome['status'], 'met' if met else 'not_met')
-                stage = next(s for s in result['optimisation_stages'] if s['priority'] == 'resident_requests')
-                self.assertEqual(stage['score'], 0 if met else 1)
+                stage = next((s for s in result['optimisation_stages'] if s['priority'] == 'resident_requests'), None)
+                if scenario in ('explicit', 'wrong_start'):
+                    self.assertEqual(outcome['reason_code'], 'duration_mismatch')
+                    self.assertIsNone(stage)
+                else:
+                    self.assertEqual(stage['score'], 0 if met else 1)
                 clinic = [m for m in planned['months'] if (m.get('target') or {}).get('requirement_id') == 'r3.continuity_clinic']
                 self.assertEqual(clinic[0]['month'], '2028-01')
                 self.assertEqual(sum(c['months'] for c in planned['carryforward']), 7 if scenario == 'loa' else 6)
@@ -216,9 +220,9 @@ class RequestSchedulerTests(unittest.TestCase):
         outcomes = result['residents'][0]['requests']
         self.assertEqual([o['status'] for o in outcomes], ['met', 'met', 'not_met'])
         elective = outcomes[-1]
-        self.assertEqual(elective['reason_code'], 'no_valid_start')
-        self.assertEqual(elective['reason'], 'R5 Elective requires 6 months, but the requested Jan - Mar 2028 period is only 3 months.')
-        self.assertEqual(elective['starts'], [])
+        self.assertEqual(elective['reason_code'], 'duration_mismatch')
+        self.assertEqual(elective['reason'], 'R5 Elective allows 6 months. The requested period is 3 months.')
+        self.assertEqual(elective['requested_months'], 3)
         self.assertEqual(elective['matched_months'], [])
         self.assertEqual(elective['replacement_months'], [f'2028-{m:02d}' for m in range(1, 7)])
 
@@ -243,7 +247,7 @@ class RequestSchedulerTests(unittest.TestCase):
         outcomes = result["residents"][0]["requests"]
         self.assertEqual([o["status"] for o in outcomes], ["met"] * 5)
         self.assertEqual(outcomes[-1]["duplicate_of"], 2)
-        self.assertEqual(outcomes[2]["duration_starts"], {3: [6], 6: []})
+        self.assertEqual((outcomes[2]["requested_months"], outcomes[2]["starts"]), (3, [6]))
         self.assertEqual(outcomes[2]["matched_months"], [f"2028-{m:02d}" for m in (1, 2, 3)])
         self.assertEqual(outcomes[3]["matched_months"], [f"2028-{m:02d}" for m in (4, 5, 6)])
         months = result["residents"][0]["months"]
@@ -267,47 +271,35 @@ class RequestSchedulerTests(unittest.TestCase):
         self.assertEqual(result["residents"][0]["requests"][3]["status"], "not_met")
         self.assertEqual(result["residents"][0]["requests"][3]["reason_code"], "not_selected")
 
-    def test_r5_blank_request_is_one_score_when_both_three_month_blocks_match(self):
-        from rules.r5_rules import elective_routes, add_routes
+    def test_blank_request_defaults_to_six_and_explicit_continuation_counts_only_remaining_months(self):
         from request_preferences import resolve_requests, placement_fulfils_request
         source = {"sheet": "Planning", "row": 3}
         person = {"source": source, "months": [], "recorded_years": ["r5"],
-                  "availability": [{"available": True}] * 12,
                   "requirements": [{"requirement_id": "r5.elective", "requirement_year": "R5",
                                     "required_months": 6, "expected_months": 0, "remaining_months": 6}]}
         option = {"valid": True, "category": "elective", "residency_year": "R5", "requirement_id": "r5.elective",
                   "posting": "A", "institution": "IMH", "label": "IMH A", "remarks": []}
-        errors = []
-        routes = elective_routes(person, [option], "2027-07", 0, errors, allow_split=True)
-        self.assertFalse(errors)
-        model = cp_model.CpModel()
-        placements = add_routes(model, person, [routes[1]], 0, 0)
         months = [{"month": f"2027-{m:02d}"} for m in range(7, 13)]
         request = {"posting_request": "IMH A", "period": None, "matched_resident_source": source}
-        outcomes = resolve_requests(person, [request, request], [option], months)
-        objective = add_request_objective(model, [outcomes], [placements])
-        self.assertEqual(model.validate(), "")
-        model.minimize(objective)
-        solver = cp_model.CpSolver()
-        self.assertEqual(solver.solve(model), cp_model.OPTIMAL)
-        self.assertEqual(solver.value(objective), 0)
-        chosen = [p for p in placements if solver.value(p["variable"])]
-        self.assertEqual(len(chosen), 2)
-        self.assertEqual(sorted(len(p["months"]) for p in chosen), [3, 3])
-        self.assertEqual(outcomes[1]["duplicate_of"], 0)
-        narrow = resolve_requests(person, [dict(request, period="Jul - Sep 2027")], [option], months)[0]
-        six = {"option": option, "months": list(range(6)), "remaining": 0, "block_duration": 6}
-        self.assertFalse(placement_fulfils_request(six, narrow))
-        late = resolve_requests(person, [dict(request, period="Oct - Dec 2027")], [option], months)[0]
-        carry = {"option": option, "months": [3, 4, 5], "remaining": 3, "block_duration": 6}
-        self.assertTrue(placement_fulfils_request(carry, late))
-        windows = resolve_requests(person, [dict(request, period="Jul - Sep 2027"),
-                                            dict(request, period="Jul - Oct 2027")], [option], months)
-        self.assertEqual(windows[0]["duration_starts"], windows[1]["duration_starts"])
-        self.assertNotIn("duplicate_of", windows[1])
-        paused = {"option": option, "months": [0, 1, 3], "remaining": 0, "block_duration": 3}
-        self.assertFalse(placement_fulfils_request(paused, windows[0]))
-        self.assertTrue(placement_fulfils_request(paused, windows[1]))
+        first, duplicate = resolve_requests(person, [request, request], [option], months)
+        self.assertEqual(first["requested_months"], 6)
+        self.assertEqual(duplicate["duplicate_of"], 0)
+        three = {"option": option, "months": [0, 1, 2], "remaining": 0, "block_duration": 3}
+        self.assertFalse(placement_fulfils_request(three, first))
+        self.assertTrue(placement_fulfils_request({**three, "remaining": 3, "block_duration": 6}, first))
+        narrow, invalid = resolve_requests(person, [dict(request, period="Jul - Sep 2027"),
+                                                   dict(request, period="Jul - Oct 2027")], [option], months)
+        self.assertEqual(invalid["reason_code"], "duration_mismatch")
+        self.assertTrue(placement_fulfils_request(three, narrow))
+        self.assertFalse(placement_fulfils_request({**three, "months": [0, 1, 3]}, narrow))
+        self.assertFalse(placement_fulfils_request({**three, "remaining": 3, "block_duration": 6}, narrow))
+
+        option["allowed_block_lengths"] = [6]
+        person["months"] = [{"month": f"2027-{m:02d}", "status": "expected", "requirement_id": "r5.elective",
+                             "posting": "A", "institution": "IMH"} for m in (4, 5, 6)]
+        continuation, = resolve_requests(person, [dict(request, period="Jul - Sep 2027")], [option], months)
+        self.assertTrue(placement_fulfils_request({**three, "block_duration": 6}, continuation))
+        self.assertFalse(continuation["fresh_duration"])
 
     def test_same_site_allocation_counts_a_visit_equally_for_six_or_three_plus_three(self):
         from unittest.mock import patch
