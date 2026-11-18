@@ -12,6 +12,7 @@ if __package__:
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .history_review import evaluate_review
+    from .requirement_ledger import programme_requirements_completed
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import normalized_label, recorded_years
 else:
@@ -19,6 +20,7 @@ else:
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from history_review import evaluate_review
+    from requirement_ledger import programme_requirements_completed
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import normalized_label, recorded_years
 
@@ -849,10 +851,22 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             for month in placement["months"]:
                 assert choice["schedule"][month] is None
                 choice["schedule"][month] = placement["option"]
+        completion_month = None
+        if "r5" in person["recorded_years"] and not choice["carryforward"] and not any(p["remaining"] for p in chosen):
+            projected = [
+                {**option, "month": availability["month"], "status": "expected", "target": option}
+                if option else {"month": availability["month"], "status": "blank" if availability["available"] else "loa"}
+                for availability, option in zip(person["availability"], choice["schedule"])
+            ]
+            if programme_requirements_completed(person["months"] + projected):
+                completion_month = max((month for month, option in enumerate(choice["schedule"]) if option), default=-1)
         months = []
-        for availability, option in zip(person["availability"], choice["schedule"]):
-            months.append({"month": availability["month"],
-                           "status": "loa" if not availability["available"] else "posting" if option else "outside_draft_scope",
+        for month, (availability, option) in enumerate(zip(person["availability"], choice["schedule"])):
+            status = "loa" if not availability["available"] else "posting" if option else "outside_draft_scope"
+            if (status == "outside_draft_scope" and completion_month is not None and month > completion_month
+                    and len(availability["evidence"]) == 1 and availability["evidence"][0]["status"] == "blank"):
+                status = "requirements_completed"
+            months.append({"month": availability["month"], "status": status,
                            "label": option["label"] if option else None,
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
         outcomes = request_outcomes[i]

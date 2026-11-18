@@ -276,3 +276,12 @@ def _summaries(months):
                 item["continuity_groups"] = groups
             result.append(item)
     return result
+
+
+def programme_requirements_completed(months):
+    """Both the R1 route and all mandatory later requirements are evidenced."""
+    requirements = _summaries(months)
+    completed = {r["requirement_id"] for r in requirements if not r["remaining_months"]}
+    return any(completed.issuperset(route) for route in R1_COMPLETION_ROUTES) and all(
+        r["requirement_id"] in completed for r in requirements
+        if r["requirement_year"] != "R1" and not r.get("alternative"))

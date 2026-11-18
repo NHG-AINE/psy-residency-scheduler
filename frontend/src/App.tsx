@@ -93,7 +93,7 @@ function Review({ workbook, view, query, requestFilter, year, years, onYearChang
   return <div className="resident-list">{residents.map((resident) => <ResidentDetail key={JSON.stringify(resident.source)} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
-const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated' }
+const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated', requirements_completed: 'Requirements completed' }
 
 function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined }) {
   const { draft, busy: generating, error: draftError } = draftState
@@ -192,14 +192,15 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const display = postingDisplay(block, 'catalogue', resolution?.entries)
             const value = display.label
             const category = postingCategory(display, status)
-            const classification = ` - ${postingCategoryLabels[category]}`
+            const classification = category === 'requirements_completed' ? '' : ` - ${postingCategoryLabels[category]}`
             const qualifiers = display.markers.filter((marker) => marker !== 'Elective')
             const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
             const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
             const indicator = requestIndicator(block[0].month)
+            const titlePrefix = category === 'requirements_completed' ? 'Draft projection - ' : block[0].draft ? 'Draft assignment - ' : ''
             return <td key={block[0].month} colSpan={block.length}><div
               className={`posting-value ${category}`}
-              title={`${block[0].draft ? 'Draft assignment - ' : ''}${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
+              title={`${titlePrefix}${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
               >
               {words(value)}
               {indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={show(resident.name)} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>}

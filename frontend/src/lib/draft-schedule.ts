@@ -29,7 +29,7 @@ export type DraftSchedule = {
   historical_cluster_warnings?: ResidentWarning[]
   residents: { source: Source; name: string | null; mcr: string | null; route?: string
     requests?: RequestOutcome[]
-    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_priority?: string[]
   wall_time_seconds?: number
@@ -112,6 +112,9 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
     ? { ...posting, unresolvedDraft: true } : posting) : resident.postings
   return resident.postings.map((posting) => {
     const month = person.months.find((candidate) => candidate.month === posting.month)
+    if (posting.status === 'blank' && month?.status === 'requirements_completed') {
+      return { ...posting, status: 'requirements_completed' }
+    }
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
       ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core' } : posting
   })

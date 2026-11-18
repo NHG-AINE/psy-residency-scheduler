@@ -35,6 +35,7 @@ export function postingHistoryEntry(posting: Resident['postings'][number], entri
 export function postingDisplay(block: PostingBlock, mode: PostingLabelMode = DEFAULT_POSTING_LABEL_MODE, entries: HistoryEntry[] = []) {
   if (block[0].unresolvedDraft) return { label: 'Unresolved', canonical: false, unresolvedDraft: true, markers: [] as string[] }
   const status = block[0].status
+  if (status === 'requirements_completed') return { label: 'Requirements completed', canonical: false, markers: [] as string[] }
   const original = status === 'loa' ? 'LOA' : status === 'blank' ? 'Unallocated' : block[0].value || 'Unallocated'
   if (block.every((posting) => posting.draft)) return { label: original, canonical: true, markers: block[0].draftCategory === 'elective' ? ['Elective'] : [] as string[] }
   if (mode === 'original' || status !== 'posting') return { label: original, canonical: false, markers: [] as string[] }
@@ -56,6 +57,7 @@ export function postingCategory(display: ReturnType<typeof postingDisplay>, stat
   if (display.unresolvedDraft) return 'unresolved'
   if (status === 'loa') return 'loa'
   if (status === 'blank') return 'unallocated'
+  if (status === 'requirements_completed') return 'requirements_completed'
   if (!display.canonical) return 'unresolved'
   return display.markers.includes('Elective') ? 'elective' : 'core'
 }

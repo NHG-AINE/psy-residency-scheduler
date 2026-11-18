@@ -47,6 +47,7 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
       if (!months.has(posting.month)) continue
       const display = postingDisplay([posting], 'catalogue', entries)
       const category = postingCategory(display, posting.status)
+      if (category === 'requirements_completed') continue
       const entry = posting.draft ? undefined : postingHistoryEntry(posting, entries)
       const target = entry ? resolvedCatalogueTarget(entry.review) : null
       const requirementYear = posting.draft
