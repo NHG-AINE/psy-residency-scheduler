@@ -25,7 +25,7 @@ export default function MonthlyBreakdown({ workbook, draft, entries }: { workboo
   const selectedYear = years.includes(year) ? year : 'R1'
   const groups = useMemo(() => monthlyBreakdown(workbook, draft, entries, selectedYear), [workbook, draft, entries, selectedYear])
   return <section className="workspace-panel monthly-breakdown" aria-labelledby="breakdown-heading">
-    <div className="breakdown-toolbar"><div><h2 id="breakdown-heading">Monthly breakdown</h2><p className="muted">Jul {workbook.target_year} - Jun {workbook.target_year + 1} &middot; Counts by recorded R-year</p></div>
+    <div className="breakdown-toolbar"><div><h2 id="breakdown-heading">Monthly breakdown</h2><p className="muted">Jul {workbook.target_year} - Jun {workbook.target_year + 1} &middot; Counts by {draft && ['optimal', 'feasible'].includes(draft.status) ? 'draft' : 'recorded'} R-year</p></div>
       <select aria-label="Residency year" value={selectedYear} onChange={(event) => { setCapacityFocus(null); setYear(event.target.value) }}>{years.map((value) => <option key={value}>{value}</option>)}</select>
     </div>
     {groups.length ? <div className="table-scroll"><table>

@@ -27,7 +27,7 @@ export type DraftSchedule = {
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
   skipped_residents?: ResidentWarning[]
   historical_cluster_warnings?: ResidentWarning[]
-  residents: { source: Source; name: string | null; mcr: string | null; route?: string
+  residents: { source: Source; name: string | null; mcr: string | null; route?: string; projected_year?: string
     requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
@@ -120,13 +120,20 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
   })
 }
 
-// Display order only: recorded year first, then route within the R1 cohort.
+export function draftResidentYear(resident: Resident, draft: DraftSchedule | null) {
+  const projected = draft && ['optimal', 'feasible'].includes(draft.status)
+    ? draft.residents.find((person) => sameSource(person.source, resident.source))?.projected_year
+    : null
+  return projected ?? resident.residency_year
+}
+
+// Display order only: draft cohort first, then route within the R1 cohort.
 export function groupDraftResidents(residents: Resident[], draft: DraftSchedule | null, entries?: HistoryEntry[]): Resident[] {
   const successfulDraft = draft && ['optimal', 'feasible'].includes(draft.status) ? draft : null
   if (!successfulDraft && !entries) return residents
   const routes = ['SGH', 'TTSH/NNI', 'NUH']
   return residents.map((resident) => {
-    const years = [...new Set(Array.from((resident.residency_year || '').matchAll(/r\s*([1-5])\b/gi), (match) => match[1]))].sort().join(',') || 'unknown'
+    const years = [...new Set(Array.from((draftResidentYear(resident, successfulDraft) || '').matchAll(/r\s*([1-5])\b/gi), (match) => match[1]))].sort().join(',') || 'unknown'
     const route = successfulDraft?.residents.find((person) => sameSource(person.source, resident.source))?.route
     const rank = routes.indexOf(route || '')
     const reasons = entries ? draftPostings(resident, successfulDraft).flatMap((posting) => {

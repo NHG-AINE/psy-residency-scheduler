@@ -3,7 +3,7 @@ import { sameSource } from './workbook.ts'
 import { resolvedCatalogueTarget } from './history-review.ts'
 import type { CapacityOverflow, DraftSchedule } from './draft-schedule.ts'
 import type { HistoryEntry } from './history-review.ts'
-import { draftPostings } from './draft-schedule.ts'
+import { draftPostings, draftResidentYear } from './draft-schedule.ts'
 import { postingCategory, postingDisplay, postingHistoryEntry } from './posting-blocks.ts'
 
 type Counts = Record<string, number>
@@ -43,6 +43,7 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
   const months = new Set(workbook.months.map((month) => month.month))
   for (const resident of workbook.residents) {
     const planned = draft?.residents.find((person) => sameSource(person.source, resident.source))
+    const cohortYears: string[] = draftResidentYear(resident, draft)?.toUpperCase().match(/\bR[1-5]\b/g) || []
     for (const posting of draftPostings(resident, draft)) {
       if (!months.has(posting.month)) continue
       const display = postingDisplay([posting], 'catalogue', entries)
@@ -53,12 +54,9 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
       const requirementYear = posting.draft
         ? planned?.months.find((month) => month.month === posting.month)?.target?.residency_year
         : target ? entry?.review.requirement_year || target.residency_year : null
-      // Filter resident cohorts. Split mixed-year residents by the requirement
-      // when it belongs to their recorded years; earlier catch-up stays in the first cohort.
-      const recordedYears: string[] = resident.residency_year?.toUpperCase().match(/\bR[1-5]\b/g) || []
-      const applicableYear = recordedYears.length === 1 ? recordedYears[0]
-        : requirementYear && recordedYears.includes(requirementYear) ? requirementYear
-        : recordedYears[0] || requirementYear
+      // Split mixed cohorts by assignment year. Earlier catch-up stays in the first cohort.
+      const applicableYear = requirementYear && cohortYears.includes(requirementYear) ? requirementYear
+        : cohortYears[0] || requirementYear
       const included = !year || applicableYear === year
       if (category === 'core' || category === 'elective') {
         const { group, site } = siteFor(display.label, category)

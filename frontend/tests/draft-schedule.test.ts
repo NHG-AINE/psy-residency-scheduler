@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -104,6 +104,28 @@ test('draft groups recorded years before R1 routes, preserving ties and original
   assert.deepEqual(groupDraftResidents(people, result), [10, 11, 7, 8, 1, 6, 3, 4, 2, 0, 5, 9].map((index) => people[index]))
   assert.deepEqual(groupDraftResidents([people[0], people[1], people[2], people[6]], result), [people[1], people[6], people[2], people[0]])
   assert.deepEqual({ people, result }, before)
+})
+
+test('projected R-years sort and filter catch-up and advanced months without changing recorded labels', () => {
+  const advancing: Resident = { ...resident, residency_year: 'R4' }
+  const peer: Resident = { ...advancing, source: { sheet: 'Timetable', row: 8 } }
+  const projection: DraftSchedule = { ...draft, residents: [{ ...draft.residents[0], projected_year: 'R4,R5',
+    months: [
+      { month: advancing.postings[0].month, status: 'posting', label: 'TTSH Continuity Clinic', target: { category: 'core', residency_year: 'R3' } },
+      { month: advancing.postings[3].month, status: 'posting', label: 'IMH ANDS', target: { category: 'elective', residency_year: 'R5' } },
+    ],
+  }] }
+  assert.equal(draftResidentYear(advancing, projection), 'R4,R5')
+  assert.equal(draftResidentYear(advancing, null), 'R4')
+  assert.equal(draftResidentYear(advancing, { ...projection, status: 'infeasible' }), 'R4')
+  assert.equal(advancing.residency_year, 'R4')
+  assert.deepEqual(groupDraftResidents([peer, advancing], projection), [advancing, peer])
+  assert.deepEqual(groupDraftResidents([peer, advancing], null), [peer, advancing])
+  const workbook = { residents: [advancing], months: advancing.postings.map(({ month }) => ({ month })),
+    postings: { core: [], electives: [] } } as unknown as Workbook
+  assert.equal(monthlyBreakdown(workbook, projection, [], 'R4').find((group) => group.label === 'Continuity Clinic')?.counts[advancing.postings[0].month], 1)
+  assert.equal(monthlyBreakdown(workbook, projection, [], 'R5').find((group) => group.label === 'Electives')?.counts[advancing.postings[3].month], 1)
+  assert.deepEqual(monthlyBreakdown(workbook, null, [], 'R5'), [])
 })
 
 test('no successful draft preserves workbook order', () => {

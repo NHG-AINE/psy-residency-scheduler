@@ -6,7 +6,7 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
 import RequestTotals from './components/RequestTotals'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
 import DraftResidentWarnings from './components/DraftResidentWarnings'
@@ -180,7 +180,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
         return <tr key={index}>
           <th scope="row">
-            <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small>
+            <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
             {rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => {
               const count = counts[status]
               const label = status === 'not_met' ? 'not met' : status
