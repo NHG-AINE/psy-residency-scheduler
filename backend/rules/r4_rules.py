@@ -17,10 +17,6 @@ def completed_r1_inpatient_at_imh(person):
 
 def prepare_blocks(person, options, planning_start, earlier_months, blockers):
     blocks = []
-    remaining = [r for r in person["requirements"] if r["requirement_year"] == "R4" and r["remaining_months"]]
-    if not remaining and person["cluster_coverage"]["missing"]:
-        blockers.append({"code": "completed_r4_missing_clusters", "source": person["source"],
-                         "clusters": person["cluster_coverage"]["missing"]})
     imh = completed_r1_inpatient_at_imh(person)
     for requirement in person["requirements"]:
         if requirement["requirement_year"] != "R4" or not requirement["remaining_months"]:

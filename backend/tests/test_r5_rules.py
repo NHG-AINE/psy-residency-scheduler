@@ -161,6 +161,40 @@ class R5Tests(unittest.TestCase):
             counts = Counter(p["months"][month]["target"]["requirement_id"] for p in result["residents"])
             self.assertEqual(counts, {"r5.geriatric_psychiatry": 2, "r5.child_adolescent_psychiatry": 2})
 
+    def test_r5_continues_with_historical_cluster_gap_after_all_r1_r4_training(self):
+        book = r5_book()
+        r1_history = book["annual_sheets"][0]["residents"][0]["postings"]
+        for month in r1_history[:6]:
+            month["value"] = "NUH Medicine & Neurology"
+        r4_history = book["annual_sheets"][-1]["residents"][0]["postings"]
+        for month in r4_history[3:6]:
+            month["value"] = "TTSH Consultation Liaison Psychiatry"
+        # An R5 posting in SHS is available and assigned, but cannot fill the gap.
+        book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"
+                                    or "Geriatric Psychiatry" not in o["posting"] or o["posting"] == "CGH Geriatric Psychiatry"]
+
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        self.assertEqual(result["skipped_residents"], [])
+        person = result["residents"][0]
+        self.assertTrue(all(m["target"]["residency_year"] == "R5" for m in person["months"]))
+        self.assertIn("CGH Geriatric Psychiatry", [m["label"] for m in person["months"]])
+        self.assertEqual(person["cluster_coverage"]["historical"]["missing"], ["SHS"])
+        self.assertEqual(person["cluster_coverage"]["projected"]["missing"], ["SHS"])
+        [warning] = result["historical_cluster_warnings"]
+        self.assertEqual(warning["source"], person["source"])
+        self.assertEqual(warning["reasons"], [{"code": "historical_cluster_gap", "source": person["source"], "clusters": ["SHS"]}])
+
+        # The same R5 record label and completed R4 blocks don't exempt someone
+        # who still has R3 training and can visit SHS during those postings.
+        del book["annual_sheets"][-2]
+        unfinished = draft_schedule(book, STORE)
+        self.assertIn(unfinished["status"], {"optimal", "feasible"}, unfinished["blockers"])
+        self.assertFalse(unfinished.get("historical_cluster_warnings"))
+        person = unfinished["residents"][0]
+        self.assertTrue(all(m["target"]["residency_year"] == "R3" for m in person["months"]))
+        self.assertEqual(person["cluster_coverage"]["projected"]["missing"], [])
+
     def test_r5_cannot_satisfy_r4_cluster_deadline(self):
         book = r5_book()
         history = book["annual_sheets"][-1]["residents"][0]["postings"]
