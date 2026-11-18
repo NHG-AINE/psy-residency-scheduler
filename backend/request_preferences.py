@@ -121,14 +121,16 @@ def resolve_requests(person, requests, options, planning_months):
             if supported == (3,) and 3 < credited < 6:
                 credited -= 3  # History contains a full first elective and part of its successor.
             continuation = credited and any(d - credited == duration for d in supported)
-            if duration in supported or exact and continuation:
+            if supported and (not exact or duration in supported or continuation):
                 eligible.append(option)
-                fresh |= duration in supported
+                fresh |= not exact or duration in supported
                 credit = additional_r5_credit(option)
-                used = credited if not exact and credited < duration else 0
-                charges.append(6 - credit["months"] if credit else duration - used)
+                used = credited if not exact else 0
+                charges.append(6 - credit["months"] if credit else
+                               min(max(0, d - used) for d in supported) if not exact else duration)
         item.update(requirement_id=requirement_id, duration=duration, requested_months=duration, exact_period=exact,
                     starts=period[:1] if exact else period, period_months=period,
+                    requested_durations=[duration] if exact else sorted(lengths),
                     option_keys=sorted({(o['requirement_id'], o['institution'], o['label']) for o in eligible}))
         if not eligible:
             allowed = ' or '.join(map(str, sorted(lengths)))
@@ -162,7 +164,7 @@ def resolve_requests(person, requests, options, planning_months):
 
 def requests_need_r5_split(outcomes):
     return any(row['status'] == 'evaluable' and row['requirement_id'] == R5_ELECTIVE
-               and row['duration'] == 3 and row['fresh_duration'] for row in outcomes)
+               and 3 in row.get('requested_durations', [row['duration']]) and row['fresh_duration'] for row in outcomes)
 
 
 def placement_fulfils_request(placement, request):
@@ -176,7 +178,7 @@ def placement_fulfils_request(placement, request):
     if request.get('exact_period'):
         return len(months) == request['duration'] and not placement.get('remaining') and months == request['period_months']
     duration = placement.get('block_duration')
-    return duration is None or request.get('duration', duration) == duration
+    return duration is None or duration in _request_durations(option, request.get('duration', duration))
 
 
 def add_request_objective(model, outcomes, placements, value=lambda variable: variable):

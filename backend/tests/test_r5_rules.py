@@ -372,6 +372,26 @@ class R5Tests(unittest.TestCase):
         self.assertEqual(Counter(m["label"] for m in person["months"])["IMH Forensic Psychiatry"], 3)
         self.assertEqual([(row["label"], row["assigned"]) for row in draft["capacity_overflows"]], [(label, 1)] * 6)
 
+    def test_blank_elective_duration_fits_alongside_dated_mixed_posting(self):
+        book = r5_book()
+        imported = parse_workbook(structured_workbook_bytes())
+        book["postings"]["electives"].append(next(
+            row for row in imported["postings"]["electives"] if row.get("additional_requirement")))
+        source = book["residents"][0]["source"]
+        book["requests"] = [
+            {"posting_request": label, "period": period, "matched_resident_source": source}
+            for label, period in (("IMH Geriatric Psychiatry", "Jul - Sep 2027"),
+                                  ("IMH Forensic Psychiatry (Elective)", None),
+                                  ("IMH Child and EPIP", "Jan - Jun 2028"))]
+        draft = draft_schedule(book, STORE)
+        self.assertIn(draft["status"], {"optimal", "feasible"}, draft["blockers"])
+        person, = draft["residents"]
+        self.assertEqual([row["status"] for row in person["requests"]], ["met"] * 3)
+        self.assertEqual([m["label"] for m in person["months"]],
+                         ["IMH Geriatric Psychiatry"] * 3 + ["IMH Forensic Psychiatry"] * 3
+                         + ["IMH Child and EPIP"] * 6)
+        self.assertFalse(person["carryforward"])
+
     def test_requested_extended_r5_cores_are_six_continuous_months(self):
         for child, geri, elective in ((3, 3, 6), (6, 3, 3), (3, 6, 3), (6, 6, 0)):
             with self.subTest(child=child, geri=geri):
