@@ -5,12 +5,12 @@ from datetime import date
 if __package__:
     from .cluster_coverage import cluster_coverage
     from .history_review import evaluate_review, mcr_key
-    from .programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
+    from .programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, additional_r5_credit, validate_posting
     from .workbook_import import intake_slot_id, normalized_label, recorded_years
 else:
     from cluster_coverage import cluster_coverage
     from history_review import evaluate_review, mcr_key
-    from programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, validate_posting
+    from programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, additional_r5_credit, validate_posting
     from workbook_import import intake_slot_id, normalized_label, recorded_years
 
 
@@ -194,6 +194,28 @@ def _allocation(entry, workbook):
             "target": target, "progress_key": validation["progress_key"]}
 
 
+
+def r5_elective_runs(months):
+    """Group same-option training months across calendar years and LOA."""
+    runs, active, previous = [], None, None
+    for month in months:
+        number = month_number(month["month"])
+        if previous is not None and number != previous + 1:
+            active = None
+        previous = number
+        if month["status"] == "loa":
+            continue
+        if month["status"] != "expected" or month.get("requirement_id") != "r5.elective":
+            active = None
+            continue
+        identity = (month["posting"], month["institution"])
+        if active is None or active["identity"] != identity:
+            active = {"identity": identity, "start": number, "count": 0, "target": month.get("target") or {}}
+            runs.append(active)
+        active["count"] += 1
+    return runs
+
+
 def _summaries(months):
     counts = defaultdict(int)
     groups = []
@@ -228,6 +250,11 @@ def _summaries(months):
         for part in PROGRAMME_REQUIREMENTS["R5"].values():
             if part["id"] in combined["credits"]:
                 counts[part["id"]] += part["months"]
+    for run in r5_elective_runs(months):
+        if run["count"] >= PROGRAMME_REQUIREMENTS["R5"]["Elective"]["months"]:
+            credit = additional_r5_credit(run["target"])
+            if credit:
+                counts[credit["id"]] = max(counts[credit["id"]], credit["months"])
     result = []
     for year, requirements in PROGRAMME_REQUIREMENTS.items():
         for posting, rule in requirements.items():
