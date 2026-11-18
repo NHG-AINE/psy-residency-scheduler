@@ -1,8 +1,10 @@
 import unittest
 from copy import deepcopy
+from unittest.mock import patch
+
 from ortools.sat.python import cp_model
 from request_preferences import add_request_objective
-from scheduler import _solve_priorities, draft_schedule
+from scheduler import _capacity_overflow_lower_bound, _solve_priorities, draft_schedule
 from tests.test_r2_rules import r2_book
 from tests.test_r3_rules import r3_book
 from tests.test_r5_rules import r5_book
@@ -11,8 +13,26 @@ from tests.test_r1_solver import STORE
 
 
 class RequestSchedulerTests(unittest.TestCase):
+    def test_capacity_bound_is_computed_once_per_solved_draft(self):
+        book = r2_book()
+        book['requests'] = [
+            {'posting_request': 'IMH ANDS (Elective)', 'period': 'Jul - Sep 2027',
+             'source': {'sheet': 'Request', 'row': row},
+             'matched_resident_source': book['residents'][0]['source']}
+            for row in (2, 3)
+        ]
+        with patch('scheduler.SOLVER_WORKERS', 1), patch(
+                'scheduler._capacity_overflow_lower_bound', wraps=_capacity_overflow_lower_bound) as bound:
+            self.assertEqual(draft_schedule(book, STORE, max_seconds=0)['status'], 'unknown')
+            bound.assert_not_called()
+            result = draft_schedule(book, STORE, max_seconds=20)
+            bound.assert_called_once()
+        self.assertEqual(result['status'], 'optimal', result['blockers'])
+        self.assertEqual(result['capacity_overflow_lower_bound'], 0)
+        self.assertEqual([(r['status'], r.get('duplicate_of')) for r in result['residents'][0]['requests']],
+                         [('met', None), ('met', 0)])
+
     def test_early_mixed_year_fallback_reports_unbuilt_preferences_and_extends_to_full_model(self):
-        from unittest.mock import patch
         book = r5_book()
         for month in book["annual_sheets"][-1]["residents"][0]["postings"][-2:]:
             month.update(status="loa", value="LOA")
