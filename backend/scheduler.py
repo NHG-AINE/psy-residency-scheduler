@@ -657,15 +657,16 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         divisor = gcd(divisor, demand)
     weights = {key: demand // divisor for key, demand in r5_demand.items()} if divisor else {}
     balance_scale = 2 if combined_r5 else 1
+    capacity_bound = None
 
     def build_preferences(model, value, priority=None):
+        nonlocal capacity_bound
         # Numeric mode uses only original choices, so an early fallback never
         # reads auxiliary variables introduced by a later preference stage.
         objectives, preferences, singletons = {}, {}, {}
         overflows, balance = [], []
         allocation, r3_allocation, r4_allocation, r5_allocation = [], [], [], []
         inpatient_deviations, cluster_penalties, r3_cluster_penalties = [], [], []
-        capacity_bound = None
         if priority in (None, "capacity_overflow"):
             for key in sorted(occupancy.keys() | fixed_occupancy.keys()):
                 capacity = by_key[key[1:]]["capacity"]
@@ -678,9 +679,10 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                         overflow = model.new_int_var(0, len(values) + fixed, f"overflow_{key}")
                         model.add_max_equality(overflow, [0, difference])
                     overflows.append(overflow)
-            capacity_bound = _capacity_overflow_lower_bound(
-                candidates, placements, [a + b + c for a, b, c in zip(blocks, r3_blocks, r4_blocks)],
-                prepared["catalogue_options"], fixed_occupancy, len(prepared["planning_months"]))
+            if capacity_bound is None:
+                capacity_bound = _capacity_overflow_lower_bound(
+                    candidates, placements, [a + b + c for a, b, c in zip(blocks, r3_blocks, r4_blocks)],
+                    prepared["catalogue_options"], fixed_occupancy, len(prepared["planning_months"]))
             if model is not None:
                 model.add(sum(overflows) >= capacity_bound)
             objectives["capacity_overflow"] = sum(overflows)
