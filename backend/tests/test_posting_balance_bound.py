@@ -78,7 +78,7 @@ class PostingBoundTests(unittest.TestCase):
                     self.assertEqual(stage["score"], explicit["soft_results"]["posting_balance"])
                 self.assertEqual(raw["residents"][0]["months"], explicit["residents"][0]["months"])
 
-    def test_block_bound_projects_exact_choices_and_preserves_request_flags(self):
+    def test_block_bound_projects_exact_choices_without_mutating_requests(self):
         def options(key):
             return [{'requirement_id': key, 'institution': site, 'label': f'{site} {key}'}
                     for site in ('A', 'B')]
@@ -88,9 +88,9 @@ class PostingBoundTests(unittest.TestCase):
         candidates = [[{'credited_r1_months': 12}]]
         years = ([[block('r2.a', 1, True), block('r2.b', 2)]], [[]],
                  [[block('r4.a', 1), block('r4.b', 1)]], [[]])
-        original_flag = cp_model.CpModel().new_bool_var('full_request_flag')
         outcomes = [[{'status': 'evaluable', 'starts': [2],
-                      'option_keys': [('r2.b', 'A', 'A r2.b')], '_flag': original_flag}]]
+                      'option_keys': [('r2.b', 'A', 'A r2.b')]}]]
+        original_outcomes = deepcopy(outcomes)
         data = (people, candidates, years, outcomes)
         year_totals = [(2, [1, 0, 1, 1, 0]), (2, [0, 0, 0, 0, 1])]
         model, objective, variables = _posting_block_relaxation(data, year_totals, 3, 0)
@@ -100,7 +100,7 @@ class PostingBoundTests(unittest.TestCase):
         # One resident contributes one imbalance per active training month;
         # R4's unfinished block carries beyond the horizon. R5 bound adds 3.
         self.assertEqual(solver.value(objective), 7)
-        self.assertIs(outcomes[0][0]['_flag'], original_flag)
+        self.assertEqual(outcomes, original_outcomes)
         # A is not the last institution variant, so it survives only when the
         # request signature is respected during deduplication.
         full = cp_model.CpModel()
@@ -117,7 +117,7 @@ class PostingBoundTests(unittest.TestCase):
         self.assertEqual(status, 'optimal')
         self.assertEqual(stages[-1]['posting_relaxation']['lower_bound'], 7)
         self.assertIsNone(stages[-1]['posting_relaxation']['block_lower_bound'])
-        self.assertIs(outcomes[0][0]['_flag'], original_flag)
+        self.assertEqual(outcomes, original_outcomes)
 
     def test_r5_totals_with_loa_partial_demand_or_mixed_year_progression(self):
         for partial in (False, True):

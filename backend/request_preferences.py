@@ -176,7 +176,6 @@ def add_request_objective(model, outcomes, placements, value=lambda variable: va
             else:
                 flag = model.new_bool_var(f'request_{i}_{n}')
                 model.add_max_equality(flag, candidates or [0])
-                row['_flag'] = flag
             flags.append(flag)
         groups.append(flags)
     scale = lcm(*(len(g) for g in groups)) if groups else 1

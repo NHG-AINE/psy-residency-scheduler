@@ -141,9 +141,7 @@ def _posting_block_relaxation(block_data, year_totals, r5_bound, request_score):
     only when every request recognises them identically. R5's independent
     count bound replaces its weighted placement objective, avoiding that search.
     """
-    people, candidates, block_years, request_outcomes = block_data
-    outcomes = deepcopy([[{k: v for k, v in row.items() if k != "_flag"} for row in rows]
-                         for rows in request_outcomes])
+    people, candidates, block_years, outcomes = block_data
     model = cp_model.CpModel()
     placements = []
     for i, person in enumerate(people):
@@ -842,7 +840,6 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         outcomes = request_outcomes[i]
         for outcome in outcomes:
             if outcome.get('status') == 'evaluable' and 'duplicate_of' not in outcome:
-                outcome.pop('_flag', None)
                 outcome['status'] = 'met' if any(placement_fulfils_request(p, outcome) for p in chosen) else 'not_met'
                 if outcome['status'] == 'not_met':
                     outcome['reason_code'], outcome['reason'] = unmet_request_reason(
