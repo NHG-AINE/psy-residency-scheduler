@@ -21,6 +21,10 @@ Neurology posting, followed by Inpatient Psychiatry.
 | Medicine & Neurology | NUH | 6 months | To be completed in the first 6 months of R1 |
 | Inpatient Psychiatry | IMH / TTSH / CGH / SGH / NUH | 6 months | To be completed in the second 6 months of R1 |
 
+In the paired routes, the timetable may show two months of General Medicine,
+two months of Neurology and two more months at the same General Medicine
+institution. This split has been used at TTSH/NNI and SGH/SGH.
+
 ## R2
 
 | Posting | Institution | Duration |
