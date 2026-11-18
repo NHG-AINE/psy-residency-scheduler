@@ -181,29 +181,38 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       <caption className="sr-only">{hasDraft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
-      <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident, index) => <tr key={index}>
-        <th scope="row"><span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small>{(() => { const { rows, counts } = requestSummary(resident, draft); return rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => { const count = counts[status]; return count > 0 && <RequestDetails className={`request-count ${status}`} key={status} name={show(resident.name)} rows={rows.filter((row) => row.status === status)} hint={`${count} ${status === 'not_met' ? 'not met' : status} - click for details`}>{count} {status === 'not_met' ? 'not met' : status}</RequestDetails> })}</div> })()}</th>
-        {groupPostings(draftPostings(resident, draft)).map((block) => {
-          const status = block[0].status
-          const display = postingDisplay(block, 'catalogue', resolution?.entries)
-          const value = display.label
-          const category = postingCategory(display, status)
-          const classification = ` - ${postingCategoryLabels[category]}`
-          const qualifiers = display.markers.filter((marker) => marker !== 'Elective')
-          const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
-          const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
-          const summary = requestSummary(resident, draft)
-          const indicator = summary.indicator(block[0].month)
-          return <td key={block[0].month} colSpan={block.length}><div
-            className={`posting-value ${category}`}
-            title={`${block[0].draft ? 'Draft assignment - ' : ''}${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
-            >
-            {words(value)}
-            {indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={show(resident.name)} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>}
-            {display.markers.some((marker) => marker !== 'Elective') && <span className="posting-markers">{display.markers.filter((marker) => marker !== 'Elective').map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
-          </div></td>
-        })}
-      </tr>)}</tbody>
+      <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident, index) => {
+        const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
+        return <tr key={index}>
+          <th scope="row">
+            <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(resident.residency_year)}`)}</small>
+            {rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => {
+              const count = counts[status]
+              const label = status === 'not_met' ? 'not met' : status
+              return count > 0 && <RequestDetails className={`request-count ${status}`} key={status} name={show(resident.name)} rows={rows.filter((row) => row.status === status)} hint={`${count} ${label} - click for details`}>{count} {label}</RequestDetails>
+            })}</div>}
+          </th>
+          {groupPostings(draftPostings(resident, draft)).map((block) => {
+            const status = block[0].status
+            const display = postingDisplay(block, 'catalogue', resolution?.entries)
+            const value = display.label
+            const category = postingCategory(display, status)
+            const classification = ` - ${postingCategoryLabels[category]}`
+            const qualifiers = display.markers.filter((marker) => marker !== 'Elective')
+            const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
+            const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
+            const indicator = requestIndicator(block[0].month)
+            return <td key={block[0].month} colSpan={block.length}><div
+              className={`posting-value ${category}`}
+              title={`${block[0].draft ? 'Draft assignment - ' : ''}${hoverName} • ${hoverRange}`} aria-label={`${show(resident.name)} - ${range(block)} - ${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}
+              >
+              {words(value)}
+              {indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={show(resident.name)} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>}
+              {display.markers.some((marker) => marker !== 'Elective') && <span className="posting-markers">{display.markers.filter((marker) => marker !== 'Elective').map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
+            </div></td>
+          })}
+        </tr>
+      })}</tbody>
     </table></div>}
     </div>
     {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft} entries={resolution?.entries || []} />, breakdownHost)}
