@@ -254,6 +254,24 @@ test('request summaries and markers share draft outcomes and exclude duplicates'
 })
 
 
+test('alternative outcomes count once and mark only the selected months', () => {
+  const request = { posting_request: 'Option A', period: null, source: { sheet: 'Requests', row: 2 } }
+  const alternatives = [
+    { request, status: 'not_met' as const, replacement_months: ['2028-01'] },
+    { request: { ...request, posting_request: 'Option B' }, status: 'met' as const, matched_months: ['2028-04'] },
+  ]
+  const group = { request, status: 'met' as const, alternatives, matched_months: ['2028-04'], replacement_months: [] }
+  const groupedDraft: DraftSchedule = { ...draft, residents: [{ ...draft.residents[0], requests: [group] }] }
+  assert.deepEqual(requestTotals(groupedDraft), { met: 1, not_met: 0, pending: 0 })
+  assert.equal(requestSummary(resident, groupedDraft).indicator('2028-01'), undefined)
+  assert.equal(requestSummary(resident, groupedDraft).indicator('2028-04')?.status, 'met')
+  assert.deepEqual(filterRequestResidents([resident], groupedDraft, 'not_met'), [])
+  groupedDraft.residents[0].requests = [{ ...group, status: 'not_met', matched_months: [], replacement_months: ['2028-01'] }]
+  assert.deepEqual(requestTotals(groupedDraft), { met: 0, not_met: 1, pending: 0 })
+  assert.equal(filterRequestResidents([resident], groupedDraft, 'not_met').length, 1)
+})
+
+
 test('draft feedback shows historical warnings and request outcomes with the relevant details', async () => {
   const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   try {
@@ -277,6 +295,19 @@ test('draft feedback shows historical warnings and request outcomes with the rel
     assert.match(html, /R4 Inpatient must be outside IMH/)
     assert.match(html, /SGH Inpatient Psychiatry/)
     assert.doesNotMatch(html, /row 37|Capacity in this draft/)
+    const alternativeHtml = renderToStaticMarkup(createElement(RequestDetails, {
+      ...props, rows: [{ ...row, status: 'met', reason: null, alternatives: [
+        { ...row, request: { ...row.request, posting_request: 'Option A' } },
+        { ...row, status: 'met', request: { ...row.request, posting_request: 'Option B' } },
+      ] }],
+    }, 'Details'))
+    assert.match(alternativeHtml, /Requested alternatives/)
+    assert.match(alternativeHtml, /Option A/)
+    assert.match(alternativeHtml, /<small>OR<\/small>/)
+    assert.match(alternativeHtml, /Option B/)
+    assert.match(alternativeHtml, /Selected/)
+    assert.doesNotMatch(alternativeHtml, /Request not met|R4 Inpatient must be outside IMH/)
+
     for (const [months, expected] of [
       [Array.from({ length: 12 }, (_, i) => `${i < 6 ? 2027 : 2028}-${String((i + 6) % 12 + 1).padStart(2, '0')}`), 'Jul 27 \u2013 Jun 28'],
       [['2027-12', '2028-01', '2028-03'], 'Dec 27 \u2013 Jan 28, Mar 28'],
