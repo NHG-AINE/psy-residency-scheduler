@@ -27,10 +27,11 @@ def _integer(value, minimum):
 def prepare_scheduler_inputs(workbook, reviewstore):
     """Compose importer and ledger data for a new schedule from the latest upload.
 
-    workbook is the parsed importer result (including its validated July-June
-    headings and filled intake slots). input_ready means usable inputs, not a feasible or generation-ready
-    schedule. policy_reviews retain unsupported remarks which must be addressed
-    before a solver uses those options. Recorded R-year never grants completion.
+    workbook is the parsed importer result with validated July-June headings.
+    It identifies existing intake placeholders without creating resident rows.
+    input_ready means usable inputs, not a feasible or generation-ready schedule.
+    policy_reviews retain unsupported remarks which must be addressed before a
+    solver uses those options. Recorded R-year never grants completion.
     """
     ledger = build_requirement_ledger(workbook, reviewstore)
     options, catalogue_blockers, policy_reviews, catalogue_summaries = [], [], [], []
