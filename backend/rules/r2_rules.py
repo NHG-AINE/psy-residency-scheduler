@@ -71,9 +71,8 @@ def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
                 months = [active[tick] for tick in range(start, start + length) if tick < len(active)]
                 placements.append({"variable": variable, "option": option, "months": months, "start": start,
                                    "remaining": length - len(months),
-                                   **({"block_id": requirement["block_id"],
-                                       "block_duration": requirement["required_months"]}
-                                      if "block_id" in requirement else {})})
+                                   "block_duration": requirement.get("required_months", length),
+                                   **({"block_id": requirement["block_id"]} if "block_id" in requirement else {})})
         if enabled is None:
             model.add_exactly_one(choices)
         else:

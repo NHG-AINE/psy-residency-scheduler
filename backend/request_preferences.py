@@ -7,17 +7,21 @@ if __package__:
     from .workbook_import import normalized_label, normalized_posting_label
     from .rules.r2_rules import partial_posting_identity
     from .rules.r5_rules import elective_durations
+    from .requirement_ledger import R5_CORES, R5_ELECTIVE
+    from .programme_requirements import additional_r5_credit
     from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
     from workbook_import import normalized_label, normalized_posting_label
     from rules.r2_rules import partial_posting_identity
     from rules.r5_rules import elective_durations
+    from requirement_ledger import R5_CORES, R5_ELECTIVE
+    from programme_requirements import additional_r5_credit
     from rules.r4_rules import completed_r1_inpatient_at_imh
 
 MONTHS = {name: number for number, names in enumerate((('jan','january'), ('feb','february'), ('mar','march'), ('apr','april'), ('may',), ('jun','june'), ('jul','july'), ('aug','august'), ('sep','sept','september'), ('oct','october'), ('nov','november'), ('dec','december')), 1) for name in names}
 
 
-def period_starts(value, planning_months, duration):
+def request_period(value, planning_months):
     if value is None or isinstance(value, str) and not value.strip():
         return list(range(len(planning_months)))
     if not isinstance(value, str):
@@ -35,10 +39,16 @@ def period_starts(value, planning_months, duration):
     a, b = months.index(start), months.index(end)
     if b < a:
         return None
-    # Preserve block-aligned windows; only the planning-year boundary may
-    # truncate the requested block. Remaining training carries into next year.
-    return [start for start in range(a, b + 1, duration)
-            if min(start + duration - 1, len(months) - 1) <= b]
+    return list(range(a, b + 1))
+
+
+def _request_durations(option, required):
+    key = option["requirement_id"]
+    if key == R5_ELECTIVE:
+        return elective_durations(option)
+    if key in R5_CORES:
+        return (3, 6)
+    return (required,)
 
 
 def resolve_requests(person, requests, options, planning_months):
@@ -80,55 +90,67 @@ def resolve_requests(person, requests, options, planning_months):
             continue
         requirement_id, service, category = next(iter(identities))
         req = requirements[requirement_id]
-        duration = req['required_months']
-        duration_starts = None
-        if requirement_id == 'r5.elective':
-            durations = sorted({d for option in matches for d in elective_durations(option)})
-            if not durations:
-                item['reason'] = 'No unique eligible catalogue posting'
-                continue
-            duration_starts = {d: period_starts(row.get('period'), planning_months, d) for d in durations}
-            duration = min((d for d in durations if duration_starts[d]), default=min(durations))
-        starts = period_starts(row.get('period'), planning_months, duration)
-        if starts is None:
+        period = request_period(row.get('period'), planning_months)
+        if period is None:
             item['reason'] = 'Period is unclear or outside the planning year'
             continue
-        if duration_starts is not None:
-            item['duration_starts'] = duration_starts
-            # A requested continuation consumes only its outstanding months.
-            # Completed three-month blocks do not discount a fresh request.
-            tail, identity = 0, None
-            for month in reversed(person.get('months', [])):
-                if month['status'] == 'loa':
-                    continue
-                if month['status'] != 'expected' or month.get('requirement_id') != requirement_id:
-                    break
-                current = (month['posting'], month['institution'])
-                if identity is not None and current != identity:
-                    break
-                identity = current
-                tail += 1
-            charges = [d - tail for option in matches if (option['posting'], option['institution']) == identity
-                       for d in elective_durations(option) if d > tail and duration_starts.get(d)]
-            item['remaining_duration'] = min([duration] + charges)
-            starts = sorted({start for values in duration_starts.values() for start in values})
-        item.update(status='evaluable', requirement_id=requirement_id, duration=duration, starts=starts,
-                    period_months=period_starts(row.get('period'), planning_months, 1),
-                    option_keys=sorted({(o['requirement_id'], o['institution'], o['label']) for o in matches}))
+        exact = bool((row.get('period') or '').strip())
+        lengths = {d for option in matches for d in _request_durations(option, req['required_months'])}
+        if not lengths:
+            item['reason'] = 'No unique eligible catalogue posting'
+            continue
+        default = 3 if requirement_id in R5_CORES else 6 if requirement_id == R5_ELECTIVE else req['required_months']
+        duration = len(period) if exact else default if default in lengths else min(lengths)
+        tail, identity = 0, None
+        for month in reversed(person.get('months', [])):
+            if month['status'] == 'loa':
+                continue
+            if month['status'] != 'expected' or month.get('requirement_id') != requirement_id:
+                break
+            current = (month['posting'], month['institution'])
+            if identity is not None and current != identity:
+                break
+            identity = current
+            tail += 1
+
+        eligible, charges = [], []
+        fresh = False
+        for option in matches:
+            supported = _request_durations(option, req['required_months'])
+            credited = tail if (option['posting'], option['institution']) == identity else 0
+            if supported == (3,) and 3 < credited < 6:
+                credited -= 3  # History contains a full first elective and part of its successor.
+            continuation = credited and any(d - credited == duration for d in supported)
+            if duration in supported or exact and continuation:
+                eligible.append(option)
+                fresh |= duration in supported
+                credit = additional_r5_credit(option)
+                used = credited if not exact and credited < duration else 0
+                charges.append(6 - credit["months"] if credit else duration - used)
+        item.update(requirement_id=requirement_id, duration=duration, requested_months=duration, exact_period=exact,
+                    starts=period[:1] if exact else period, period_months=period,
+                    option_keys=sorted({(o['requirement_id'], o['institution'], o['label']) for o in eligible}))
+        if not eligible:
+            allowed = ' or '.join(map(str, sorted(lengths)))
+            months = 'month' if duration == 1 else 'months'
+            item.update(status='not_met', reason_code='duration_mismatch',
+                        reason=f'{req["requirement_year"]} {req.get("posting") or service} allows {allowed} months. '
+                               f'The requested period is {duration} {months}.')
+        else:
+            item.update(status='evaluable', credit_months=min(charges), fresh_duration=fresh)
     seen = {}
     for item in outcomes:
         if item['status'] != 'evaluable':
             continue
-        key = (tuple(item['option_keys']), tuple(item['starts']),
-               tuple((d, tuple(starts)) for d, starts in item.get('duration_starts', {}).items()),
-               tuple(item['period_months']) if 'duration_starts' in item else ())
+        key = (tuple(item['option_keys']), tuple(item['starts']), item['duration'], item['exact_period'])
         if key in seen:
             item['duplicate_of'] = seen[key]
         else:
             seen[key] = outcomes.index(item)
     for requirement_id, req in requirements.items():
         group = [i for i in outcomes if i['status'] == 'evaluable' and 'duplicate_of' not in i and i['requirement_id'] == requirement_id]
-        if req['remaining_months'] and len(group) > 1 and sum(i.get('remaining_duration', i['duration']) for i in group) > req['remaining_months']:
+        limit = max([req['remaining_months']] + [i['credit_months'] for i in group]) if requirement_id in R5_CORES else req['remaining_months']
+        if limit and len(group) > 1 and sum(i['credit_months'] for i in group) > limit:
             for item in group:
                 item.update(status='pending', reason='Competing requests need clarification')
             for item in outcomes:
@@ -137,30 +159,24 @@ def resolve_requests(person, requests, options, planning_months):
     return outcomes
 
 
+
 def requests_need_r5_split(outcomes):
-    """Only resolved requests that call for three-month blocks enable a new split."""
-    rows = [row for row in outcomes if row['status'] == 'evaluable' and 'duplicate_of' not in row
-            and row.get('requirement_id') == 'r5.elective' and row.get('duration_starts', {}).get(3)]
-    for row in rows:
-        period = row['request'].get('period')
-        if (isinstance(period, str) and period.strip() and len(row['period_months']) < 6
-                or 6 not in row['duration_starts']):
-            return True
-    return False
+    return any(row['status'] == 'evaluable' and row['requirement_id'] == R5_ELECTIVE
+               and row['duration'] == 3 and row['fresh_duration'] for row in outcomes)
 
 
 def placement_fulfils_request(placement, request):
-    """Placements already satisfy training rules; a request recognises their start."""
+    """A dated request needs the exact start and training months in its period."""
     option = placement['option']
-    if request.get('duration_starts') is not None:
-        duration = placement.get('block_duration', len(placement['months']) + placement.get('remaining', 0))
-        if (duration not in elective_durations(option) or not placement['months']
-                or placement['months'][0] not in request['duration_starts'].get(duration, [])
-                or any(month not in request['period_months'] for month in placement['months'])):
-            return False
-    return bool(placement['months']) and (
-        option['requirement_id'], option['institution'], option['label']
-    ) in request['option_keys'] and placement['months'][0] in request['starts']
+    months = placement['months']
+    if not months or (option['requirement_id'], option['institution'], option['label']) not in request['option_keys']:
+        return False
+    if months[0] not in request['starts']:
+        return False
+    if request.get('exact_period'):
+        return len(months) == request['duration'] and not placement.get('remaining') and months == request['period_months']
+    duration = placement.get('block_duration')
+    return duration is None or request.get('duration', duration) == duration
 
 
 def add_request_objective(model, outcomes, placements, value=lambda variable: variable):
@@ -187,7 +203,7 @@ def unmet_request_reason(person, request, placements, options, stages):
     """Explain proven individual restrictions; do not infer global conflicts."""
     key = request['requirement_id']
     requirement = next(r for r in person['requirements'] if r['requirement_id'] == key)
-    if not requirement['remaining_months']:
+    if not requirement['remaining_months'] and not any(placement_fulfils_request(p, request) for p in placements):
         return 'requirement_completed', 'This requirement was already completed before the planning year.'
     requested = [o for o in options if (o['requirement_id'], o['institution'], o['label']) in request['option_keys']]
     if (key == 'r4.inpatient_psychiatry' and requested
@@ -200,13 +216,6 @@ def unmet_request_reason(person, request, placements, options, stages):
     if partial and requested and all((o['posting'], o['institution']) != partial for o in requested):
         posting, institution = partial
         return 'partial_posting_continuation', f'This requirement must continue as {institution} {posting}, where it was started.'
-    if not request['starts']:
-        duration = request['duration']
-        window = len(request['period_months'])
-        posting = f"{requirement['requirement_year']} {requirement['posting']}"
-        period = request['request']['period']
-        return 'no_valid_start', (f"{posting} requires {duration} {'month' if duration == 1 else 'months'}, "
-                                 f"but the requested {period} period is only {window} {'month' if window == 1 else 'months'}.")
     # Use the scheduler's actual placement choices, including history and LOA.
     possible = [p for p in placements if placement_fulfils_request(p, request)]
     if not possible:
