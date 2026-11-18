@@ -64,6 +64,35 @@ class R1SolverTests(unittest.TestCase):
                             + (f"{medicine} General Medicine",) * 2)
                 self.assertIn((route, expected), sequences)
 
+    def test_structured_medicine_lengths_constrain_new_blocks_and_allow_carryforward(self):
+        workbook = r1_book()
+        for row in workbook["postings"]["core"]:
+            if row["posting"].endswith("General Medicine"):
+                row.update(allowed_block_lengths=[2, 4], fulfils_requirements=["General Medicine"],
+                           additional_requirement=None, additional_credit_months=None)
+        prepared = prepare_scheduler_inputs(workbook, STORE)
+        person = prepared["residents"][0]
+
+        def paired_sequences():
+            blockers = []
+            _, candidates, _ = prepare_candidates([person], prepared["catalogue_options"],
+                                                  prepared["planning_start"], blockers)
+            self.assertFalse(blockers)
+            return [
+                (tuple(o["requirement_id"].removeprefix("r1.") for o in c["schedule"] if o), c["carryforward"])
+                for c in candidates[0] if c["route"] == "TTSH/NNI"
+            ]
+
+        gm, neuro = "general_medicine", "neurology"
+        self.assertEqual({sequence[:6] for sequence, _ in paired_sequences()},
+                         {(gm,) * 4 + (neuro,) * 2, (neuro,) * 2 + (gm,) * 4,
+                          (gm,) * 2 + (neuro,) * 2 + (gm,) * 2})
+
+        for month in person["availability"][:-1]:
+            month["available"] = False
+        self.assertTrue(any(sequence == (gm,) and carry[("r1.general_medicine", "TTSH")] == 3
+                            for sequence, carry in paired_sequences()))
+
     def check_resident(self, person):
         active = [m for m in person["months"] if m["status"] == "posting"]
         counts = Counter(m["target"]["requirement_id"] for m in active)
@@ -130,6 +159,9 @@ class R1SolverTests(unittest.TestCase):
         for gap in (False, True):
             with self.subTest(historical_gap=gap):
                 exceptional = r1_book()
+                medicine = next(row for row in exceptional["postings"]["core"] if row["posting"] == "SGH General Medicine")
+                medicine.update(allowed_block_lengths=[2, 4], fulfils_requirements=["General Medicine"],
+                                additional_requirement=None, additional_credit_months=None)
                 values = ["SGH General Medicine"] + ["LOA"] * 5 + ["IMH Inpatient Psychiatry"] * 6
                 if gap:
                     values[1] = None

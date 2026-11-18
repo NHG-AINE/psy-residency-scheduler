@@ -1,27 +1,14 @@
 """Prepare fresh planning inputs without assigning postings or modifying evidence."""
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation
 
 if __package__:
     from .programme_requirements import validate_posting
     from .requirement_ledger import build_requirement_ledger, source_key
-    from .workbook_import import normalized_label, posting_catalogue, recorded_years
+    from .workbook_import import normalized_label, optional_integer, posting_catalogue, recorded_years
 else:
     from programme_requirements import validate_posting
     from requirement_ledger import build_requirement_ledger, source_key
-    from workbook_import import normalized_label, posting_catalogue, recorded_years
-
-
-def _integer(value, minimum):
-    if value is None or isinstance(value, str) and not value.strip():
-        return None
-    try:
-        number = Decimal(str(value))
-        if number.is_finite() and number == int(number) and number >= minimum:
-            return int(number)
-    except (InvalidOperation, ValueError, OverflowError):
-        pass
-    raise ValueError("invalid integer")
+    from workbook_import import normalized_label, optional_integer, posting_catalogue, recorded_years
 
 
 def prepare_scheduler_inputs(workbook, reviewstore):
@@ -57,25 +44,34 @@ def prepare_scheduler_inputs(workbook, reviewstore):
             reasons = list(validation["reasons"])
             duration, capacity = None, None
             try:
-                duration = _integer(row.get("duration_months"), 1) if category == "core" else validation["required_months"]
+                duration = (optional_integer(row.get("duration_months"), 1)
+                            if category == "core" or "allowed_block_lengths" in row else validation["required_months"])
                 if duration is None:
                     reasons.append("missing_duration")
-                elif validation["valid"] and duration != validation["required_months"]:
+                elif (validation["valid"] and duration != validation["required_months"]
+                      and not (validation["requirement_id"] == "r5.elective" and duration == 3
+                               and row.get("allowed_block_lengths") == [3])):
                     reasons.append("programme_duration_mismatch")
             except ValueError:
                 reasons.append("invalid_duration")
             try:
-                capacity = _integer(row.get("max"), 0)
+                capacity = optional_integer(row.get("max"), 0)
             except ValueError:
                 reasons.append("invalid_capacity")
             option = {**target, **{key: validation[key] for key in (
                 "requirement_id", "required_months", "institution", "posting", "training_months", "progress_key", "continuity")},
                 "duration_months": duration, "capacity": capacity, "raw": deepcopy(row),
-                "remarks": deepcopy(row.get("remarks")), "policy_review_required": bool(row.get("remarks")),
+                "remarks": deepcopy(row.get("remarks")),
+                "policy_review_required": bool(row.get("remarks") or row.get("additional_requirement")),
                 "valid": not reasons, "reasons": reasons}
             options.append(option)
             catalogue_blockers.extend({"code": reason, "source": deepcopy(row["source"])} for reason in reasons)
-            if option["policy_review_required"]:
+            if row.get("additional_requirement"):
+                policy_reviews.append({"code": "unsupported_additional_credit", "label": target["label"],
+                                       "source": deepcopy(row["field_sources"]["additional_requirement"]),
+                                       "additional_requirement": row["additional_requirement"],
+                                       "additional_credit_months": row["additional_credit_months"]})
+            elif option["policy_review_required"]:
                 policy_reviews.append({"code": "unsupported_posting_remarks", "source": deepcopy(row["source"]),
                                        "label": target["label"], "remarks": deepcopy(row["remarks"])})
 
