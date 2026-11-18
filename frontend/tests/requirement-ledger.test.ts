@@ -29,7 +29,10 @@ test('Requirements renders one concise table, missing highlights and pending rec
   const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   try {
     const { default: Loader, RequirementContent } = await vite.ssrLoadModule('/src/components/ResidentRequirements.tsx')
-    const html = renderToStaticMarkup(createElement(RequirementContent, { ledger: person(), cutoff: '2027-06', planningStart: '2027-07', onHistoryReview: () => {} }))
+    const withMixed = { ...person(), mixed_progress: [{ label: 'IMH Child and EPIP', start: '2027-04', end: '2027-06', months: 3 }] }
+    const html = renderToStaticMarkup(createElement(RequirementContent, { ledger: withMixed, cutoff: '2027-06', planningStart: '2027-07', onHistoryReview: () => {} }))
+    assert.match(html, /IMH Child and EPIP.*3 of 6 months completed/)
+    assert.match(html, /Core and elective credit is awarded when the block is complete/)
     assert.match(html, /Months through Jun 2027 - Planning 2027\/28/)
     assert.equal((html.match(/<table>/g) || []).length, 1)
     assert.match(html, />Counted</)

@@ -60,6 +60,9 @@ export function RequirementContent({ ledger, cutoff, planningStart, onHistoryRev
           </th><td>{requirement.required_months}</td><td>{requirement.expected_months}</td><td>{requirement.remaining_months}</td>
         </tr>)}{!requirements.length && <tr><td colSpan={5}>No {filter === 'all' ? '' : filter + ' '}requirements to show.</td></tr>}</tbody>
       </table></div>
+      {ledger.mixed_progress?.map((block) => <p className="record-note" key={block.start}>
+        {block.label} &middot; {block.months} of 6 months completed. Core and elective credit is awarded when the block is complete.
+      </p>)}
       {pending.length > 0 && <div className="requirements-pending"><h4>Pending records ({pending.length} months)</h4><button type="button" className="button button-secondary" onClick={onHistoryReview}>Open History review</button><details className="requirement-detail"><summary>Show pending records</summary><Evidence months={pending} /></details></div>}
     </>}
   </section>
