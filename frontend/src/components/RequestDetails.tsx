@@ -10,7 +10,13 @@ export default function RequestDetails({ name, rows, hint, className, children }
 }) {
   return <DetailsPopover name={name} hint={hint} className={className} details={rows.map((row, index) => <article key={index}>
         <p className={`request-status ${row.status}`}>{row.status === 'met' ? 'Request met' : row.status === 'not_met' ? 'Request not met' : 'Pending clarification'}</p>
-        <dl><dt>Requested</dt><dd>{row.request.posting_request}<small>{row.request.period || 'Any time in planning year'}{row.requested_months ? <> &middot; {row.requested_durations?.join(' or ') || row.requested_months} {row.requested_months === 1 ? 'month' : 'months'}</> : null}</small></dd>
+        <dl><dt>{row.alternatives ? 'Requested alternatives' : 'Requested'}</dt><dd>{(row.alternatives || [row]).map((option, i) => <div key={i}>
+          {i > 0 && <small>OR</small>}
+          {option.request.posting_request}
+          <small>{option.request.period || 'Any time in planning year'}{option.requested_months ? <> &middot; {option.requested_durations?.join(' or ') || option.requested_months} {option.requested_months === 1 ? 'month' : 'months'}</> : null}</small>
+          {row.alternatives && option.status === 'met' && <small className="request-status met">Selected</small>}
+          {row.alternatives && row.status === 'not_met' && option.reason !== row.reason && <small>{option.reason}</small>}
+        </div>)}</dd>
           {!!row.assigned?.length && <><dt>Assigned</dt><dd>{row.assigned.map((item, i) => <div key={i}>{item.label}<small>{monthRanges(item.months)}</small></div>)}</dd></>}
           {row.reason && <><dt>{row.status === 'not_met' ? "Why this wasn't met" : 'Clarification needed'}</dt><dd>{row.reason}</dd></>}
         </dl>
