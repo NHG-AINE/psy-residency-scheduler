@@ -25,11 +25,11 @@ export default function MonthlyBreakdown({ workbook, draft, entries }: { workboo
   const selectedYear = years.includes(year) ? year : 'R1'
   const groups = useMemo(() => monthlyBreakdown(workbook, draft, entries, selectedYear), [workbook, draft, entries, selectedYear])
   return <section className="workspace-panel monthly-breakdown" aria-labelledby="breakdown-heading">
-    <div className="breakdown-toolbar"><div><h2 id="breakdown-heading">Monthly breakdown</h2><p className="muted">Jul {workbook.target_year} - Jun {workbook.target_year + 1} &middot; Counts by {draft && ['optimal', 'feasible'].includes(draft.status) ? 'draft' : 'recorded'} R-year</p></div>
-      <select aria-label="Residency year" value={selectedYear} onChange={(event) => { setCapacityFocus(null); setYear(event.target.value) }}>{years.map((value) => <option key={value}>{value}</option>)}</select>
+    <div className="breakdown-toolbar"><div><h2 id="breakdown-heading">Monthly breakdown</h2><p className="muted">Jul {workbook.target_year} - Jun {workbook.target_year + 1} &middot; Postings count by requirement year. LOA, unallocated months, unresolved postings and older draft assignments without a requirement year count by resident cohort.</p></div>
+      <label>Programme year<select value={selectedYear} onChange={(event) => { setCapacityFocus(null); setYear(event.target.value) }}>{years.map((value) => <option key={value}>{value}</option>)}</select></label>
     </div>
     {groups.length ? <div className="table-scroll"><table>
-      <caption className="sr-only">Monthly resident counts across the full cohort, independent of resident search. Filtered by {selectedYear || 'requirement years'}.</caption>
+      <caption className="sr-only">Monthly counts for programme year {selectedYear} across all residents, independent of resident search. LOA, unallocated months, unresolved postings and older draft assignments without a requirement year are grouped by resident cohort.</caption>
       <thead><tr><th scope="col">Posting / Institution</th>{workbook.months.map(({ month }) => <th key={month} scope="col">{monthLabel(month)}</th>)}</tr></thead>
       {groups.map((group) => <tbody key={group.key}>
         <tr className="breakdown-group"><th scope="row">{group.institutions.length ? <button type="button" aria-expanded={expanded.includes(group.key)} onClick={(event) => {
