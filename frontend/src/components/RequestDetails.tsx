@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react'
+import { groupedCapacityRows } from '../lib/draft-schedule'
 import type { RequestOutcome } from '../lib/draft-schedule'
 import { monthLabel } from '../lib/workbook'
 import DetailsPopover from './DetailsPopover'
+
+const capacityMonths = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })
 
 export default function RequestDetails({ name, rows, hint, className, children }: {
   name: string; rows: RequestOutcome[]; hint: string; className: string; children: ReactNode
@@ -12,5 +15,18 @@ export default function RequestDetails({ name, rows, hint, className, children }
           {!!row.assigned?.length && <><dt>Assigned</dt><dd>{row.assigned.map((item, i) => <div key={i}>{item.label}<small>{item.months.map(monthLabel).join(', ')}</small></div>)}</dd></>}
           {row.reason && <><dt>{row.status === 'not_met' ? "Why this wasn't met" : 'Clarification needed'}</dt><dd>{row.reason}</dd></>}
         </dl>
+        {row.status === 'not_met' && !!row.capacity?.length && <details className="request-capacity" open>
+          <summary>Capacity in this draft</summary>
+          {groupedCapacityRows(row.capacity).map(({ key, label, periods }) => <div className="request-capacity-posting" key={key}>
+            <p>{label}</p>
+            <ul className="request-capacity-periods">
+              {periods.map(({ start, end, assigned, max }) => <li key={start}>
+                <span>{capacityMonths.formatRange(new Date(start), new Date(end)).replaceAll('\u2009', '')}</span>
+                <span className={assigned >= max ? 'at-max' : undefined}>{assigned} assigned / {max} max</span>
+              </li>)}
+            </ul>
+          </div>)}
+          <small>These counts show the current draft, not why the request was missed.</small>
+        </details>}
       </article>)}>{children}</DetailsPopover>
 }

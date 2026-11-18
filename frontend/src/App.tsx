@@ -6,7 +6,7 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
 import RequestTotals from './components/RequestTotals'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings, groupedCapacityWarnings, requestSummary, filterRequestResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
 import DraftSearchLimit from './components/DraftSearchLimit'
@@ -140,7 +140,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     revealAfterGeneration.current = false
     if (hasDraft && timetable.current) return revealElement(timetable.current)
   }, [generating, loading, hasDraft, importLoading, workbook.target_year, year])
-  const capacityGroups = groupedCapacityWarnings(draft?.capacity_overflows || [])
+  const capacityGroups = groupedCapacityRows(draft?.capacity_overflows || [])
   const capacityNotes = [...new Map((draft?.capacity_coverage_notes || []).map((note) => [
     JSON.stringify([note.source.sheet, note.source.row, note.code]), note,
   ])).values()]

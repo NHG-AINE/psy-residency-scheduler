@@ -9,10 +9,13 @@ export type RequestOutcome = {
   request: { posting_request: string | null; period: string | null; source: Source }
   status: 'met' | 'not_met' | 'pending'; reason?: string | null; reason_code?: string; duplicate_of?: number
   assigned?: { label: string; months: string[] }[]; matched_months?: string[]; replacement_months?: string[]
+  capacity?: CapacityRow[]
 }
-export type CapacityOverflow = {
+type CapacityRow = {
   month: string; requirement_id: string; institution: string; label: string; source: Source
   residency_year: string; category: 'core' | 'elective'; max: number; assigned: number
+}
+export type CapacityOverflow = CapacityRow & {
   residents: { name: string | null; mcr: string | null; source: Source }[]
 }
 export type DraftSchedule = {
@@ -215,7 +218,7 @@ export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
 }
 
 
-export function groupedCapacityWarnings(rows: CapacityOverflow[]) {
+export function groupedCapacityRows(rows: CapacityRow[]) {
   const groups = new Map<string, { key: string; label: string; periods: { start: string; end: string; assigned: number; max: number }[] }>()
   const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
   for (const row of [...rows].sort((a, b) => a.month.localeCompare(b.month))) {

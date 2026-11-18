@@ -110,15 +110,19 @@ class RequestSchedulerTests(unittest.TestCase):
 
 
     def test_actual_draft_respects_request_and_hard_constraints(self):
-        for scenario in ('met', 'capacity', 'loa', 'mixed', 'pending'):
+        for scenario in ('met', 'capacity', 'occupied', 'loa', 'mixed', 'pending'):
             with self.subTest(scenario=scenario):
                 book = r2_book(mixed=scenario == 'mixed')
                 source = book['residents'][0]['source']
                 book['requests'] = [{'posting_request': 'IMH ANDS (Elective)' if scenario != 'pending' else 'Unknown posting',
                                      'period': 'Jul - Sep 2027', 'source': {'sheet': 'Request', 'row': 2},
                                      'matched_resident_source': source}]
-                if scenario == 'capacity':
-                    book['postings']['electives'][0]['max'] = 0
+                if scenario in ('capacity', 'occupied'):
+                    book['postings']['electives'][0]['max'] = 0 if scenario == 'capacity' else 1
+                    book['postings']['electives'][1]['max'] = 6
+                if scenario == 'occupied':
+                    outside = resident([('2027-07', 'IMH ANDS'), ('2027-10', 'IMH ANDS')], 'R5', 'Planning', 100)
+                    book['residents'].append(outside)
                 if scenario == 'loa':
                     book['residents'][0]['postings'][0].update(status='loa', value='LOA')
                 result = draft_schedule(book, STORE, max_seconds=20)
@@ -126,8 +130,9 @@ class RequestSchedulerTests(unittest.TestCase):
                 expected = 'met' if scenario == 'met' else 'pending' if scenario == 'pending' else 'not_met'
                 outcome = result['residents'][0]['requests'][0]
                 self.assertEqual(outcome['status'], expected)
-                if scenario in ('capacity', 'loa', 'mixed'):
-                    self.assertEqual(outcome['reason_code'], {'capacity': 'not_selected', 'loa': 'loa_start', 'mixed': 'training_progression'}[scenario])
+                if scenario in ('capacity', 'occupied', 'loa', 'mixed'):
+                    self.assertEqual(outcome['reason_code'], {'capacity': 'not_selected', 'occupied': 'not_selected',
+                                     'loa': 'loa_start', 'mixed': 'training_progression'}[scenario])
                 elif scenario == 'met':
                     self.assertIsNone(outcome['reason'])
                 else:
@@ -136,6 +141,17 @@ class RequestSchedulerTests(unittest.TestCase):
                     capacity_stage = next(s for s in result['optimisation_stages'] if s['priority'] == 'capacity_overflow')
                     self.assertEqual((capacity_stage['status'], capacity_stage['score']), ('optimal', 0))
                     self.assertEqual(result['soft_results']['capacity_overflow'], 0)
+                if scenario in ('capacity', 'occupied'):
+                    self.assertEqual(outcome['reason'], 'This request was not met in the selected timetable.')
+                    expected_counts = [(0, 0)] * 3 if scenario == 'capacity' else [(1, 1), (0, 1), (0, 1)]
+                    self.assertEqual([(r['month'], r['requirement_id'], r['label'], r['institution'], r['assigned'], r['max'])
+                                      for r in outcome['capacity']],
+                                     [(f'2027-{month:02d}', 'r2.elective', 'IMH ANDS', 'IMH', assigned, maximum)
+                                      for month, (assigned, maximum) in enumerate(expected_counts, 7)])
+                    if scenario == 'occupied':
+                        self.assertEqual([r['source'] for r in result['skipped_residents']], [outside['source']])
+                else:
+                    self.assertNotIn('capacity', outcome)
                 priorities = result['soft_priority']
                 if scenario == 'pending':
                     self.assertNotIn('resident_requests', priorities)
