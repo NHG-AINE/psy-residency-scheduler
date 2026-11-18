@@ -7,6 +7,7 @@ import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPost
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
+import { monthlyBreakdown } from '../src/lib/monthly-breakdown.ts'
 import type { Resident, Workbook } from '../src/lib/workbook.ts'
 
 const resident: Resident = {
@@ -38,6 +39,24 @@ test('overlay changes only solver posting months, preserves evidence and discard
   assert.equal(blocks.length, 4, 'equal imported and draft labels retain their provenance boundary')
   assert.equal(postingCategory(postingDisplay(blocks[0]), 'posting'), 'core')
   assert.equal(postingCategory(postingDisplay(blocks[2]), 'posting'), 'unresolved')
+})
+
+test('requirements completion overlays only blank cells and stays outside monthly posting counts', () => {
+  const before = structuredClone(resident)
+  const completed: DraftSchedule = { ...draft, residents: [{ ...draft.residents[0], months: resident.postings.map((posting, index) => ({
+    month: posting.month, status: index === 0 ? 'outside_draft_scope' : 'requirements_completed', label: null,
+  })) }] }
+  const cells = draftPostings(resident, completed)
+  assert.deepEqual(cells.slice(0, 3), resident.postings.slice(0, 3))
+  const status = cells[3].status
+  assert.equal(status, 'requirements_completed')
+  const display = postingDisplay([cells[3]])
+  assert.equal(display.label, 'Requirements completed')
+  assert.equal(postingCategory(display, status), 'requirements_completed')
+  const workbook = { residents: [resident], months: resident.postings.map(({ month }) => ({ month })),
+    postings: { core: [], electives: [] } } as unknown as Workbook
+  assert.ok(monthlyBreakdown(workbook, completed, []).every((group) => !group.counts[cells[3].month]))
+  assert.deepEqual(resident, before)
 })
 
 test('generated intake slots match only their synthetic identity and blockers retain readable evidence context', () => {

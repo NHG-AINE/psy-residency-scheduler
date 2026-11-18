@@ -115,6 +115,7 @@
   .legend-elective { background: #f0ebf5; color: #6b527a; }
   .legend-loa { background: #f9ecdf; color: #835630; }
   .legend-unresolved { background: #f0efed; color: #6e675e; }
+  .legend-requirements_completed, .posting-value.requirements_completed { background: #e8f2eb; color: var(--color-success); }
   .legend-unallocated { background: #ffffff; color: #938c84; border-style: dashed; }
   .timetable-label-error { @apply mx-6 mb-4 rounded-lg px-4 py-3 text-sm leading-relaxed; background: #fff0ee; color: #9f352e; }
   .timetable-label-error .button { @apply mt-3; }

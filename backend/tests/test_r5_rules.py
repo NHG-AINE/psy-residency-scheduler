@@ -187,6 +187,17 @@ class R5Tests(unittest.TestCase):
         self.assertEqual(warning["source"], person["source"])
         self.assertEqual(warning["reasons"], [{"code": "historical_cluster_gap", "source": person["source"], "clusters": ["SHS"]}])
 
+        early = deepcopy(book)
+        imported = parse_workbook(structured_workbook_bytes())
+        early["postings"]["electives"].extend(row for row in imported["postings"]["electives"]
+                                                if row.get("additional_requirement"))
+        early["postings"]["core"] = [o for o in early["postings"]["core"] if o["residency_year"] != "R5"
+                                     or not o["posting"].endswith("Child & Adolescent Psychiatry")]
+        shortened = draft_schedule(early, STORE)
+        self.assertIn(shortened["status"], {"optimal", "feasible"}, shortened["blockers"])
+        self.assertEqual(shortened["residents"][0]["months"][-1]["status"], "requirements_completed")
+        self.assertEqual(shortened["historical_cluster_warnings"], result["historical_cluster_warnings"])
+
         # The same R5 record label and completed R4 blocks don't exempt someone
         # who still has R3 training and can visit SHS during those postings.
         del book["annual_sheets"][-2]
@@ -252,7 +263,7 @@ class R5Tests(unittest.TestCase):
         person, = draft["residents"]
         self.assertEqual(person["requests"][0]["status"], "met")
         self.assertEqual([m["label"] for m in person["months"][:6]], [label] * 6)
-        self.assertEqual([m["status"] for m in person["months"][9:]], ["outside_draft_scope"] * 3)
+        self.assertEqual([m["status"] for m in person["months"][9:]], ["requirements_completed"] * 3)
 
         # The additional credit also permits a route when the separate core is unavailable.
         book["postings"]["core"] = [o for o in book["postings"]["core"] if o["residency_year"] != "R5"
@@ -267,7 +278,7 @@ class R5Tests(unittest.TestCase):
         self.assertEqual(person["requests"][0]["status"], "met")
         self.assertEqual([m["label"] for m in person["months"][3:9]], [label] * 6)
         self.assertEqual([m["status"] for m in person["months"][9:]],
-                         ["outside_draft_scope", "loa", "outside_draft_scope"])
+                         ["outside_draft_scope", "loa", "requirements_completed"])
         self.assertEqual(person["carryforward"], [])
         self.assertEqual([(row["label"], row["assigned"]) for row in draft["capacity_overflows"]], [(label, 1)] * 6)
 
@@ -276,6 +287,7 @@ class R5Tests(unittest.TestCase):
         draft = draft_schedule(book, STORE)
         person, = draft["residents"]
         self.assertTrue(person["carryforward"])
+        self.assertNotIn("requirements_completed", [m["status"] for m in person["months"]])
 
     def test_additional_credit_does_not_drop_partly_completed_core_or_interrupted_historical_posting(self):
         book = r5_book()
@@ -295,7 +307,7 @@ class R5Tests(unittest.TestCase):
         self.assertEqual([m["label"] for m in person["months"][:2]],
                          ["IMH Child & Adolescent Psychiatry"] * 2)
         self.assertTrue(all(m["status"] == "posting" for m in person["months"][:11]))
-        self.assertEqual(person["months"][-1]["status"], "outside_draft_scope")
+        self.assertEqual(person["months"][-1]["status"], "requirements_completed")
 
         partial["postings"][0]["value"] = "IMH Child and EPIP (Elective)"
         draft = draft_schedule(book, STORE)
@@ -303,7 +315,7 @@ class R5Tests(unittest.TestCase):
         person, = draft["residents"]
         self.assertEqual([m["label"] for m in person["months"][:5]], ["IMH Child and EPIP"] * 5)
         # The six-month run can continue into July and count the historical June.
-        self.assertEqual(person["months"][-1]["status"], "outside_draft_scope")
+        self.assertEqual(person["months"][-1]["status"], "requirements_completed")
 
     def test_absent_core_catalogue_is_reported_not_synthesised(self):
         book = r5_book()
