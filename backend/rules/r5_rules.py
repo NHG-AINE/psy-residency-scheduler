@@ -3,11 +3,11 @@ import re
 from .r2_rules import partial_posting_identity, add_blocks
 
 if __package__ == "backend.rules":
-    from ..requirement_ledger import month_number
-    from ..programme_requirements import PROGRAMME_REQUIREMENTS
+    from ..requirement_ledger import month_number, r5_elective_runs
+    from ..programme_requirements import PROGRAMME_REQUIREMENTS, additional_r5_credit
 else:
-    from requirement_ledger import month_number
-    from programme_requirements import PROGRAMME_REQUIREMENTS
+    from requirement_ledger import month_number, r5_elective_runs
+    from programme_requirements import PROGRAMME_REQUIREMENTS, additional_r5_credit
 
 
 COMBINED = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
@@ -15,11 +15,12 @@ COMBINED = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
 
 def elective_durations(option):
     """Respect structured lengths and keep options with unsupported notes out of drafts."""
-    if option.get("additional_requirement"):
-        return ()
+    additional_credit = additional_r5_credit(option)
     durations = {3, 6}
     for remark in option.get("remarks") or []:
         note = remark["text"].strip().casefold()
+        if additional_credit and re.fullmatch(r"\(which will meet the core \d+ months (?:of )?r5 [a-z &]+ requirements\)", note):
+            continue  # The structured fields specify credit; these notes describe it.
         if note == "(team-based continuity of care)":
             continue  # Informational; every elective block already keeps its posting/site.
         if note == "(all required 6 months duration)":
@@ -44,22 +45,7 @@ def elective_routes(person, options, planning_start, earlier_months, blockers, a
     requirement = next((r for r in person["requirements"] if r["requirement_id"] == "r5.elective"), None)
     if requirement is None or not requirement["remaining_months"]:
         return [[]]  # Completed historical credit is not reinterpreted as new blocks.
-    runs, active, previous = [], None, None
-    for month in person["months"]:
-        number = month_number(month["month"])
-        if previous is not None and number != previous + 1:
-            active = None
-        previous = number
-        if month["status"] == "loa":
-            continue
-        if month["status"] != "expected" or month.get("requirement_id") != "r5.elective":
-            active = None
-            continue
-        identity = (month["posting"], month["institution"])
-        if active is None or active["identity"] != identity:
-            active = {"identity": identity, "start": number, "count": 0}
-            runs.append(active)
-        active["count"] += 1
+    runs = r5_elective_runs(person['months'])
 
     def continues(run):
         expected = run["start"]
@@ -159,29 +145,57 @@ def prepare_routes(person, options, planning_start, earlier_months, blockers, al
         blockers.append({"code": "missing_r5_catalogue_option", "source": person["source"],
                          "requirement_id": COMBINED["id"]})
         return []
+    route_choices = [(ids, elective) for ids in route_ids for elective in electives]
+    if not partial_combined:
+        for elective in electives:
+            if len(elective) != 1 or elective[0][0]["required_months"] != 6:
+                continue
+            block, eligible, partial = elective[0]
+            for key in COMBINED["credits"]:
+                requirement = requirements[key]
+                if requirement["expected_months"] or not requirement["remaining_months"]:
+                    continue  # Keep a separately started core on its existing continuation route.
+                qualifying = [option for option in eligible
+                              if (credit := additional_r5_credit(option)) and credit["id"] == key]
+                if qualifying:
+                    route_choices.append((set(COMBINED["credits"]) - {key}, [(block, qualifying, partial)]))
+
     routes, failures = [], []
-    for ids in route_ids:
+    for ids, elective in route_choices:
         route_person = {**person, "requirements": [r for r in person["requirements"]
                        if r["requirement_year"] != "R5" or r["requirement_id"] in ids | {"r5.elective"}]}
         errors = []
-        route = prepare_blocks(route_person, options, planning_start, earlier_months, errors)
+        route = prepare_blocks(route_person, options, planning_start, earlier_months, errors) + elective
         if errors:
             failures.extend(errors)
+        elif sum(partial for _, _, partial in route) > 1:
+            failures.append({"code": "conflicting_partial_r5_history", "source": person["source"]})
         else:
-            for elective in electives:
-                if sum(partial for _, _, partial in route + elective) > 1:
-                    failures.append({"code": "conflicting_partial_r5_history", "source": person["source"]})
-                else:
-                    routes.append(route + elective)
+            routes.append(route)
     if not routes:
         blockers.extend(failures)
     return routes
 
 
+
+def _add_route(model, person, route, start, resident_index, enabled=None):
+    placements = add_blocks(model, person, route, start, resident_index, enabled)
+    for key in COMBINED["credits"]:
+        core = [p["start"] * p["variable"] for p in placements if p["option"]["requirement_id"] == key]
+        if core:
+            for p in placements:
+                credit = additional_r5_credit(p["option"])
+                if credit and credit["id"] == key:
+                    # A separate core can precede an overlap elective, but the
+                    # elective would already fulfil a core scheduled after it.
+                    model.add(sum(core) <= p["start"]).only_enforce_if(p["variable"])
+    return placements
+
+
 def add_routes(model, person, routes, start, resident_index):
     if len(routes) == 1:
-        return add_blocks(model, person, routes[0], start, resident_index)
+        return _add_route(model, person, routes[0], start, resident_index)
     choices = [model.new_bool_var(f"r5_route_{resident_index}_{i}") for i in range(len(routes))]
     model.add_exactly_one(choices)
     return [placement for i, (route, enabled) in enumerate(zip(routes, choices))
-            for placement in add_blocks(model, person, route, start, f"{resident_index}_route_{i}", enabled)]
+            for placement in _add_route(model, person, route, start, f"{resident_index}_route_{i}", enabled)]

@@ -211,11 +211,10 @@ class StructuredPostingImportTests(unittest.TestCase):
         credit = options["IMH Child and EPIP"]
         self.assertEqual((credit["additional_requirement"], credit["additional_credit_months"]),
                          ("Child and Adolescent Psychiatry", 3))
-        self.assertFalse(supported_option(credit))
+        self.assertTrue(supported_option(credit))
+        self.assertFalse(supported_option({**credit, "remarks": [{"text": "(Only approved after interview)"}]}))
         self.assertFalse(supported_option(options["IMH Unsupported elective"]))
-        self.assertTrue(any(i["code"] == "unsupported_additional_credit" and i["source"]["column"] == "H"
-                            for i in prepared["import_issues"]))
-        self.assertTrue(any(i["code"] == "unsupported_additional_credit" for i in prepared["policy_reviews"]))
+        self.assertFalse(credit["policy_review_required"])
         three_only = options["TTSH Psychogeriatrics"]
         self.assertEqual((three_only["duration_months"], three_only["capacity"]), (3, None))
         self.assertEqual(elective_durations(three_only), (3,))
@@ -227,8 +226,8 @@ class StructuredPostingImportTests(unittest.TestCase):
                                     "remaining_months": 6, "required_months": 6}]}
         request = {"matched_resident_source": source, "posting_request": "IMH Child and EPIP (Elective)"}
         outcome, = resolve_requests(person, [request], list(options.values()), workbook["months"])
-        self.assertEqual(outcome["status"], "pending")
-        self.assertIn("Additional core credit", outcome["reason"])
+        self.assertEqual(outcome["status"], "evaluable")
+        self.assertEqual(outcome["duration"], 6)
 
 class WorkbookImportTests(unittest.TestCase):
     def test_latest_year_uses_month_headings_regardless_of_tab_order(self):

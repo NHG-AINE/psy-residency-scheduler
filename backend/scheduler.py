@@ -415,7 +415,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     result = {"scope": "r1_r2_r3_r4_r5", "status": "blocked", "residents": [], "excluded_residents": excluded, "skipped_residents": skipped,
               "selected_sources": [deepcopy(p["source"]) for p in selected], "blockers": [],
               "planning_months": deepcopy(prepared["planning_months"]), "cutoff": prepared["cutoff"], "basis": prepared["basis"],
-              "limitations": ["R5 electives with core-credit overlap or unsupported remarks are excluded", "Future posting availability and capacity are unknown",
+              "limitations": ["R5 electives with unsupported remarks are excluded", "Future posting availability and capacity are unknown",
                               "Unresolved occupied postings are reported separately from known capacity counts"],
               "soft_priority": list(r1_rules.SOFT_PRIORITIES)}
     blockers = result["blockers"]
@@ -477,14 +477,12 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                  if {"r4", "r5"} & set(person["recorded_years"]) else [] for i, person in enumerate(selected)]
     options += r4_options
     r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any("r5" in p["recorded_years"] for p in selected) else []
-    additional_credit_options = [o for o in r5_options if o.get("additional_requirement")]
     r5_options = [o for o in r5_options if r5_rules.supported_option(o)]
     seen_r5 = set()
     for o in r5_options:
         _add_catalogue_blockers(o, seen_r5, blockers)
     options += r5_options
-    request_options = options + additional_credit_options
-    request_outcomes = [resolve_requests(person, prepared["requests"], request_options, prepared["planning_months"])
+    request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"])
                         for person in selected]
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
                      next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
@@ -508,6 +506,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     r5_blocks = [routes[0] for routes in r5_routes]
     combined_r5 = any(r["requirement_id"] == r5_rules.COMBINED["id"]
                       for routes in r5_routes for route in routes for r, _, _ in route)
+    # Longer and overlap routes can occupy a different number of months.
+    variable_r5_totals = any(len({sum(r["remaining_months"] for r, _, _ in route) for route in routes}) > 1
+                             for routes in r5_routes)
     flexible_r5_blocks = any(len(routes) > 1 or any(
         sum(r["requirement_id"] == "r5.elective" for r, _, _ in route) > 1 for route in routes)
         for routes in r5_routes)
@@ -667,6 +668,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     for demand in r5_demand.values():
         divisor = gcd(divisor, demand)
     weights = {key: demand // divisor for key, demand in r5_demand.items()} if divisor else {}
+    # Preserve the programme balance targets. An overlap elective occupies
+    # only one elective place even when it fulfils an additional requirement.
     balance_scale = 2 if combined_r5 else 1
     capacity_bound = None
 
@@ -816,7 +819,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         if any(o and o["requirement_id"] in {r1_rules.R1["General Medicine"]["id"], r1_rules.R1["Neurology"]["id"]}
                for choices in candidates for choice in choices for o in choice["schedule"]) else None,
         posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
-                              [] if combined_r5 else r5_monthly_totals, {} if combined_r5 else weights) if weights else None,
+                              [] if combined_r5 or variable_r5_totals else r5_monthly_totals,
+                              {} if combined_r5 or variable_r5_totals else weights) if weights else None,
         # These projections assume one block per requirement and separate core
         # counts. Split electives and combined cores need route-aware projections; retain the safe
         # R2/R4 count bound rather than claiming an invalid lower bound.
