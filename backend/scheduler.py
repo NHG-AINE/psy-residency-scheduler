@@ -477,12 +477,15 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                  if {"r4", "r5"} & set(person["recorded_years"]) else [] for i, person in enumerate(selected)]
     options += r4_options
     r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any("r5" in p["recorded_years"] for p in selected) else []
+    additional_credit_options = [o for o in r5_options if o.get("additional_requirement")]
     r5_options = [o for o in r5_options if r5_rules.supported_option(o)]
     seen_r5 = set()
     for o in r5_options:
         _add_catalogue_blockers(o, seen_r5, blockers)
     options += r5_options
-    request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"]) for person in selected]
+    request_options = options + additional_credit_options
+    request_outcomes = [resolve_requests(person, prepared["requests"], request_options, prepared["planning_months"])
+                        for person in selected]
     r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
                      next(iter({r1_rules.R1_REQUIRED_MONTHS - c["credited_r1_months"] for c in candidates[i]}), 0)
                      + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i],

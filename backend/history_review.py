@@ -7,9 +7,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 if __package__:
-    from .workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
+    from .workbook_import import match_posting, normalized_label, normalized_posting_label, posting_catalogue, recorded_years
 else:
-    from workbook_import import match_posting, normalized_label, posting_catalogue, recorded_years
+    from workbook_import import match_posting, normalized_label, normalized_posting_label, posting_catalogue, recorded_years
 
 Text = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
 
@@ -88,8 +88,13 @@ def catalogue_entries(postings):
         remarks = row.get("remarks")
         if isinstance(remarks, list):
             remarks = [r["text"] for r in remarks]
-        candidate["signature"] = content_key([candidate["key"], row.get("duration_months"),
-                                              row.get("max"), remarks])
+        signature = [candidate["key"], row.get("duration_months"), row.get("max"), remarks]
+        if "allowed_block_lengths" in row:
+            signature.extend([sorted(row["allowed_block_lengths"]),
+                              sorted(normalized_posting_label(name) for name in row["fulfils_requirements"]),
+                              normalized_posting_label(row["additional_requirement"]),
+                              row["additional_credit_months"]])
+        candidate["signature"] = content_key(signature)
     return catalogue
 
 

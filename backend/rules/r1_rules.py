@@ -34,7 +34,7 @@ R1 = PROGRAMME_REQUIREMENTS["R1"]
 R1_REQUIRED_MONTHS = R1["Medicine & Neurology"]["months"] + R1["Inpatient Psychiatry"]["months"]
 
 
-def _paths(person, catalogue_keys):
+def _paths(person, options):
     """Use ledger credit, never validate the order of historical exceptions."""
     gm, neuro, combined, inpatient = [R1[name]["id"] for name in (
         "General Medicine", "Neurology", "Medicine & Neurology", "Inpatient Psychiatry")]
@@ -49,7 +49,7 @@ def _paths(person, catalogue_keys):
     least_remaining = min(paired_months, remaining[combined])
     inpatient_sites = {month["institution"] for month in history if month["requirement_id"] == inpatient}
     sites = sorted(inpatient_sites) if len(inpatient_sites) == 1 else [
-        site for requirement, site in catalogue_keys if requirement == inpatient]
+        site for requirement, site in options if requirement == inpatient]
     if not remaining[inpatient]:
         sites = [None]  # No inpatient option is needed when history already completed it.
     for site in sites:
@@ -58,7 +58,16 @@ def _paths(person, catalogue_keys):
             for route, medicine_site, neuro_site in (("TTSH/NNI", "TTSH", "NNI"), ("SGH", "SGH", "SGH")):
                 if preferred_route in PAIRED_ROUTES and preferred_route != route:
                     continue
-                for start in range(remaining[gm] + 1):
+                medicine = options.get((gm, medicine_site), {})
+                lengths = medicine.get("allowed_block_lengths")
+                starts = range(remaining[gm] + 1)
+                # Check complete new blocks and preserve recognised partial credit.
+                # A shorter remainder can be the continuation of an older block.
+                if lengths and remaining[gm] == medicine["duration_months"]:
+                    starts = [start for start in starts
+                              if (start in lengths or start == 0)
+                              and (remaining[gm] - start in lengths or start == remaining[gm])]
+                for start in starts:
                     head = [(gm, medicine_site)] * start + [(neuro, neuro_site)] * remaining[neuro]
                     head += [(gm, medicine_site)] * (remaining[gm] - start)
                     yield route, head + tail

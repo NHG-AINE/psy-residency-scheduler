@@ -5,6 +5,8 @@ import unittest
 from scheduler import draft_schedule
 from scheduler_inputs import prepare_scheduler_inputs
 from tests.test_r1_solver import STORE
+from tests.test_workbook_import import structured_workbook_bytes
+from workbook_import import parse_workbook
 from tests.test_r4_rules import r4_book
 from tests.test_requirement_ledger import resident
 
@@ -211,9 +213,18 @@ class R5Tests(unittest.TestCase):
         book = r5_book()
         book["postings"]["electives"].append({"residency_year": "R5", "institution": "SGH", "elective": "Psychogeriatrics Psychiatry",
             "remarks": [{"text": "(which will meet the core 3months R5 Psychogeriatrics requirements)"}], "source": {"sheet": "Postings", "row": 501}})
+        imported = parse_workbook(structured_workbook_bytes())
+        credit = next(row for row in imported["postings"]["electives"] if row.get("additional_requirement"))
+        book["postings"]["electives"].append(credit)
+        book["requests"] = [{"posting_request": "IMH Child and EPIP (Elective)",
+                             "matched_resident_source": book["residents"][0]["source"]}]
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
-        self.assertFalse(any(m["label"] == "SGH Psychogeriatrics Psychiatry" for m in result["residents"][0]["months"]))
+        person = result["residents"][0]
+        self.assertFalse(any(m["label"] in {"SGH Psychogeriatrics Psychiatry", "IMH Child and EPIP"} for m in person["months"]))
+        outcome, = person["requests"]
+        self.assertEqual(outcome["status"], "pending")
+        self.assertIn("Additional core credit", outcome["reason"])
         self.assertTrue(any("overlap" in item for item in result["limitations"]))
         # A partial unsupported elective cannot be switched to the standard one.
         for sheet in book["annual_sheets"]:

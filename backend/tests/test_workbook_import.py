@@ -5,7 +5,12 @@ from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
+from openpyxl.styles import Font
+from history_review import ReviewStore, catalogue_entries
 from main import app
+from request_preferences import resolve_requests
+from rules.r5_rules import elective_durations, supported_option
+from scheduler_inputs import prepare_scheduler_inputs
 from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, review_import, match_posting, posting_catalogue
 
 
@@ -53,6 +58,177 @@ def future_workbook_bytes():
         w.move_sheet("Jul latest", offset=-1)
     return workbook_bytes(edit)
 
+
+
+STRUCTURED_HEADERS = ("R-year", "Type", "Institution", "Posting", "Duration (months)",
+                      "Allowed block lengths", "Fulfils requirements", "Additional requirement",
+                      "Additional credit (months)", "Max", "Remarks")
+STRUCTURED_ROWS = [
+    ("R1", "Core", "TTSH", "General Medicine", 4, "2; 4", "General Medicine", None, None, 8,
+     "To be completed in the first 6 months of R1"),
+    ("R1", "Core", "NUH", "Medicine & Neurology", 6, 6, "General Medicine; Neurology"),
+    ("R2", "Core", "IMH", "Addiction Medicine", 3, 3, "Addiction Medicine", None, None, 0),
+    ("R2", "Elective", "IMH", "Addiction Medicine", 3, 3, "Elective"),
+    ("R5", "Core", "IMH", "Child and Geriatric Psychiatry", 6, 6,
+     "Child and Adolescent Psychiatry; Geriatric Psychiatry"),
+    ("R5", "Elective", "IMH", "Child and EPIP", 6, 6, "Elective", "Child and Adolescent Psychiatry", 3),
+    ("R5", "Elective", "IMH", "General Psychiatry", 6, "3; 6", "Elective"),
+    ("R5", "Elective", "NUH", "General and Community Psychiatry", 6, 6, "Elective"),
+    ("R5", "Elective", "TTSH", "Psychogeriatrics", 3, 3, "Elective"),
+    ("R5", "Elective", "IMH", "Unsupported elective", 6, 6, "Elective", None, None, None,
+     "(which will meet an additional core requirement)"),
+]
+
+
+def structured_workbook_bytes(edit=None, *, posting_sheet="Postings", request_sheet="Requests", reorder=False):
+    def populate(w):
+        w["Request"].title = request_sheet
+        w.remove(w["Postings"])
+        sheet = w.create_sheet(posting_sheet)
+        for values in [STRUCTURED_HEADERS, *STRUCTURED_ROWS]:
+            padded = [*values, *([None] * (len(STRUCTURED_HEADERS) - len(values)))]
+            sheet.append(list(reversed(padded)) if reorder else padded)
+        if edit:
+            edit(w)
+    return workbook_bytes(populate)
+
+
+class StructuredPostingImportTests(unittest.TestCase):
+    def test_named_reordered_headers_ignore_formatting_and_preserve_sources(self):
+        def edit(w):
+            sheet = w["Posting"]
+            sheet["F1"] = "  ALLOWED    Block  lengths "
+            sheet.cell(500, 500).font = Font(bold=True)
+
+        workbook = parse_workbook(structured_workbook_bytes(edit, posting_sheet="Posting", reorder=True))
+        self.assertEqual(workbook["requests"][0]["source"]["sheet"], "Requests")
+        postings = workbook["postings"]
+        self.assertEqual(len(postings["rows"]), len(STRUCTURED_ROWS) + 1)
+        self.assertEqual(len(postings["core"]) + len(postings["electives"]), len(STRUCTURED_ROWS))
+        medicine, combined, addiction, child_geriatrics = postings["core"]
+        self.assertEqual((medicine["posting"], medicine["duration_months"], medicine["max"]),
+                         ("TTSH General Medicine", "4", "8"))
+        self.assertEqual(medicine["remarks"], STRUCTURED_ROWS[0][-1])
+        self.assertEqual(medicine["source"], {"sheet": "Posting", "row": 2, "column": "H"})
+        self.assertEqual(medicine["field_sources"]["allowed_block_lengths"]["column"], "F")
+        self.assertEqual(medicine["allowed_block_lengths"], [2, 4])
+        self.assertEqual(combined["fulfils_requirements"], ["General Medicine", "Neurology"])
+        self.assertEqual(child_geriatrics["fulfils_requirements"],
+                         ["Child and Adolescent Psychiatry", "Geriatric Psychiatry"])
+        self.assertEqual(addiction["max"], "0")
+        candidates = [item for item in posting_catalogue(postings) if item["label"] == "IMH Addiction Medicine"]
+        self.assertEqual({item["category"] for item in candidates}, {"core", "elective"})
+
+    def test_legacy_and_structured_catalogues_keep_existing_labels_and_matching(self):
+        def legacy(w):
+            sheet = w["Postings"]
+            sheet["D2"], sheet["E2"], sheet["H2"] = "R1", "TTSH General Medicine", STRUCTURED_ROWS[0][-1]
+            sheet["F2"], sheet["G2"] = 4, 8
+            sheet["A2"], sheet["A3"] = "IMH", "- Addiction Medicine"
+            w["Jul 2026 - Jun 2027"]["D4"], w["Jul 2026 - Jun 2027"]["F4"] = "R1", "TTSH General Medicine"
+
+        def structured(w):
+            w["Jul 2026 - Jun 2027"]["D4"], w["Jul 2026 - Jun 2027"]["F4"] = "R1", "TTSH General Medicine"
+
+        before, after = (parse_workbook(content) for content in
+                         (workbook_bytes(legacy), structured_workbook_bytes(structured)))
+        self.assertEqual(before["available_years"], after["available_years"])
+        base = ("residency_year", "posting", "duration_months", "max", "remarks")
+        self.assertEqual(tuple(before["postings"]["core"][0][field] for field in base),
+                         tuple(after["postings"]["core"][0][field] for field in base))
+        self.assertEqual(before["postings"]["electives"][0]["elective"], after["postings"]["electives"][0]["elective"])
+        for workbook in (before, after):
+            match = workbook["histories"][0]["residents"][0]["postings"][1]["catalogue_match"]
+            self.assertEqual(match["status"], "matched")
+            self.assertEqual(match["selected_candidate"]["label"], "TTSH General Medicine")
+
+    def test_aliases_are_accepted_individually_and_ambiguous_together(self):
+        for primary, legacy in (("Postings", "Posting"), ("Requests", "Request")):
+            with self.subTest(sheet=primary):
+                def edit(w):
+                    w[primary].title = legacy
+                workbook = parse_workbook(structured_workbook_bytes(edit))
+                source = (workbook["postings"]["core"][0] if primary == "Postings" else workbook["requests"][0])["source"]
+                self.assertEqual(source["sheet"], legacy)
+                with self.assertRaisesRegex(WorkbookError, f"both {primary} and {legacy} are present"):
+                    parse_workbook(structured_workbook_bytes(lambda w: w.create_sheet(legacy)))
+
+    def test_mixed_layout_and_missing_structured_header_fail_clearly(self):
+        def mixed(w):
+            w["Postings"]["L1"] = "Residency Year"
+            w["Postings"]["M1"] = "Core Posting"
+
+        with self.assertRaisesRegex(WorkbookError, "Postings row 1: ambiguous structured and legacy headers"):
+            parse_workbook(structured_workbook_bytes(mixed))
+        with self.assertRaisesRegex(WorkbookError, "Postings row 1: required headers missing: institution"):
+            parse_workbook(structured_workbook_bytes(lambda w: setattr(w["Postings"]["C1"], "value", None)))
+
+    def test_invalid_rows_identify_workbook_cells(self):
+        for coordinate, value, message in (
+            ("A2", "R6", "expected R1 through R5"),
+            ("B2", "Optional", "expected Core or Elective"),
+            ("C2", None, "expected one institution"),
+            ("E2", 3.5, "expected a whole number"),
+            ("E2", 6, "expected 4 months"),
+            ("F2", "2;;4", "distinct positive month counts"),
+            ("F2", "1;4", "block lengths must match programme rules"),
+            ("F2", "4;4", "distinct positive month counts"),
+            ("G2", "Unrecognised", "distinct R1 requirement names"),
+            ("G3", "General Medicine", "expected General Medicine; Neurology"),
+            ("G3", "General Medicine; General Medicine", "distinct R1 requirement names"),
+            ("H7", None, "both additional requirement and additional credit"),
+            ("I7", None, "both additional requirement and additional credit"),
+            ("I7", 2, "expected 3 months"),
+            ("J2", -1, "expected a whole number of at least 0"),
+        ):
+            with self.subTest(cell=coordinate, value=value):
+                def edit(w):
+                    w["Postings"][coordinate] = value
+                with self.assertRaisesRegex(WorkbookError, rf"Postings!{coordinate} .*{message}"):
+                    parse_workbook(structured_workbook_bytes(edit))
+
+        def duplicate(w):
+            w["Postings"].append(["r1", "core", "ttsh", " general   medicine ", 4, "2;4", "General Medicine"])
+
+        with self.assertRaisesRegex(WorkbookError, r"Postings!D12 .*duplicate R1 core posting .*D2"):
+            parse_workbook(structured_workbook_bytes(duplicate))
+        with self.assertRaisesRegex(WorkbookError, "worksheet exceeds supported dimensions"):
+            parse_workbook(structured_workbook_bytes(lambda w: w["Postings"].cell(2, 500, "Real data")))
+
+    def test_structured_rule_changes_invalidate_catalogue_signatures(self):
+        old = parse_workbook(structured_workbook_bytes())["postings"]
+        new = parse_workbook(structured_workbook_bytes(lambda w: setattr(w["Postings"]["F8"], "value", 6)))["postings"]
+        before = next(c for c in catalogue_entries(old) if c["label"] == "IMH General Psychiatry")
+        after = next(c for c in catalogue_entries(new) if c["label"] == "IMH General Psychiatry")
+        self.assertEqual(before["key"], after["key"])
+        self.assertNotEqual(before["signature"], after["signature"])
+
+    def test_r5_elective_lengths_and_additional_credit_reach_scheduler(self):
+        workbook = parse_workbook(structured_workbook_bytes())
+        prepared = prepare_scheduler_inputs(workbook, ReviewStore(version=1, decisions=[]))
+        self.assertFalse(prepared["blockers"])
+        options = {o["label"]: o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"}
+        credit = options["IMH Child and EPIP"]
+        self.assertEqual((credit["additional_requirement"], credit["additional_credit_months"]),
+                         ("Child and Adolescent Psychiatry", 3))
+        self.assertFalse(supported_option(credit))
+        self.assertFalse(supported_option(options["IMH Unsupported elective"]))
+        self.assertTrue(any(i["code"] == "unsupported_additional_credit" and i["source"]["column"] == "H"
+                            for i in prepared["import_issues"]))
+        self.assertTrue(any(i["code"] == "unsupported_additional_credit" for i in prepared["policy_reviews"]))
+        three_only = options["TTSH Psychogeriatrics"]
+        self.assertEqual((three_only["duration_months"], three_only["capacity"]), (3, None))
+        self.assertEqual(elective_durations(three_only), (3,))
+        self.assertEqual(elective_durations(options["IMH General Psychiatry"]), (3, 6))
+        self.assertEqual(elective_durations(options["NUH General and Community Psychiatry"]), (6,))
+        source = {"sheet": "Planning", "row": 3}
+        person = {"source": source, "recorded_years": ["r5"],
+                  "requirements": [{"requirement_id": "r5.elective", "requirement_year": "R5",
+                                    "remaining_months": 6, "required_months": 6}]}
+        request = {"matched_resident_source": source, "posting_request": "IMH Child and EPIP (Elective)"}
+        outcome, = resolve_requests(person, [request], list(options.values()), workbook["months"])
+        self.assertEqual(outcome["status"], "pending")
+        self.assertIn("Additional core credit", outcome["reason"])
 
 class WorkbookImportTests(unittest.TestCase):
     def test_latest_year_uses_month_headings_regardless_of_tab_order(self):
@@ -384,7 +560,7 @@ class WorkbookImportTests(unittest.TestCase):
                     self.assertIn("names start with Jul", detail)
                     self.assertIn("twelve dated month headings from July through June", detail)
                     self.assertIn("Name, MCR No. and Residency Year", detail)
-                    self.assertIn("Request and Postings", detail)
+                    self.assertIn("Requests and Postings", detail)
                     self.assertNotIn("2030", detail)
                     self.assertNotIn("2027", detail)
             response = client.post("/api/import", data={"target_year": "2027"},

@@ -14,7 +14,9 @@ COMBINED = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
 
 
 def elective_durations(option):
-    """Read supported mandatory duration notes without interpreting core overlap."""
+    """Respect structured lengths and keep options with unsupported notes out of drafts."""
+    if option.get("additional_requirement"):
+        return ()
     durations = {3, 6}
     for remark in option.get("remarks") or []:
         note = remark["text"].strip().casefold()
@@ -28,6 +30,9 @@ def elective_durations(option):
             return ()
     for duration in re.findall(r"\(\s*([36]) months\s*\)", option["label"], re.IGNORECASE):
         durations &= {int(duration)}
+    lengths = option.get("allowed_block_lengths")
+    if lengths is not None:
+        return tuple(lengths) if set(lengths) <= durations else ()
     return tuple(sorted(durations))
 
 
