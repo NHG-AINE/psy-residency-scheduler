@@ -226,6 +226,16 @@ test('request details show the outcome reason without workbook row metadata', as
     assert.match(html, /R4 Inpatient must be outside IMH/)
     assert.match(html, /SGH Inpatient Psychiatry/)
     assert.doesNotMatch(html, /row 37|Capacity in this draft/)
+    for (const [months, expected] of [
+      [Array.from({ length: 12 }, (_, i) => `${i < 6 ? 2027 : 2028}-${String((i + 6) % 12 + 1).padStart(2, '0')}`), 'Jul 27 \u2013 Jun 28'],
+      [['2027-12', '2028-01', '2028-03'], 'Dec 27 \u2013 Jan 28, Mar 28'],
+      [['2028-04'], 'Apr 28'],
+    ] as const) {
+      const assigned = renderToStaticMarkup(createElement(RequestDetails, {
+        ...props, rows: [{ ...row, assigned: [{ label: 'Clinic', months: [...months] }] }],
+      }, 'Details'))
+      assert.ok(assigned.includes(`<small>${expected}</small>`))
+    }
     const counts = ['2028-07', '2028-08', '2028-09'].map((month, i) => ({
       month, requirement_id: 'r4.inpatient_psychiatry', residency_year: 'R4', category: 'core',
       institution: 'IMH', label: 'IMH Inpatient Psychiatry', source: { sheet: 'Postings', row: 31 },
@@ -234,10 +244,10 @@ test('request details show the outcome reason without workbook row metadata', as
     const withCapacity = renderToStaticMarkup(createElement(RequestDetails, {
       ...props, rows: [{ ...row, capacity: counts }],
     }, 'Details'))
-    assert.match(withCapacity, /<\/dl><details[^>]+open=""[^>]*><summary>Capacity in this draft<\/summary>/)
+    assert.match(withCapacity, /<\/dl><details class="request-capacity"><summary>Capacity in this draft<\/summary>/)
     assert.match(withCapacity, /Jul\u2013Aug 2028<\/span><span class="at-max">6 assigned \/ 6 max/)
     assert.match(withCapacity, /Sep 2028<\/span><span>5 assigned \/ 6 max/)
-    assert.match(withCapacity, /These counts show the current draft, not why the request was missed\./)
+    assert.doesNotMatch(withCapacity, /These counts show the current draft/)
     const { default: CapacityDetails } = await vite.ssrLoadModule('/src/components/CapacityDetails.tsx')
     const capacity = renderToStaticMarkup(createElement(CapacityDetails, { rows: [{
       month: '2027-07', requirement_id: 'r4.forensic', residency_year: 'R4', institution: 'IMH', label: 'IMH Forensic Psychiatry',

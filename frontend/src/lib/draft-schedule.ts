@@ -204,15 +204,7 @@ export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
     if (blocker.month) group.months.push(blocker.month)
   }
   return [...groups.values()].map(({ reason, sources, months }) => {
-    const ranges: string[][] = []
-    const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
-    for (const month of [...new Set(months)].sort()) {
-      const last = ranges.at(-1)
-      if (last && ordinal(month) === ordinal(last.at(-1)!) + 1) last.push(month)
-      else ranges.push([month])
-    }
-    const dates = ranges.map((range) => range.length === 1 ? monthLabel(range[0])
-      : `${monthLabel(range[0])} \u2013 ${monthLabel(range.at(-1)!)}`).join(', ')
+    const dates = monthRanges(months)
     return { reason, sources, dates }
   })
 }
@@ -233,4 +225,16 @@ export function groupedCapacityRows(rows: CapacityRow[]) {
     else group.periods.push({ start: row.month, end: row.month, assigned: row.assigned, max: row.max })
   }
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label))
+}
+
+export function monthRanges(months: string[]) {
+  const ranges: string[][] = []
+  const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
+  for (const month of [...new Set(months)].sort()) {
+    const last = ranges.at(-1)
+    if (last && ordinal(month) === ordinal(last.at(-1)!) + 1) last.push(month)
+    else ranges.push([month])
+  }
+  return ranges.map((range) => range.length === 1 ? monthLabel(range[0])
+    : `${monthLabel(range[0])} \u2013 ${monthLabel(range.at(-1)!)}`).join(', ')
 }
