@@ -114,6 +114,9 @@ def build_requirement_ledger(workbook, store):
                 "status": "pending", "reasons": ["conflicting_month_evidence"]}
             months.append({"month": month, **outcome, "evidence": [evidence for evidence, _ in values]})
         summaries = _summaries(months)
+        mixed_progress = [{"label": run["target"]["label"], "start": run["start_month"], "end": run["end_month"],
+                           "months": run["count"]}
+                          for run in r5_runs(months) if run["count"] < 6 and additional_r5_credit(run["target"])]
         by_id = {item["requirement_id"]: item for item in summaries}
         routes = [{"requirement_ids": list(route),
                    "evidence_status": "supported" if all(by_id[key]["evidence_status"] == "supported" for key in route)
@@ -125,6 +128,7 @@ def build_requirement_ledger(workbook, store):
                           "warnings": (["unsafe_identity"] if not identity_safe else [])
                           + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else []),
                           "months": months, "requirements": summaries, "r1_routes": routes,
+                          "mixed_progress": mixed_progress,
                           "cluster_coverage": cluster_coverage(months),
                           "historical_notes": _historical_notes(resident, months)
                           if identity_safe and identity not in unsafe_history else []})
@@ -195,7 +199,7 @@ def _allocation(entry, workbook):
 
 
 
-def r5_elective_runs(months):
+def r5_runs(months):
     """Group same-option training months across calendar years and LOA."""
     runs, active, previous = [], None, None
     for month in months:
@@ -205,15 +209,54 @@ def r5_elective_runs(months):
         previous = number
         if month["status"] == "loa":
             continue
-        if month["status"] != "expected" or month.get("requirement_id") != "r5.elective":
+        if month["status"] != "expected" or not month.get("requirement_id", "").startswith("r5."):
             active = None
             continue
         identity = (month["posting"], month["institution"])
-        if active is None or active["identity"] != identity:
-            active = {"identity": identity, "start": number, "count": 0, "target": month.get("target") or {}}
+        key = month["requirement_id"]
+        if active is None or active["identity"] != identity or active["requirement_id"] != key:
+            active = {"requirement_id": key, "identity": identity, "start": number, "count": 0,
+                      "target": month.get("target") or {}, "start_month": month["month"]}
             runs.append(active)
         active["count"] += 1
+        active["end_month"] = month["month"]
     return runs
+
+R5_ELECTIVE = PROGRAMME_REQUIREMENTS["R5"]["Elective"]["id"]
+R5_COMBINED = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
+R5_CORES = R5_COMBINED["credits"]
+R5_TRAINING_MONTHS = 12
+
+
+def r5_credit_progress(runs):
+    """Count credited components exactly once, retaining incomplete six-month blocks."""
+    counts = defaultdict(int)
+    extended, pending = set(), []
+    for run in runs:
+        key, length = run["requirement_id"], run["count"]
+        credit = additional_r5_credit(run["target"]) if key == R5_ELECTIVE else None
+        if key == R5_COMBINED["id"] or credit:
+            if key == R5_COMBINED["id"]:
+                counts[key] = max(counts[key], min(length, 6))
+            if length < 6:
+                pending.append(run)
+            elif credit:
+                counts[credit["id"]] += credit["months"]
+                counts[R5_ELECTIVE] += 6 - credit["months"]
+            else:
+                for core in R5_CORES:
+                    counts[core] += 3
+        else:
+            counts[key] += length
+            if key in R5_CORES and length > 3:
+                extended.add(key)
+                if length < 6:
+                    pending.append(run)
+    for key in R5_CORES:
+        if counts[key] > 3:
+            extended.add(key)
+    return counts, extended, pending
+
 
 
 def _summaries(months):
@@ -243,33 +286,26 @@ def _summaries(months):
             groups.append(active)
         active["expected_months"] += 1
         active["end"] = month["month"]
-    combined = PROGRAMME_REQUIREMENTS["R5"]["Child and Geriatric Psychiatry"]
-    # As with R1's combined route, partial history belongs to the combined
-    # block, not an assumed split between its components.
-    if counts[combined["id"]] >= combined["months"]:
-        for part in PROGRAMME_REQUIREMENTS["R5"].values():
-            if part["id"] in combined["credits"]:
-                counts[part["id"]] += part["months"]
-    for run in r5_elective_runs(months):
-        if run["count"] >= PROGRAMME_REQUIREMENTS["R5"]["Elective"]["months"]:
-            credit = additional_r5_credit(run["target"])
-            if credit:
-                counts[credit["id"]] = max(counts[credit["id"]], credit["months"])
+    r5_counts, extended, _ = r5_credit_progress(r5_runs(months))
+    targets = {core: 6 if core in extended else 3 for core in R5_CORES}
+    targets[R5_ELECTIVE] = R5_TRAINING_MONTHS - sum(targets.values())
     result = []
     for year, requirements in PROGRAMME_REQUIREMENTS.items():
         for posting, rule in requirements.items():
-            count = counts[rule["id"]]
+            key = rule["id"]
+            count = r5_counts[key] if year == "R5" else counts[key]
+            required = targets.get(key, rule["months"])
             if year == "R3":
                 count = max((group["expected_months"] for group in groups), default=0)
             item = {"requirement_id": rule["id"], "requirement_year": year, "posting": posting,
-                    "required_months": rule["months"], "expected_months": count,
-                    "remaining_months": max(0, rule["months"] - count),
-                    "evidence_status": "not_evidenced" if not count else "supported" if count >= rule["months"] else "partial"}
+                    "required_months": required, "expected_months": count,
+                    "remaining_months": max(0, required - count),
+                    "evidence_status": "supported" if count >= required else "partial" if count else "not_evidenced"}
             if rule.get("credits"):
                 item["alternative"] = True
                 item["credits"] = list(rule["credits"])
                 # A completed separate route also removes the need for a combined block.
-                if all(counts[part["id"]] >= part["months"]
+                if not 0 < count < required and all(r5_counts[part["id"]] >= part["months"]
                        for part in PROGRAMME_REQUIREMENTS["R5"].values() if part["id"] in rule["credits"]):
                     item["remaining_months"] = 0
             if year == "R3":
@@ -282,6 +318,7 @@ def programme_requirements_completed(months):
     """Both the R1 route and all mandatory later requirements are evidenced."""
     requirements = _summaries(months)
     completed = {r["requirement_id"] for r in requirements if not r["remaining_months"]}
-    return any(completed.issuperset(route) for route in R1_COMPLETION_ROUTES) and all(
+    _, _, unfinished = r5_credit_progress(r5_runs(months))
+    return not unfinished and any(completed.issuperset(route) for route in R1_COMPLETION_ROUTES) and all(
         r["requirement_id"] in completed for r in requirements
         if r["requirement_year"] != "R1" and not r.get("alternative"))
