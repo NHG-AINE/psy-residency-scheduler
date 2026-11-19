@@ -1,3 +1,6 @@
+import json
+from urllib.parse import quote
+from fastapi.responses import Response
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from typing import Literal
@@ -7,11 +10,13 @@ from uuid import uuid4
 from starlette.concurrency import run_in_threadpool
 
 if __package__:
+    from .workbook_export import export_workbook
     from .scheduler import DraftCancelled, draft_schedule
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
 else:
+    from workbook_export import export_workbook
     from scheduler import DraftCancelled, draft_schedule
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
@@ -122,3 +127,25 @@ async def generate_draft(request: DraftRequest, token: str | None = None):
     finally:
         if token:
             _draft_operations.pop(token, None)
+
+
+@app.post("/api/export")
+async def export_draft(originalFile: UploadFile = File(...), target_year: int = Form(...), draft: str = Form(...)):
+    try:
+        if not originalFile.filename or not originalFile.filename.lower().endswith(".xlsx"):
+            raise HTTPException(400, "Choose an .xlsx workbook")
+        content = await originalFile.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "Workbook exceeds the 10 MB upload limit")
+        try:
+            data = json.loads(draft)
+            output, retained = await run_in_threadpool(export_workbook, content, target_year, data)
+        except (WorkbookError, KeyError, TypeError, ValueError, AttributeError, IndexError) as exc:
+            raise HTTPException(422, str(exc) if isinstance(exc, WorkbookError) else "The draft export data is incomplete. Generate a new draft and retry.") from exc
+        basename = originalFile.filename.replace("\\", "/").split("/")[-1][:-5]
+        filename = f"{basename} - Draft {target_year}-{target_year + 1}.xlsx"
+        return Response(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename),
+                                 "X-Export-Retained-Residents": json.dumps(retained, ensure_ascii=True)})
+    finally:
+        await originalFile.close()

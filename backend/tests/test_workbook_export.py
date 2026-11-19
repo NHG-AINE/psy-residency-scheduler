@@ -1,0 +1,191 @@
+import json
+import unittest
+from copy import deepcopy
+from io import BytesIO
+from zipfile import ZipFile
+
+from fastapi.testclient import TestClient
+from openpyxl import load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import Alignment, Font
+
+from main import app
+from workbook_export import export_workbook
+from workbook_import import WorkbookError, parse_workbook, posting_catalogue
+from tests.test_workbook_import import structured_workbook_bytes
+
+
+def fixture():
+    def edit(w):
+        s = w['Jul 2027 - Jun 2028']
+        s['D3'].comment = Comment('Keep this note', 'Original author')
+        s['D3'].font = Font(name='Arial', bold=True, italic=True, color='003366')
+        s['K3'] = None
+        s['A3'] = '=1+2'
+        s['D4'], s['E4'], s['F4'] = 'Skipped resident', 'M99999A', 'R4'
+        s['G4'] = 'Original posting'
+        w['Postings']['C5'] = '=1+1'
+        w['Postings']['C5'].data_type = 's'
+    content = structured_workbook_bytes(edit)
+    wb = parse_workbook(content)
+    person = wb['residents'][0]
+    option = next(o for o in posting_catalogue(wb['postings']) if o['category'] == 'elective')
+    months = [{'month': m['month'], 'status': 'outside_draft_scope', 'label': None} for m in wb['months']]
+    months[0]['status'] = 'loa'
+    months[3].update(status='posting', label=option['label'], target=option)
+    months[4]['status'] = 'requirements_completed'
+    draft = {'status': 'feasible', 'cutoff': '2027-06', 'residents': [
+        {'source': person['source'], 'name': person['name'], 'mcr': person['mcr'], 'projected_year': 'R4,R5', 'months': months,
+         'requests': [{'request': {'posting_request': 'Requested posting', 'period': 'Oct-Dec'}, 'status': 'not_met',
+                       'reason': 'Outstanding training', 'assigned': [{'label': option['label'], 'months': ['2027-10']}]}]}]}
+    return content, draft
+
+
+class ExportTests(unittest.TestCase):
+    def test_only_planned_cells_year_and_name_annotations_change(self):
+        content, draft = fixture()
+        output, retained = export_workbook(content, 2027, draft)
+        a, b = load_workbook(BytesIO(content)), load_workbook(BytesIO(output))
+        self.assertEqual(a.sheetnames, b.sheetnames)
+        changed = {'D3', 'F3', 'J3'}
+        for s in a:
+            t = b[s.title]
+            self.assertEqual(str(s.merged_cells), str(t.merged_cells))
+            for row in s:
+                for c in row:
+                    if s.title == 'Jul 2027 - Jun 2028' and c.coordinate in changed:
+                        continue
+                    other = t[c.coordinate]
+                    self.assertEqual((c.value, c.data_type, c._style, c.comment.text if c.comment else None),
+                                     (other.value, other.data_type, other._style, other.comment.text if other.comment else None))
+        s = b['Jul 2027 - Jun 2028']
+        self.assertEqual(s['F3'].value, 'R4,R5')
+        self.assertEqual(s['J3'].value, draft['residents'][0]['months'][3]['label'] + ' (Elective)')
+        self.assertEqual(s['L3'].value, 'Posting')
+        self.assertEqual(s['J3'].data_type, 's')
+        self.assertTrue(s['J3'].value.startswith('='))
+        self.assertIsNone(s['K3'].value)
+        self.assertIn('requirements completed', s['D3'].comment.text)
+        self.assertIn('Keep this note', s['D3'].comment.text)
+        self.assertIn('Requested posting', s['D3'].comment.text)
+        self.assertIn('Oct-Dec', s['D3'].comment.text)
+        self.assertIn('Assigned:', s['D3'].comment.text)
+        self.assertEqual(s['D3'].font.color.rgb, 'FFFF0000')
+        self.assertTrue(s['D3'].font.bold)
+        self.assertTrue(s['D3'].font.italic)
+        self.assertEqual(s['D3'].font.name, 'Arial')
+        with ZipFile(BytesIO(content)) as before, ZipFile(BytesIO(output)) as after:
+            differences = [n for n in before.namelist() if before.read(n) != after.read(n)]
+            self.assertEqual(set(differences), {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml'})
+        imported = parse_workbook(output)
+        self.assertEqual(imported['residents'][0]['postings'][3]['status'], 'posting')
+        self.assertEqual(imported['residents'][0]['postings'][0]['value'], 'LOA')
+
+    def test_pending_and_met_alternative_are_not_red_and_new_notes_are_readable(self):
+        content, draft = fixture()
+        w = load_workbook(BytesIO(content))
+        w['Jul 2027 - Jun 2028']['D3'].comment = None
+        stream = BytesIO(); w.save(stream); content = stream.getvalue()
+        outcome = draft['residents'][0]['requests'][0]
+        outcome['status'] = 'pending'
+        draft['residents'][0]['requests'].append({**deepcopy(outcome), 'status': 'not_met', 'alternatives': [{'status': 'met'}]})
+        output, retained = export_workbook(content, 2027, draft)
+        s = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
+        self.assertEqual(s['D3'].font.color.rgb, '00003366')
+        self.assertEqual(s['D3'].comment.text.count('Requested posting'), 1)
+        self.assertIn('pending review', s['D3'].comment.text)
+
+    def test_blank_month_merge_is_opened_but_existing_note_merge_is_preserved(self):
+        content, draft = fixture()
+        w = load_workbook(BytesIO(content)); s = w['Jul 2027 - Jun 2028']
+        s['J3'] = None; s['K3'] = None; s['L3'] = None
+        s['J3'].alignment = Alignment(wrap_text=True)
+        s.merge_cells('J3:L3')
+        draft['residents'][0]['months'][5].update(draft['residents'][0]['months'][3], month='2027-12')
+        stream = BytesIO(); w.save(stream); content = stream.getvalue()
+        output, retained = export_workbook(content, 2027, draft)
+        s = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
+        self.assertNotIn('J3:L3', str(s.merged_cells))
+        self.assertIn('H3:I3', str(s.merged_cells))
+        self.assertTrue(s['J3'].value.endswith('(Elective)'))
+        self.assertIsNone(s['K3'].value)
+        self.assertTrue(s['L3'].alignment.wrap_text)
+        invalid = deepcopy(draft)
+        invalid['residents'][0]['months'][1].update(invalid['residents'][0]['months'][3], month='2027-08')
+        _, retained = export_workbook(content, 2027, invalid)
+        self.assertEqual(retained, ['Example Resident'])
+
+    def test_merged_note_row_is_unchanged_and_other_residents_export_with_warning(self):
+        content, draft = fixture()
+        person = draft['residents'][0]
+        person['months'][1].update(person['months'][3], month='2027-08')
+        other = deepcopy(person)
+        other.update(source={'sheet': 'Jul 2027 - Jun 2028', 'row': 4}, name='Skipped resident', mcr='M99999A', projected_year='R5', requests=[])
+        for index, month in enumerate(other['months']):
+            if index != 3:
+                month.update(status='outside_draft_scope', label=None)
+        draft['residents'].append(other)
+        output, retained = export_workbook(content, 2027, draft)
+        self.assertEqual(retained, ['Example Resident'])
+        a = load_workbook(BytesIO(content))['Jul 2027 - Jun 2028']
+        b = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
+        for cell in a[3]:
+            other_cell = b[cell.coordinate]
+            self.assertEqual((cell.value, cell._style, cell.comment.text if cell.comment else None),
+                             (other_cell.value, other_cell._style, other_cell.comment.text if other_cell.comment else None))
+        self.assertTrue(b['J4'].value.endswith('(Elective)'))
+        self.assertEqual(b['F4'].value, 'R5')
+        with ZipFile(BytesIO(content)) as original, ZipFile(BytesIO(output)) as exported:
+            import re
+            row = rb'<row\b(?=[^>]*\br="3")[^>]*>.*?</row>'
+            self.assertEqual(re.search(row, original.read('xl/worksheets/sheet2.xml'))[0],
+                             re.search(row, exported.read('xl/worksheets/sheet2.xml'))[0])
+            self.assertEqual(original.read('xl/comments/comment1.xml'), exported.read('xl/comments/comment1.xml'))
+        response = TestClient(app).post('/api/export', files={'originalFile': ('Example.xlsx', content)}, data={'target_year': '2027', 'draft': json.dumps(draft)})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.headers['x-export-retained-residents']), retained)
+
+    def test_threaded_name_note_preserves_original_text_and_all_other_parts(self):
+        content, draft = fixture()
+        data = BytesIO()
+        with ZipFile(BytesIO(content)) as original, ZipFile(data, 'w') as modified:
+            for info in original.infolist():
+                value = original.read(info.filename)
+                if info.filename == 'xl/worksheets/_rels/sheet2.xml.rels':
+                    value = value.replace(b'</Relationships>', b'<Relationship Id="thread1" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/></Relationships>')
+                modified.writestr(info, value)
+            modified.writestr('xl/threadedComments/threadedComment1.xml', '<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"><threadedComment ref="D3" personId="original-person" id="original-id"><text>Original threaded note</text></threadedComment></ThreadedComments>')
+        content = data.getvalue()
+        output, retained = export_workbook(content, 2027, draft)
+        with ZipFile(BytesIO(content)) as before, ZipFile(BytesIO(output)) as after:
+            thread = after.read('xl/threadedComments/threadedComment1.xml').decode()
+            self.assertIn('Original threaded note', thread)
+            self.assertIn('Draft export', thread)
+            self.assertIn('Requested posting', thread)
+            self.assertIn('id="original-id"', thread)
+            for name in before.namelist():
+                if name not in {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml', 'xl/threadedComments/threadedComment1.xml'}:
+                    self.assertEqual(before.read(name), after.read(name), name)
+
+    def test_payload_mismatches_are_rejected_and_download_has_filename(self):
+        content, draft = fixture()
+        client = TestClient(app)
+        for mutate in [lambda d: d.update(cutoff='2026-06'), lambda d: d['residents'][0]['source'].update(row=999),
+                       lambda d: d['residents'][0]['months'][3].update(month='2028-07'),
+                       lambda d: d['residents'][0]['months'][3]['target'].update(source={'sheet': 'Other', 'row': 3})]:
+            invalid = deepcopy(draft); mutate(invalid)
+            with self.assertRaises(WorkbookError):
+                export_workbook(content, 2027, invalid)
+            response = client.post('/api/export', files={'originalFile': ('Example.xlsx', content)}, data={'target_year': '2027', 'draft': json.dumps(invalid)})
+            self.assertEqual(response.status_code, 422)
+        response = client.post('/api/export', files={'originalFile': ('Example.xlsx', content)}, data={'target_year': '2027', 'draft': json.dumps(draft)})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Example%20-%20Draft%202027-2028.xlsx', response.headers['content-disposition'])
+        self.assertIn('spreadsheetml.sheet', response.headers['content-type'])
+        self.assertTrue(response.content.startswith(b'PK'))
+        with self.assertRaises(WorkbookError):
+            export_workbook(content, 2026, draft)
+
+
+if __name__ == '__main__':
+    unittest.main()
