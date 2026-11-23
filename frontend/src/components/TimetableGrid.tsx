@@ -7,16 +7,18 @@ function isTruncated(label: Element) {
 
 const triggerSelector = '[data-status-tooltip], [data-posting-tooltip]'
 
-export function PostingStatus({ className, label, details, children, descriptionId, interactive = false }: {
+export function PostingStatus({ className, label, details, children, descriptionId, interactive = false, onSelect, disabled }: {
   className: string; label: string; details: ReactNode; children: ReactNode; descriptionId?: string; interactive?: boolean
+  onSelect?: (button: HTMLButtonElement) => void; disabled?: boolean
 }) {
   const id = useId()
   const tooltipId = descriptionId ?? id
   return <>
     <button type="button" className={className} aria-label={label}
-      aria-describedby={interactive ? undefined : tooltipId} aria-haspopup={interactive ? 'dialog' : undefined}
+      aria-describedby={interactive || onSelect ? undefined : tooltipId} aria-haspopup={interactive ? 'dialog' : undefined}
       aria-expanded={interactive ? false : undefined}
-      data-status-tooltip={tooltipId}>{children}</button>
+      aria-disabled={disabled || undefined} data-draft-undo={onSelect ? true : undefined}
+      data-status-tooltip={tooltipId} onClick={onSelect ? (event) => { if (!disabled) onSelect(event.currentTarget) } : undefined}>{children}</button>
     <div id={tooltipId} className="posting-tooltip posting-status-tooltip" popover="manual"
       role={interactive ? 'dialog' : 'tooltip'} aria-label={interactive ? label : undefined}>{details}</div>
   </>
@@ -133,7 +135,7 @@ export default function TimetableGrid({ children, suppressTooltip = false }: { c
       if (!(event.target instanceof Element) || !grid.current?.contains(event.target)) { clear(); return }
       if (visiblePanel.current?.contains(event.target)) return
       const anchor = postingAt(event.target)
-      if (!anchor?.dataset.statusTooltip) { clear(); return }
+      if (!anchor?.dataset.statusTooltip || anchor.hasAttribute('data-draft-undo')) { clear(); return }
       if (event.pointerType === 'touch') {
         setHovered(null)
         setFocused(null)
@@ -173,7 +175,7 @@ export default function TimetableGrid({ children, suppressTooltip = false }: { c
     }}
     onClick={(event) => {
       const anchor = anchorAt(event.target)
-      if (!anchor?.dataset.statusTooltip) { clear(); return }
+      if (!anchor?.dataset.statusTooltip || anchor.hasAttribute('data-draft-undo')) { clear(); return }
       if (event.detail === 0 && anchor.contains(event.target as Node)) {
         visiblePanel.current?.querySelector('summary')?.focus()
       }

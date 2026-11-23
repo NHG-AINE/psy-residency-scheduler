@@ -114,8 +114,9 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     cancelMove(); setEditor(null); setReturning(null); announce('')
   }
 
-  function announceUndo(name: string | null | undefined) {
-    announce(name ? `Undid the last change to ${name}’s draft.` : 'Undid the last draft change.')
+  function announceUndo(name: string | null | undefined, kind?: DraftChange['kind']) {
+    const action = kind === 'insert' ? 'move' : kind
+    announce(name ? `Undid ${action ? `the posting ${action}` : 'the last change'} to ${name}’s draft.` : 'Undid the last draft change.')
   }
 
   function check(change: DraftChange, affected: DraftCell[], release?: ReleasedMove) {
