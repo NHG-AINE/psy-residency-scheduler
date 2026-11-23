@@ -8,7 +8,7 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Clarify uncertain requirements and surface material tradeoffs before implementation.
 - Write the minimum code needed. Reuse existing tools and components.
 - Make focused changes. Avoid unrelated edits and unnecessary abstractions.
-- Do not spawn subagents unless explicitly requested.
+- If the user asks only for a plan, explanation or review, deliver that and stop there.
 - Keep backend logic separate from the interface.
 - Preserve historical data and export changes to a new workbook.
 - Never commit credentials.
@@ -30,14 +30,26 @@ PSY Residency Scheduler is a posting planner for the NHG Psychiatry Residency Pr
 - Keep constraint documents focused on scheduling rules, not temporary
   implementation-status notes. Check the code to determine current support.
 
-## Implementation plans
+## Task planning and implementation
 
-Before implementing a feature, provide a short, readable plan covering:
+Start each task with a short plan. For a question or investigation, say what
+you'll check. For any task that changes the repository, include:
 
-- Scope: what will be added or changed.
-- Branch: the proposed branch name.
-- Commits: intended commit messages and what each includes.
-- Tests: which checks will verify the feature.
+- Scope: what will change and why.
+- Branch: which branch you'll use.
+- Commits: the proposed commit messages and what belongs in each.
+- Verification: which existing checks cover the change and which important
+  behaviours, edge cases or regressions need a new test.
+
+When implementation is requested, delegate the agreed scope to one worker
+unless the user asks you to implement directly. Use the model and reasoning
+effort the user specifies. Otherwise, choose an available coding model suited
+to the task, preferring a faster model for routine implementation when model
+selection is supported. If delegation is unavailable, implement directly.
+
+The main agent owns the result. Review the worker's diff against the plan,
+simplify unnecessary code, check that existing features still work and run the
+high-value checks identified in the plan.
 
 ## Testing
 
@@ -48,7 +60,8 @@ Before implementing a feature, provide a short, readable plan covering:
 
 ## Repository workflow
 
-- Start each new task on a dedicated branch before making changes.
+- Use a dedicated branch for repository changes. Continue on the current branch
+  when the user asks or the work belongs to the same approved change.
 - Name branches `<type>/<short-kebab-case-description>`.
   Use feature/, fix/, build/, ci/, docs/, refactor/, test/ or chore/.
   Example: `feature/workbook-import`.
