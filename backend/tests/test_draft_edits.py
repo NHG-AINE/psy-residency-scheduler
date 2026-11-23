@@ -49,6 +49,22 @@ class DraftEditTests(unittest.TestCase):
         self.assertFalse(any(i["code"] == "capacity_overflow" for i in corrected["edit_warnings"]))
         self.assertEqual(draft, original)
 
+    def test_reverse_swap_restoring_generated_draft_has_no_preview_warning(self):
+        book = r2_book(2)
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        person = draft["residents"][0]
+        swap = {"kind": "swap", "resident": person["source"], "start": "2027-07", "destination": "2027-10"}
+        changed = validate_draft_change(book, STORE, draft, swap)
+        self.assertTrue(any(issue["code"] == "singleton_months" for issue in changed["issues"]))
+        self.assertTrue(draft["singletons"])
+
+        reverse = {**swap, "start": swap["destination"], "destination": swap["start"]}
+        reversed_swap = validate_draft_change(book, STORE, json.loads(json.dumps(changed["draft"])), reverse)
+        self.assertEqual(reversed_swap["issues"], [])
+        self.assertEqual(reversed_swap["draft"]["edit_warnings"], [])
+        self.assertEqual([p["months"] for p in reversed_swap["draft"]["residents"]],
+                         [p["months"] for p in draft["residents"]])
+
     def test_leave_pauses_a_whole_block_and_cannot_be_a_swap_destination(self):
         book = r3_book()
         book["residents"][0]["postings"][3].update(status="loa", value="LOA")
