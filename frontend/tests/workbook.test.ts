@@ -40,6 +40,22 @@ test('omits the planning year for new and replacement uploads', async (t) => {
   assert.deepEqual(await importWorkbook(new File(['replacement'], 'replacement.xlsx')), result)
 })
 
+test('rejects an otherwise valid import for a different planning year', async (t) => {
+  const result = { target_year: 2028, target_sheet: 'Later', residents: [], available_years: [], months: [], histories: [], requests: [], warnings: [], postings: { core: [], rows: [] } }
+  t.mock.method(globalThis, 'fetch', async () => Response.json(result))
+  await assert.rejects(importWorkbook(new File(['workbook'], 'programme.xlsx'), 2027), /different planning year/)
+})
+
+test('relays cancellation to an in-flight workbook import', async (t) => {
+  const controller = new AbortController()
+  t.mock.method(globalThis, 'fetch', async (_url: string, { signal }: RequestInit) => new Promise<Response>((_, reject) => {
+    signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }))
+  const importResult = importWorkbook(new File(['workbook'], 'programme.xlsx'), 2027, controller.signal)
+  controller.abort()
+  await assert.rejects(importResult, { name: 'AbortError' })
+})
+
 test('reports server validation, unreachable backend and non-JSON responses', async (t) => {
   const file = new File(['workbook'], 'programme.xlsx')
   t.mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Missing required worksheet.' }, { status: 400 }))

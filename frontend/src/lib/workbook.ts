@@ -48,14 +48,16 @@ export function workbookError(files: Pick<File, 'name' | 'size'>[]): string {
   return ''
 }
 
-export async function importWorkbook(file: File, year?: number): Promise<Workbook> {
+export async function importWorkbook(file: File, year?: number, signal?: AbortSignal): Promise<Workbook> {
   const body = new FormData()
   body.append('file', file)
   if (year !== undefined) body.append('target_year', String(year))
   let response: Response
   try {
-    response = await fetch('/api/import', { method: 'POST', body, signal: AbortSignal.timeout(30_000) })
+    const timeout = AbortSignal.timeout(30_000)
+    response = await fetch('/api/import', { method: 'POST', body, signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
   } catch (error: unknown) {
+    signal?.throwIfAborted()
     if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
       throw new Error('Workbook import timed out. Check the backend connection and try again.')
     }
@@ -70,6 +72,7 @@ export async function importWorkbook(file: File, year?: number): Promise<Workboo
     throw new Error(typeof detail === 'string' ? detail : `Workbook import failed (HTTP ${response.status}). Choose a supported workbook and try again.`)
   }
   if (!isWorkbook(result)) throw new Error('The backend returned an unexpected workbook response. Check the connection and try again.')
+  if (year !== undefined && result.target_year !== year) throw new Error('The backend returned data for a different planning year. Please try again.')
   return result
 }
 
