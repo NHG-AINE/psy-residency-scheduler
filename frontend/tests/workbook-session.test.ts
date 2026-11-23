@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftBaseline, draftUndoPreview, prepareDraftEdit, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
+import { draftBaseline, draftBlockUndoTarget, draftUndoPreview, prepareDraftEdit, undoDraftBlock, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
 import type { DraftChange, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -238,6 +238,104 @@ test('cancels a reversed swap across a saved session and rebuilds undo for an in
   const undone = undoDraftEdit(reopened)!
   assert.deepEqual(undone.data, generated.data)
   assert.equal(undoDraftEdit(undone), null)
+})
+
+test('selective undo keeps a later edit on its posting when a swap is undone from the partner block', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!
+  const swapped = await prepareDraftEdit(original, swapA, planned([2, 1, 3, 4]), withoutReplay)
+  const edit = postingEdit(july, 5)
+  const edited = await prepareDraftEdit(swapped, edit, planned([5, 1, 3, 4]), withoutReplay)
+  const reopened = parseSession(structuredClone({ ...saved, draft: edited }))!.draft!
+  const target = draftBlockUndoTarget(reopened, resident, august)!
+  assert.deepEqual(target.change, swapA)
+  assert.deepEqual(draftBlockUndoTarget(reopened, resident, july)?.change, edit)
+  assert.equal(draftBlockUndoTarget(reopened, resident, september), null)
+  assert.deepEqual(await undoDraftBlock(reopened, resident, july, withoutReplay), swapped)
+
+  const retained = planned([1, 5, 3, 4])
+  const result = await undoDraftBlock(reopened, resident, august, async (base, change) => {
+    assert.deepEqual(base, original.data)
+    assert.deepEqual(change, postingEdit(august, 5))
+    return { draft: retained, issues: [] }
+  })
+  assert.deepEqual(draftUndoPreview(reopened, result!.data, target.change)?.positions, [august, july, september, october])
+  assert.deepEqual(reopened, edited)
+  const again = parseSession(structuredClone({ ...saved, draft: result }))!.draft!
+  assert.deepEqual(draftBlockUndoTarget(again, resident, august)?.change, postingEdit(august, 5))
+  assert.deepEqual(undoDraftEdit(again), { ...original, undo: [], undoChanges: [] })
+})
+
+test('selective undo removes an older edit and preserves independent swaps in chronological order', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!
+  const edit = postingEdit(july, 5)
+  const edited = await prepareDraftEdit(original, edit, planned([5, 2, 3, 4]), withoutReplay)
+  const swapped = await prepareDraftEdit(edited, swapB, planned([5, 2, 4, 3]), withoutReplay)
+  const result = await undoDraftBlock(swapped, resident, july, async (base, change) => {
+    assert.equal(base, original.data)
+    assert.deepEqual(change, swapB)
+    return { draft: planned([1, 2, 4, 3]), issues: [] }
+  })
+  assert.deepEqual(result?.undoChanges, [swapB])
+  assert.deepEqual(result?.undo, [original.data])
+})
+
+test('selective undo replays an edit onto a block restored from an insertion', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!
+  const insertion = { kind: 'insert', resident, start: july, destination: october, side: 'after' } as const
+  const moved = await prepareDraftEdit(original, insertion, planned([2, 3, 4, 1]), withoutReplay)
+  const changed = await prepareDraftEdit(moved, postingEdit(august, 5), planned([2, 5, 4, 1]), withoutReplay)
+  assert.deepEqual(draftBlockUndoTarget(changed, resident, july)?.change, insertion)
+  assert.deepEqual(draftBlockUndoTarget(changed, resident, september)?.change, insertion)
+  assert.deepEqual(draftBlockUndoTarget(changed, resident, october)?.change, insertion)
+  const replayed = await undoDraftBlock(changed, resident, october, async (base, change) => {
+    assert.equal(base, original.data)
+    assert.deepEqual(change, postingEdit(september, 5))
+    return { draft: planned([1, 2, 5, 4]), issues: [] }
+  })
+  assert.deepEqual(replayed?.undoChanges, [postingEdit(september, 5)])
+})
+
+test('selective undo leaves the insertion target unmarked when it stayed in place', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const edit = postingEdit(october, 5)
+  const edited = await prepareDraftEdit(saved.draft!, edit, planned([1, 2, 3, 5]), withoutReplay)
+  const insertion = { kind: 'insert', resident, start: july, destination: october, side: 'before' } as const
+  const moved = await prepareDraftEdit(edited, insertion, planned([2, 3, 1, 5]), withoutReplay)
+  assert.deepEqual(draftBlockUndoTarget(moved, resident, october)?.change, edit)
+  assert.deepEqual(draftBlockUndoTarget(moved, resident, september)?.change, insertion)
+  const replayed = await undoDraftBlock(moved, resident, october, async (base, change) => {
+    assert.equal(base, saved.draft!.data)
+    assert.deepEqual(change, insertion)
+    return { draft: planned([2, 3, 1, 4]), issues: [] }
+  })
+  assert.deepEqual(replayed?.undoChanges, [insertion])
+})
+
+test('selective undo keeps history intact if a dependent move or replayed warning blocks it', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!
+  const swapped = await prepareDraftEdit(original, swapA, planned([2, 1, 3, 4]), withoutReplay)
+  const dependent = await prepareDraftEdit(swapped, { ...swapA, destination: october }, planned([4, 1, 3, 2]), withoutReplay)
+  await assert.rejects(undoDraftBlock(dependent, resident, august, withoutReplay), /later posting move first/)
+  assert.deepEqual(undoDraftEdit(dependent), swapped)
+
+  const independent = await prepareDraftEdit(swapped, swapB, planned([2, 1, 4, 3]), withoutReplay)
+  const restored = planned([1, 2, 4, 3])
+  const affected = [{ source: resident, month: september }]
+  await assert.rejects(undoDraftBlock(independent, resident, july, async () =>
+    ({ draft: null, issues: [{ severity: 'hard', code: 'hard_constraint', affected, message: 'This posting cannot start in September.' }] })),
+    /cannot start in September/)
+  const warning = { severity: 'soft' as const, code: 'posting_balance', affected, message: 'Posting distribution worsened.' }
+  await assert.rejects(undoDraftBlock(independent, resident, july, async () => ({ draft: restored, issues: [warning] })),
+    /new draft warning/)
+  assert.deepEqual(undoDraftEdit(independent), swapped)
+
+  const accepted = { ...independent, data: { ...independent.data, edit_warnings: [warning] } }
+  assert.deepEqual((await undoDraftBlock(accepted, resident, july, async () =>
+    ({ draft: { ...restored, edit_warnings: [warning] }, issues: [warning] })))?.undoChanges, [swapB])
 })
 
 test('preserves a later swap of the same months on a different resident row', async () => {

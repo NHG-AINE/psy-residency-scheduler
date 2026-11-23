@@ -22,6 +22,24 @@ function touchedMonths(draft: DraftSchedule, change: DraftChange) {
   return months.filter((month) => month?.month >= selected[0].month && month.month <= selected.at(-1)!.month)
 }
 
+function affectedMonths(draft: DraftSchedule, change: DraftChange) {
+  if (change.kind === 'insert') {
+    const months = residentMonths(draft, change.resident)
+    const insertion = draftInsertion(months, change.start, change.destination, change.side)
+    if (insertion) {
+      const starts = new Map<string, string>()
+      insertion.blocks.forEach((block, index) => {
+        if (block && !starts.has(block)) starts.set(block, months[index].month)
+      })
+      return months.filter((month, position) => {
+        const block = insertion.blocks[position]
+        return !!block && (block !== month.block_start || starts.get(block) !== month.block_start)
+      })
+    }
+  }
+  return touchedMonths(draft, change)
+}
+
 function assignment(month: Month | undefined) {
   if (!month) return null
   const target = month.target
@@ -83,8 +101,7 @@ function reverseLayout(current: Month[], restored: Month[], change: DraftChange 
   return positions.some((start, index) => start !== currentStarts[index]) ? positions : null
 }
 
-export function draftUndoPreview(saved: SavedDraft, restored: DraftSchedule) {
-  const change = saved.undoChanges?.at(-1) ?? null
+export function draftUndoPreview(saved: SavedDraft, restored: DraftSchedule, change = saved.undoChanges?.at(-1) ?? null) {
   for (const person of saved.data.residents) {
     if (!person?.source || !Array.isArray(person.months) || (change && !sameSource(person.source, change.resident))) continue
     const current = person.months
@@ -259,4 +276,137 @@ export async function prepareDraftEdit(saved: SavedDraft, change: DraftChange, v
 export function undoDraftEdit(saved: SavedDraft | null): SavedDraft | null {
   const previous = saved?.undo?.at(-1)
   return saved && previous ? { ...saved, data: previous, undo: saved.undo?.slice(0, -1), undoChanges: saved.undoChanges?.slice(0, -1) } : null
+}
+
+export function draftBlockUndoTargets(saved: SavedDraft | null) {
+  type Entry = { index: number; change: DraftChange | null }
+  const residentKey = (source: Source) => JSON.stringify(source.kind ? [source.kind, source.slot_id] : [source.sheet, source.row])
+  const calendar = new Map<string, Map<string, Entry>>()
+  function record(resident: Source, months: Month[], entry: Entry) {
+    const key = residentKey(resident)
+    const dates = calendar.get(key) ?? new Map<string, Entry>()
+    for (const month of months) dates.set(month.month, entry)
+    calendar.set(key, dates)
+  }
+  for (let index = 0; saved?.undo && index < saved.undo.length; index++) {
+    const before = saved.undo[index]
+    const after = saved.undo[index + 1] ?? saved.data
+    const change = saved.undoChanges?.[index] ?? inferChange(before, after)
+    if (change) {
+      record(change.resident, affectedMonths(before, change), { index, change })
+    } else {
+      // A legacy snapshot may show the assignments but leave the operation ambiguous.
+      for (const person of before.residents) {
+        if (!person?.source || !Array.isArray(person.months)) continue
+        const current = residentMonths(after, person.source)
+        const changed = person.months.filter((month, position) => month && assignment(month) !== assignment(current[position]))
+        if (changed.length) record(person.source, changed, { index, change: null })
+      }
+    }
+  }
+  const targets = new Map<string, Map<string, Entry>>()
+  for (const person of saved?.data.residents ?? []) {
+    if (!person?.source || !Array.isArray(person.months)) continue
+    const key = residentKey(person.source)
+    const dates = calendar.get(key)
+    if (!dates) continue
+    const blocks = new Map<string, Entry>()
+    for (const month of person.months) {
+      if (!month?.block_start) continue
+      const entry = dates.get(month.month)
+      if (entry && entry.index > (blocks.get(month.block_start)?.index ?? -1)) blocks.set(month.block_start, entry)
+    }
+    targets.set(key, blocks)
+  }
+  return (resident: Source, start: string) => {
+    const entry = targets.get(residentKey(resident))?.get(start)
+    return entry?.change ? { index: entry.index, change: entry.change } : null
+  }
+}
+
+export function draftBlockUndoTarget(saved: SavedDraft | null, resident: Source, start: string) {
+  return draftBlockUndoTargets(saved)(resident, start)
+}
+
+function changedBlockStarts(before: DraftSchedule, after: DraftSchedule, change: DraftChange) {
+  const restored = residentMonths(before, change.resident)
+  const current = residentMonths(after, change.resident)
+  const positions = reverseLayout(current, restored, change)
+  if (!positions) return null
+  const starts = new Map<string, string>()
+  positions.forEach((start, index) => {
+    const previousStart = restored[index].block_start
+    if (start && previousStart && start !== previousStart) starts.set(start, previousStart)
+  })
+  return starts
+}
+
+function acceptedWarnings(issues: DraftChangeResult['issues'], after: DraftSchedule) {
+  const key = ({ code, message, affected }: DraftChangeResult['issues'][number]) => JSON.stringify([code, message,
+    affected.map(({ month, source }) => JSON.stringify([month, source.kind, source.slot_id, source.sheet, source.row])).sort()])
+  const accepted = new Set(after.edit_warnings?.map(key))
+  return issues.every((issue) => issue.severity === 'soft' && accepted.has(key(issue)))
+}
+
+export async function undoDraftBlock(saved: SavedDraft, resident: Source, start: string,
+  replay: (draft: DraftSchedule, change: DraftChange) => Promise<DraftChangeResult>): Promise<SavedDraft | null> {
+  const target = draftBlockUndoTarget(saved, resident, start)
+  if (!target || !saved.undo) return null
+  const { index, change } = target
+  if (index === saved.undo.length - 1) return undoDraftEdit(saved)
+
+  const snapshots = [...saved.undo, saved.data]
+  const next = saved.undo.slice(0, index)
+  const changes = next.map((snapshot, step) => saved.undoChanges?.[step] ?? inferChange(snapshot, snapshots[step + 1]))
+  // Later edits follow their block to its restored dates. A later overlapping move
+  // can change which blocks its span includes, so leave that move for the user to undo first.
+  const relocated = change.kind === 'edit' ? new Map<string, string>() : changedBlockStarts(snapshots[index], snapshots[index + 1], change)
+  if (!relocated) throw new Error('Use toolbar Undo first. This move’s original block positions could not be recovered.')
+  let data = snapshots[index]
+  for (let step = index + 1; step < saved.undo.length; step++) {
+    const before = snapshots[step]
+    const after = snapshots[step + 1]
+    const operation = saved.undoChanges?.[step] ?? inferChange(before, after)
+    if (!operation) throw new Error('Use toolbar Undo first. A later change could not be identified in the saved history.')
+    const blockMap = sameSource(resident, operation.resident) ? relocated : null
+    const touched = touchedMonths(before, operation)
+    const actual = residentMonths(data, operation.resident)
+    const updated = residentMonths(after, operation.resident)
+    const planned = new Map<string, Month>()
+    let replayed = operation
+    if (operation.kind === 'edit') {
+      const restoredStart = blockMap?.get(operation.start) ?? operation.start
+      const restoredBlock = actual.filter((month) => month.block_start === restoredStart)
+      const edited = updated.find((month) => month.block_start === operation.start)
+      if (!edited || !touched.length || restoredBlock.length !== touched.length
+        || restoredBlock.some((month, position) => blockAssignment(month) !== blockAssignment(touched[position]))) {
+        throw new Error('Undo the later posting edit first. It depends on this change.')
+      }
+      for (const month of restoredBlock) planned.set(month.month, { ...month, label: edited.label, target: edited.target })
+      replayed = { ...operation, start: restoredStart }
+    } else {
+      const moved = affectedMonths(before, operation)
+      const dates = new Set(moved.map(({ month }) => month))
+      if (!dates.size || touched.some((month) => month.block_start && blockMap?.has(month.block_start))
+        || moved.some((month) => assignment(month) !== assignment(actual.find((entry) => entry.month === month.month)))) {
+        throw new Error('Undo the later posting move first. It depends on this change.')
+      }
+      for (const month of updated) if (dates.has(month.month)) planned.set(month.month, month)
+    }
+
+    const result = await replay(data, replayed)
+    if (!result.draft || draftSwapOutcome(result) === 'blocked') {
+      throw new Error(`This change could not be undone while keeping a later ${operation.kind === 'edit' ? 'posting edit' : 'posting move'}. ${result.issues.map(({ message }) => message).join(' ')}`.trim())
+    }
+    if (!matchesAssignments(result.draft, data, { resident: operation.resident, months: planned })) {
+      throw new Error('Undo the dependent change first. Keeping it would change another posting or block boundary.')
+    }
+    if (!acceptedWarnings([...result.issues, ...(result.draft.edit_warnings ?? [])], after)) {
+      throw new Error('Undo the later change first. Keeping it would introduce a new draft warning.')
+    }
+    next.push(data)
+    changes.push(replayed)
+    data = result.draft
+  }
+  return { ...saved, data, undo: next, undoChanges: changes }
 }
