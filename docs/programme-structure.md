@@ -1,29 +1,28 @@
 # PSY Programme Structure
 
-This document outlines the postings, institutions and training durations for
-R1-R5 in the NHG Psychiatry Residency Programme. The uploaded Postings tab is
-the source of truth for institutions offering each posting in each R-year; the
-institutions below describe the programme overview, not a fixed eligibility list.
+The tables below list the postings, institutions and training durations for
+R1–R5 in the NHG Psychiatry Residency Programme. They give a programme overview.
+For the institutions offering a particular posting in a given R-year, use the
+uploaded Postings tab.
 
-Postings are not fixed to particular calendar months. Scheduling requirements,
-including timing restrictions and progression after LOA, are documented in
-[constraints.md](constraints.md).
+Postings have no fixed calendar months. For scheduling rules, including timing
+restrictions and progression after LOA, see [constraints.md](constraints.md).
 
 ## R1
 
-Complete either General Medicine plus Neurology, or the combined NUH Medicine &
-Neurology posting, followed by Inpatient Psychiatry.
+Complete General Medicine and Neurology as separate postings, or take the
+combined NUH Medicine & Neurology posting. Then complete Inpatient Psychiatry.
 
 | Posting | Institution | Duration | Remarks |
 | --- | --- | --- | --- |
-| General Medicine | TTSH / SGH | 4 months | To be completed in the first 6 months of R1 |
-| Neurology | NNI / SGH | 2 months | To be completed in the first 6 months of R1 |
-| Medicine & Neurology | NUH | 6 months | To be completed in the first 6 months of R1 |
-| Inpatient Psychiatry | IMH / TTSH / CGH / SGH / NUH | 6 months | To be completed in the second 6 months of R1 |
+| General Medicine | TTSH / SGH | 4 months | Complete in the first 6 months of R1 |
+| Neurology | NNI / SGH | 2 months | Complete in the first 6 months of R1 |
+| Medicine & Neurology | NUH | 6 months | Complete in the first 6 months of R1 |
+| Inpatient Psychiatry | IMH / TTSH / CGH / SGH / NUH | 6 months | Complete in the second 6 months of R1 |
 
-In the paired routes, the timetable may show two months of General Medicine,
-two months of Neurology and two more months at the same General Medicine
-institution. This split has been used at TTSH/NNI and SGH/SGH.
+On a paired route, a resident may spend two months in General Medicine, two
+months in Neurology and then return to the original institution for two more
+months of General Medicine. Both TTSH/NNI and SGH/SGH have used this split.
 
 ## R2
 
@@ -51,24 +50,49 @@ institution. This split has been used at TTSH/NNI and SGH/SGH.
 
 ## R5
 
-| Posting | Institution | Duration |
+R5 normally consists of 3 months of Geriatric Psychiatry, 3 months of Child &
+Adolescent Psychiatry and 6 months of electives. The total is 12 months.
+
+| Posting | Institution | Default duration |
 | --- | --- | --- |
-| Geriatric Psychiatry | IMH / CGH / NUH | 3 months |
+| Geriatric Psychiatry | IMH / CGH / NUH / TTSH / SKH | 3 months |
 | Child & Adolescent Psychiatry | IMH / NUH / KKH | 3 months |
-| Child and Geriatric Psychiatry (alternative to both core postings above) | IMH / NUH / NTFGH / CGH | 6 months |
+| Child and Geriatric Psychiatry (replaces both core postings above) | IMH / NUH / NTFGH / CGH | 6 months |
 | Elective | Depends on the selected elective | 6 months |
 
-R5 core requirements may be completed either as the separate three-month
-Geriatric and three-month Child & Adolescent postings, or as one six-month
-**Child and Geriatric Psychiatry** core posting at an institution offering it
-in the Postings tab. The combined posting fulfils both core requirements; it
-is not an elective. The six-month elective requirement still applies.
+Residents can complete the two core postings separately or take one six-month
+Child and Geriatric Psychiatry core posting at an institution listed for it in
+the Postings tab. The combined core gives 3 months of Child credit and 3 months
+of Geriatric credit. On this route, the resident still has 6 elective months to
+complete.
 
-R5 electives normally use one continuous six-month block. An evaluable resident
-request calling for a three-month elective permits two continuous three-month
-blocks instead; one such request permits a free choice of the other eligible
-three-month block. The blocks may use different eligible postings and institutions. Mandatory workbook duration notes restrict each option; a
-fresh four-month plus two-month split is not permitted. Recognised partial
-blocks continue for their remaining months at the same posting and institution,
-even if the original request is unavailable. A completed recognised three-month
-block leaves one three-month block to complete.
+Some six-month electives also fulfil a core requirement. The Postings tab
+identifies the core and the credit it earns. For example, completing 6 months
+of IMH Child and EPIP gives 3 months of Child credit and 3 months of elective
+credit. A resident on the default route then has 3 months of Geriatric
+Psychiatry and 3 months of electives left.
+
+For an elective that earns core credit, both credits are awarded after the
+resident completes all 6 training months in the same posting at the same
+institution. LOA pauses the block. Months completed before leave still count as
+progress towards the six.
+
+A resident can request 6 months of Child or Geriatric Psychiatry. Extending one
+core from 3 to 6 months leaves 3 elective months. A resident who takes 6 months
+of each core completes all 12 months with those two postings. Recognised extended
+core postings from previous years count towards the same totals.
+
+Residents with 6 elective months to complete normally take one continuous
+six-month block. If an eligible request allows a three-month placement, they
+can take two continuous three-month blocks instead. This includes a request
+with a blank period when the posting allows either duration. One request is
+enough. The other block can be any eligible three-month elective, at the same
+or a different institution.
+
+Follow the block lengths and mandatory duration notes in the Postings tab. A
+new six-month elective allocation can’t be split into four months and two months.
+
+A resident who has already started a recognised elective block completes the
+remaining months in the same posting at the same institution, even if the
+original request is unavailable. On a two-block route, completing the first
+three-month block leaves one three-month block to complete.
