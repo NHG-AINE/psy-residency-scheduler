@@ -1,6 +1,6 @@
 import json
 from urllib.parse import quote
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from typing import Literal
@@ -14,13 +14,13 @@ if __package__:
     from .scheduler import DraftCancelled, draft_schedule
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
-    from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
+    from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
     from workbook_export import export_workbook
     from scheduler import DraftCancelled, draft_schedule
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
-    from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook
+    from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 
 app = FastAPI(title="PSY Residency Scheduler API")
 
@@ -50,6 +50,29 @@ class HistoryReviewRequest(BaseModel):
     workbook: dict
     store: ReviewStore
     scope: Literal["history", "timetable"] = "history"
+
+
+class PrepareYearRequest(BaseModel):
+    target_year: int
+    annual_sheets: list[dict]
+    requests: list[dict]
+    postings: dict
+    store: ReviewStore
+
+
+def prepare_year_with_labels(request: PrepareYearRequest):
+    workbook = prepare_year(request.annual_sheets, request.requests, request.postings, request.target_year)
+    return JSONResponse({"workbook": workbook, "labels": evaluate_review(workbook, request.store, "timetable")})
+
+
+@app.post("/api/prepare-year")
+async def prepare_planning_year(request: PrepareYearRequest):
+    try:
+        return await run_in_threadpool(prepare_year_with_labels, request)
+    except WorkbookError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(422, "The workbook data is incomplete. Import the workbook again.") from exc
 
 
 @app.post("/api/history-review")

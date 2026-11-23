@@ -565,6 +565,48 @@ def required_sheet(workbook, plural, singular):
     return workbook[matches[0]]
 
 
+def planning_sheet(years, target_year):
+    if len({s["year"] for s in years}) != len(years):
+        raise WorkbookError("Workbook contains ambiguous duplicate planning years")
+    if not years:
+        raise WorkbookError(
+            "No supported annual worksheets found. Upload a programme workbook with annual worksheets "
+            "whose names start with Jul, twelve dated month headings from July through June, "
+            "and Name, MCR No. and Residency Year headers, plus Requests and Postings worksheets.")
+    if target_year is None:
+        return years[-1]
+    target = next((s for s in years if s["year"] == target_year), None)
+    if target is None:
+        available = ", ".join(f"July {s['year']} - June {s['year'] + 1}" for s in years)
+        raise WorkbookError(f"No July {target_year} - June {target_year + 1} worksheet found. Available years: {available}")
+    return target
+
+
+def prepare_workbook(years, target, requests, postings):
+    """Compute planning-year fields on the supplied import records."""
+    year = target["year"]
+    return attach_intake_slots(review_import({
+        "target_year": year, "target_sheet": target["sheet"],
+        "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
+        "months": target["months"], "residents": target["residents"],
+        "histories": [s for s in years if s["year"] < year], "annual_sheets": years,
+        "requests": requests, "postings": postings, "warnings": [],
+    }))
+
+
+def prepare_year(annual_sheets, requests, postings, target_year):
+    """Prepare a different year without mutating another year's workbook."""
+    years = []
+    for sheet in sorted(annual_sheets, key=lambda s: s["year"]):
+        residents = []
+        for original in sheet["residents"]:
+            resident = dict(original, postings=[dict(posting) for posting in original["postings"]])
+            resident.pop("slot_id", None)
+            residents.append(resident)
+        years.append(dict(sheet, residents=residents))
+    return prepare_workbook(years, planning_sheet(years, target_year), [dict(r) for r in requests], postings)
+
+
 def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
     if len(content) > MAX_UPLOAD_BYTES:
         raise WorkbookError("Workbook exceeds the 10 MB upload limit")
@@ -587,29 +629,13 @@ def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
                                                       for cell in sheet._cells.values())):
                 raise WorkbookError(f"{sheet.title}: worksheet exceeds supported dimensions (10000 rows, 100 columns)")
         years = sorted([yearly_sheet(s) for s in workbook if s.title.lower().startswith("jul")], key=lambda s: s["year"])
-        if len({s["year"] for s in years}) != len(years):
-            raise WorkbookError("Workbook contains ambiguous duplicate planning years")
-        if target_year is None and years:
-            target_year = years[-1]["year"]
-        target = next((s for s in years if s["year"] == target_year), None)
-        if not years:
-            raise WorkbookError(
-                "No supported annual worksheets found. Upload a programme workbook with annual worksheets "
-                "whose names start with Jul, twelve dated month headings from July through June, "
-                "and Name, MCR No. and Residency Year headers, plus Requests and Postings worksheets.")
-        if target is None:
-            available = ", ".join(f"July {s['year']} - June {s['year'] + 1}" for s in years)
-            raise WorkbookError(f"No July {target_year} - June {target_year + 1} worksheet found. Available years: {available}")
+        target = planning_sheet(years, target_year)
         request = required_sheet(workbook, "Requests", "Request")
         request_row, request_columns = header(request, {"name", "mcr no.", "posting request", "period"})
         requests = records(request, request_row, request_columns,
                            {**IDENTITY_FIELDS, "posting_request": "posting request", "period": "period"})
         postings = posting_references(required_sheet(workbook, "Postings", "Posting"))
-        return attach_intake_slots(review_import({"target_year": target_year, "target_sheet": target["sheet"],
-                "available_years": [{"year": s["year"], "sheet": s["sheet"]} for s in years],
-                "months": target["months"], "residents": target["residents"],
-                "histories": [s for s in years if s["year"] < target_year], "annual_sheets": years, "requests": requests,
-                "postings": postings, "warnings": []}, yearly_sheets=years))
+        return prepare_workbook(years, target, requests, postings)
     finally:
         workbook.close()
 
