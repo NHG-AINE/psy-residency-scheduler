@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { prepareDraftEdit, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
+import { draftUndoPreview, prepareDraftEdit, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
 import type { DraftChange, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -95,6 +95,59 @@ function draftHistoryFixture(other?: { sheet: string; row: number }) {
   saved.draft!.data = planned([1, 2, 3, 4], 'feasible')
   return { saved, planned }
 }
+
+test('undo previews a reopened swap with identical labels and preserves the preceding history', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const first = await prepareDraftEdit(saved.draft!, swapA, planned([2, 1, 3, 4]), withoutReplay)
+  saved.draft = await prepareDraftEdit(first, swapB, planned([2, 1, 4, 3]), withoutReplay)
+  const reopened = parseSession(structuredClone(saved))!.draft!
+  const restored = undoDraftEdit(reopened)!
+  for (const current of [reopened, { ...reopened, undoChanges: undefined }]) {
+    const preview = draftUndoPreview(current, restored.data)
+    assert.deepEqual(preview?.positions, [july, august, october, september])
+    assert.deepEqual(preview?.months, [september, october])
+  }
+  assert.deepEqual(restored, first)
+})
+
+test('undo previews every block affected by insertion around leave, including identical adjacent postings', () => {
+  const { saved, planned } = draftHistoryFixture()
+  const november = '2027-11', december = '2027-12', january = '2028-01'
+  const dates = [july, august, september, october, november, december, january]
+  const plan = (starts: (string | undefined)[], status: DraftSchedule['status']) => {
+    const draft = planned([1, 2, 3, 4], status)
+    draft.residents[0].months = dates.map((month, index) => ({
+      month, block_start: starts[index], status: starts[index] ? 'posting' : 'loa', label: starts[index] ? 'Inpatient' : null,
+    }))
+    return draft
+  }
+  const original = plan([july, july, undefined, october, november, november, november], 'feasible')
+  const edited = plan([july, august, undefined, august, august, december, december], 'edited')
+  saved.draft = { ...saved.draft!, undo: [original], data: edited,
+    undoChanges: [{ kind: 'insert', resident, start: july, destination: november, side: 'after' }] }
+  const reverted = undoDraftEdit(saved.draft)!
+  for (const current of [saved.draft, { ...saved.draft, undoChanges: undefined }]) {
+    const preview = draftUndoPreview(current, reverted.data)
+    assert.deepEqual(preview?.positions, [december, december, undefined, july, august, august, august])
+    assert.deepEqual(preview?.months, dates.filter((month) => month !== september))
+  }
+  assert.equal(reverted.data, original)
+})
+
+test('undo previews a label change in place in current and legacy edit history', () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!.data
+  const edited = planned([1, 5, 3, 4])
+  edited.residents[0].months[1].label = 'New label'
+  const current = { ...saved.draft!, undo: [original], data: edited }
+  const change: DraftChange = { kind: 'edit', resident, start: august, posting: 'New label', institution: 'IMH', offering: { sheet: 'Postings', row: 5 } }
+  for (const history of [current, { ...current, undoChanges: [change] }]) {
+    const preview = draftUndoPreview(history, original)
+    assert.equal(preview?.positions, null)
+    assert.deepEqual(preview?.months, [august])
+    assert.equal(preview?.restored[1].label, 'Posting')
+  }
+})
 
 test('cancels a reversed swap across a saved session and rebuilds undo for an independent later swap', async () => {
   const { saved, planned } = draftHistoryFixture()

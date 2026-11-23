@@ -5,9 +5,9 @@ import DraftReview from './DraftReview'
 import DraftSearchLimit from './DraftSearchLimit'
 import DraftTimer from './DraftTimer'
 
-export default function DraftActions({ state, workbook, yearLabel, exporting, onExport, onDiscard, onFind }: {
+export default function DraftActions({ state, workbook, yearLabel, exporting, onExport, onUndo, onDiscard, onFind }: {
   state: DraftState; workbook: Workbook; yearLabel: string; exporting: boolean
-  onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
+  onUndo: () => void; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
 }) {
   const actions = useRef<HTMLDivElement>(null)
   const primary = useRef<HTMLButtonElement>(null)
@@ -37,7 +37,7 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, on
       </button>
     </> : state.draft ? <>
       {!!state.draft.edit_options?.length && <button type="button" className="button button-secondary" disabled={exporting || state.pending || !state.canUndo}
-        onClick={state.undoChange}>Undo last change</button>}
+        data-draft-undo onClick={onUndo}>Undo last change</button>}
       <DraftReview key={workbook.target_year} draft={state.draft} workbook={workbook} yearLabel={yearLabel} onFind={onFind} />
       <button ref={primary} type="button" className="button" disabled={exporting || state.pending} onClick={onExport}>
         {exporting ? 'Exporting…' : 'Export Excel'}

@@ -372,7 +372,8 @@
 .draft-menu button { display: block; width: 100%; min-height: 40px; padding: .5rem .75rem; border-radius: .5rem; text-align: left; font-size: .8125rem; cursor: pointer; }
 .draft-menu button:hover { background: var(--color-surface-strong); }
 .draft-menu button:last-child { color: #9f352e; }
-.draft-edited-label { display: inline-block; margin-top: .25rem; color: var(--color-muted); font-size: .75rem; }
+.timetable-draft-status { display: flex; align-items: center; min-height: 28px; }
+.draft-edited-label { color: var(--color-muted); font-size: .75rem; }
 .draft-edit-controls { margin: 0 1.5rem .75rem; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
 .draft-edit-controls.table-note { padding: 0; }
 .draft-edit-controls summary { width: fit-content; cursor: pointer; }
@@ -385,7 +386,7 @@
 .draft-move-preview { position: absolute; inset: 0; z-index: 1; container-type: inline-size; pointer-events: none; visibility: hidden; }
 .draft-move-preview[data-visible="true"] { visibility: visible; }
 .draft-move-preview .posting-value { position: absolute; top: var(--timetable-cell-padding-block); left: 4px; display: grid; align-content: center;
-  transition: transform 180ms cubic-bezier(.2,.75,.3,1), width 180ms cubic-bezier(.2,.75,.3,1); }
+  transition: transform 180ms cubic-bezier(.2,.75,.3,1), width 180ms cubic-bezier(.2,.75,.3,1), opacity 150ms ease-out; }
 .draft-move-preview .draft-insertion-gap { border: 2px dashed var(--color-focus); }
 .draft-block-button { cursor: grab; }
 .draft-block-button:active:not(:disabled) { cursor: grabbing; }
@@ -499,7 +500,7 @@
 .timing-remaining { border-top: 1px solid #e7e5e4; padding-top: 12px; color: #6e675e; font-size: 12px; }
 .timing-remaining summary { cursor: pointer; padding: 8px 0; }
 .timing-remaining ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.9; }
-@media (max-width: 520px) { .draft-timing-trigger { min-height: 44px; } .draft-timing { padding: 20px; transform-origin: bottom center; } }
+@media (max-width: 520px) { .draft-timing-trigger, .timetable-draft-status { min-height: 44px; } .draft-timing { padding: 20px; transform-origin: bottom center; } }
 @media (prefers-reduced-motion: reduce) { .draft-timing, .draft-timing-trigger { transition: none; transform: none; } .draft-timing:popover-open .timing-bar > span { animation: none; } }
 
 .draft-search-limit { display: flex; align-items: center; flex-shrink: 0; height: 40px; padding-left: 16px; border: 1px solid #d6d3d1; border-radius: 999px; font-size: 12px; font-weight: 400; color: #6e675e; }

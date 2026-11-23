@@ -1,4 +1,4 @@
-import { draftSwapOutcome } from './draft-schedule.ts'
+import { draftInsertion, draftSwapLayout, draftSwapOutcome } from './draft-schedule.ts'
 import type { DraftChange, DraftChangeResult, DraftSchedule } from './draft-schedule.ts'
 import { sameSource } from './workbook.ts'
 import type { Source } from './workbook.ts'
@@ -27,6 +27,73 @@ function assignment(month: Month | undefined) {
   const source = target?.source
   return JSON.stringify([month.month, month.status, month.block_start, month.label, target?.requirement_id,
     target?.institution, target?.category, target?.residency_year, source?.sheet, source?.row, source?.column, source?.kind, source?.slot_id])
+}
+
+function blockAssignment(month: Month) {
+  return assignment({ ...month, month: '', block_start: undefined })
+}
+
+function blockStarts(months: Month[]) {
+  return months.map((month) => month?.status === 'posting' ? month.block_start : undefined)
+}
+
+function reverseLayout(current: Month[], restored: Month[], change: DraftChange | null) {
+  if (current.length !== restored.length || current.some((month, index) =>
+    month?.month !== restored[index]?.month || month?.status !== restored[index]?.status)) return null
+  const currentStarts = blockStarts(current)
+  const restoredStarts = blockStarts(restored)
+  const forward = change?.kind === 'swap' ? draftSwapLayout(restored, change.start, change.destination)
+    : change?.kind === 'insert' ? draftInsertion(restored, change.start, change.destination, change.side)?.blocks : null
+  const from = new Map<string, string>()
+  const used = new Set<string>()
+  const currentBlocks = [...new Set(currentStarts)].filter((start): start is string => !!start)
+  const restoredBlocks = [...new Set(restoredStarts)].filter((start): start is string => !!start)
+  if (currentBlocks.length !== restoredBlocks.length || change?.kind === 'edit') return null
+  if (forward) {
+    for (const [index, start] of forward.entries()) {
+      const currentStart = currentStarts[index]
+      if (!start && !currentStart) continue
+      if (!start || !currentStart || (from.has(start) && from.get(start) !== currentStart)
+        || (!from.has(start) && used.has(currentStart))) return null
+      from.set(start, currentStart); used.add(currentStart)
+    }
+  } else {
+    // Legacy snapshots carry no identity for identical blocks. Prefer a card already at its restored position.
+    const signature = (months: Month[], start: string) => JSON.stringify(
+      months.filter((month) => month?.block_start === start).map(blockAssignment))
+    const signatures = new Map(currentBlocks.map((start) => [start, signature(current, start)]))
+    const matches = new Map(restoredBlocks.map((start) => [start, signature(restored, start)]))
+    for (const [start, target] of matches) {
+      if (signatures.get(start) === target) { from.set(start, start); used.add(start) }
+    }
+    for (const [start, target] of matches) {
+      if (from.has(start)) continue
+      const candidate = currentBlocks.find((key) => !used.has(key) && signatures.get(key) === target)
+      if (!candidate) return null
+      from.set(start, candidate); used.add(candidate)
+    }
+  }
+  const positions = restoredStarts.map((start) => start ? from.get(start) : undefined)
+  if (positions.some((start, index) => {
+    if (!start) return !!restoredStarts[index] || !!currentStarts[index]
+    const at = currentStarts.indexOf(start)
+    return at < 0 || blockAssignment(current[at]) !== blockAssignment(restored[index])
+  })) return null
+  return positions.some((start, index) => start !== currentStarts[index]) ? positions : null
+}
+
+export function draftUndoPreview(saved: SavedDraft, restored: DraftSchedule) {
+  const change = saved.undoChanges?.at(-1) ?? null
+  for (const person of saved.data.residents) {
+    if (!person?.source || !Array.isArray(person.months) || (change && !sameSource(person.source, change.resident))) continue
+    const current = person.months
+    const previous = residentMonths(restored, person.source)
+    const positions = reverseLayout(current, previous, change)
+    const months = current.flatMap((month, index) => month?.block_start &&
+      ((positions && positions[index] !== month.block_start) || assignment(month) !== assignment(previous[index])) ? [month.month] : [])
+    if (months.length) return { resident: person.source, name: person.name, positions, months, restored: previous }
+  }
+  return null
 }
 
 function matchesAssignments(actual: DraftSchedule, expected: DraftSchedule, reversal?: { resident: Source; months: Map<string, Month> }) {

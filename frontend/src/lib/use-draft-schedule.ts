@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { undoDraftEdit } from './draft-edit-history'
 import { canGenerateDraft, cancelDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
 import type { DraftResult } from './draft-schedule'
 import type { SavedDraft } from './workbook-session'
@@ -77,13 +76,6 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
     updateResult({ saved, failure: null })
     return true
   }, [updateResult])
-  const undoChange = useCallback(() => {
-    if (active.current) return false
-    const saved = undoDraftEdit(resultRef.current.saved)
-    if (!saved) return false
-    updateResult({ saved, failure: null })
-    return true
-  }, [updateResult])
   const canGenerate = canGenerateDraft(workbook, selectedYear, importing)
   async function generate() {
     if (!workbook || !canGenerate || importing || active.current) return
@@ -111,7 +103,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   }
   const visible = canGenerate && result.saved?.year === workbook?.target_year ? result.saved : null
   const onOriginYear = canGenerate && originYear === selectedYear
-  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, undoChange, canUndo: !!visible?.undo?.length,
+  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
     elapsedSeconds: visible?.elapsedSeconds ?? null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>
