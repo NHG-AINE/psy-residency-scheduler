@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { prepareDraftEdit } from './draft-edit-history'
-import { draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
+import { draftDropEdges, draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
 import type { DraftState } from './use-draft-schedule'
@@ -42,6 +42,7 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   const [editor, setEditor] = useState<DraftBlock | null>(null)
   const [move, setMove] = useState<{ from: DraftBlock; keyboard: boolean } | null>(null)
   const moving = useRef(move)
+  const dropEdges = useRef(new Map<string, ReturnType<typeof draftDropEdges>>())
   const target = useRef<DraftDestination | null>(null)
   const [destination, setDestination] = useState<DraftDestination | null>(null)
   const [released, setReleased] = useState<ReleasedMove | null>(null)
@@ -88,9 +89,21 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     if (disabled) return
     if (proposed) setReturning(proposed)
     cancelMove()
+    dropEdges.current.clear()
     const next = { from, keyboard }
     moving.current = next; setMove(next)
     if (keyboard) announce(`Picked up ${from.label}. Use the arrow keys to choose a swap, Shift and an arrow key to insert, Enter to apply, or Escape to cancel.`)
+  }
+
+  function pointerDropEdges(next: DraftCell): ReturnType<typeof draftDropEdges> {
+    const from = moving.current?.from
+    if (!from || !sameSource(from.source, next.source) || !next.months.length || from.months.length !== next.months.length) return [0.3, 0.3]
+    const cached = dropEdges.current.get(next.start)
+    if (cached) return cached
+    const row = draft?.residents.find((person) => sameSource(person.source, from.source))
+    const edges = draftDropEdges(row?.months ?? [], from.start, next.start)
+    dropEdges.current.set(next.start, edges)
+    return edges
   }
 
   function cancelMove() {
@@ -236,5 +249,5 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   }
 
   return { editor, openEditor, closeEditor, move, moving, destination, released, proposed, returning, finishReturn, preview, checking, announcement,
-    clearPreview, check, startMove, selectDestination, apply, drop, dismissDrop, confirmDrop, finishDrag, endKeyboardMove, cancelForUndo, announceUndo }
+    clearPreview, check, startMove, pointerDropEdges, selectDestination, apply, drop, dismissDrop, confirmDrop, finishDrag, endKeyboardMove, cancelForUndo, announceUndo }
 }

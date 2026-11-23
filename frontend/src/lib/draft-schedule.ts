@@ -87,6 +87,16 @@ export function draftInsertion(months: DraftSchedule['residents'][number]['month
   return { blocks, changed }
 }
 
+export function draftDropEdges(months: DraftSchedule['residents'][number]['months'], start: string, destination: string): [number, number] {
+  if (draftSwapLayout(months, start, destination)) {
+    const nearSide = start < destination ? 'before' : 'after'
+    if (draftInsertion(months, start, destination, nearSide)?.changed === false) {
+      return nearSide === 'before' ? [0.1, 0.3] : [0.3, 0.1]
+    }
+  }
+  return [0.3, 0.3]
+}
+
 export function draftPreviewIssuesForRow(issues: DraftChangeIssue[], resident: Source, from?: Source, destination?: Source) {
   if (!from || sameSource(resident, from)) return issues
   return sameSource(resident, destination) ? issues.filter((issue) => issue.code === 'invalid_destination') : []

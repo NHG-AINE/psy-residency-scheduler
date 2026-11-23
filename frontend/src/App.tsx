@@ -38,14 +38,6 @@ const show = (value: string | null | undefined) => value || '—'
 const source = (value: Source) => <small className="source">{sourceLabel(value)}</small>
 const linked = sameSource
 
-function dragDestination(event: DragEvent<HTMLTableCellElement>, cell: DraftCell): DraftDestination {
-  if (!cell.months.length) return cell
-  const { left, right, width } = event.currentTarget.getBoundingClientRect()
-  const edge = width * 0.3
-  const side = event.clientX - left <= edge ? 'before' : right - event.clientX <= edge ? 'after' : undefined
-  return { ...cell, side }
-}
-
 function RequestIndicatorIcon({ status }: { status: RequestStatus }) {
   return <svg viewBox="0 0 16 16" aria-hidden="true">{status === 'met'
     ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" />
@@ -338,6 +330,14 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       if (motion.matches || !row.isConnected) finish()
       else setUndo(preview)
     }, finish)
+  }
+
+  function dragDestination(event: DragEvent<HTMLTableCellElement>, cell: DraftCell): DraftDestination {
+    if (!cell.months.length) return cell
+    const { left, right, width } = event.currentTarget.getBoundingClientRect()
+    const [before, after] = editing.pointerDropEdges(cell)
+    const side = event.clientX - left <= width * before ? 'before' : right - event.clientX <= width * after ? 'after' : undefined
+    return { ...cell, side }
   }
 
   function dragOver(event: DragEvent<HTMLTableCellElement>, cell: DraftCell) {
