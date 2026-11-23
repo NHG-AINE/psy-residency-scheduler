@@ -18,7 +18,9 @@ function positionPanel(panel: HTMLElement, anchor: HTMLElement, centered = false
 }
 
 function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
-  return <ul>
+  if (!issues.length) return null
+  if (issues.length === 1) return <p className={issues[0].severity}>{issues[0].message}</p>
+  return <ul className="draft-issue-list">
     {issues.map((issue, index) => <li key={`${issue.code}-${index}`} className={issue.severity}>{issue.message}</li>)}
   </ul>
 }
@@ -31,7 +33,7 @@ export function DraftSwapFeedback({ anchor, checking, preview, onApply, onDismis
   const dismissButton = useRef<HTMLButtonElement>(null)
   const issues = preview?.issues ?? []
   const blocked = !checking && (!preview || draftSwapOutcome(preview) !== 'warning')
-  const title = checking ? 'Checking the swap…' : blocked ? 'Swap blocked' : 'Review swap warning'
+  const title = checking ? 'Checking the swap…' : blocked ? 'Swap blocked' : issues.length > 1 ? 'Review swap warnings' : 'Review swap warning'
   useLayoutEffect(() => {
     const popup = panel.current
     if (!popup || !anchor.isConnected) return
@@ -153,7 +155,7 @@ export function DraftBlockReasons({ issues, label, descriptionId, show }: { issu
   const anchor = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const blocked = issues.some((issue) => issue.severity === 'hard')
-  const title = blocked ? 'Change blocked' : 'Draft warning'
+  const title = blocked ? 'Change blocked' : issues.length > 1 ? 'Draft warnings' : 'Draft warning'
   const keepOpen = useRef(false)
   function open() {
     const popup = panel.current
