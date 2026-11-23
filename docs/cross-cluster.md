@@ -10,62 +10,61 @@
 
 ## Hard requirement
 
-- Each resident must have a posting in each of NHG, SHS and NUHS at least
-  once during R1-R4, by the end of R4.
-- Use recognised posting history to track clusters already visited. A future
-  assignment contributes to planned coverage, not completed historical coverage.
-- Multiple institutions in the same cluster still count as one cluster visited.
-- This is a cumulative R1-R4 requirement, not a requirement to visit all three
-  clusters in every year. R5 postings are outside this requirement's window.
-- Example: IMH, SGH and AH postings during R1-R4 cover NHG, SHS and NUHS.
+By the end of R4, each resident must have trained in all three clusters: NHG,
+SHS and NUHS. Residents can complete this requirement across R1–R4. R5 postings
+do not count.
+
+Recognised posting history shows which clusters a resident has visited. The
+draft shows which clusters their planned postings would cover.
+
+For example, IMH, SGH and AH cover all three clusters. IMH and TTSH together
+cover only NHG.
 
 ## Planning preferences
 
-- Prefer an unvisited cluster when choosing between otherwise suitable postings,
-  while respecting hard constraints. Do not require all clusters to be completed
-  in R1 or send everyone to one institution solely to gain a new cluster.
-- For R1 Inpatient Psychiatry after the first-phase route:
-  - TTSH/NNI: prefer spreading residents across SHS and NUHS institutions.
-  - SGH: prefer institutions outside SHS, in NHG or NUHS.
-  - NUH: prefer institutions outside NUHS, in NHG or SHS.
-- Route-to-inpatient preferences rank below the weighted IMH
-  allocation target and R3 cluster exposure, and above R1-R2 cluster exposure.
-  Peer grouping ranks last.
-  Follow the full [draft priority order](constraints.md#draft-preference-priority).
-- These are preferences, not mandatory route-to-inpatient pairings. Repeating
-  a cluster is allowed provided the cumulative R1-R4 requirement is met.
+In R1 and R2, a posting in a cluster the resident has yet to visit is a low
+priority. Residents may return to a cluster and gain the remaining exposure
+later. LOA and posting eligibility still apply.
 
-## Urgency as residents progress
+For R1 Inpatient Psychiatry, the preferred clusters depend on where the resident
+trained in Medicine and Neurology:
 
-- In R1-R2, treat new cluster exposure as a low-priority preference. Residents
-  may repeat a cluster while they still have suitable opportunities to complete
-  the requirement before the end of R4.
-- In R3, prioritise missing cluster exposure after weighted
-  institution allocation, and before R1 route-to-inpatient preferences.
-- By the end of R4, recognised history and planned qualifying postings must
-  cover all three clusters. If no valid schedule can meet this requirement,
-  report the missing cluster and the scheduling blocker instead of silently
-  relaxing the requirement.
-- When recognised history shows all R1-R4 postings are complete, report missing
-  clusters as a historical warning and plan any remaining R5 training. The
-  coverage gap remains open for review and R5 postings cannot fill it.
-- Consider remaining eligible postings, not just the recorded R-year. Do not
-  defer a missing cluster when doing so would leave no suitable opportunity
-  before R4 completion; secure that exposure earlier. Do not assume future
-  availability when it is unknown; flag it for review. For an incomplete R4,
-  remaining eligible R1-R4 posting choices may establish structural feasibility.
-  Choices beyond the draft horizon do not count as planned exposure or reserve
-  capacity, and future availability remains unknown.
-- These priorities never override hard constraints such as LOA or
-  posting eligibility. Planned exposure is not completed historical credit.
+| R1 Medicine and Neurology route | Preferred inpatient clusters |
+| --- | --- |
+| TTSH/NNI | SHS or NUHS |
+| SGH | NHG or NUHS |
+| NUH | NHG or SHS |
+
+A resident can take an eligible inpatient posting outside these preferences.
+
+When the draft includes R3 training, gaining a missing cluster takes higher
+priority. The scheduler considers institution allocation first, then R3 cluster
+exposure, then the R1 inpatient destination, then R1–R2 cluster exposure. Peer
+grouping comes last. See the full [draft priority order](constraints.md#draft-preference-priority).
+
+## By the end of R4
+
+When planning through R4, the scheduler checks whether the resident’s remaining
+eligible postings can cover every missing cluster by the end of R4. If this
+year is the last opportunity to visit a cluster, the draft must include it.
+If no eligible schedule can meet the requirement, the scheduler reports the
+gap for review.
+
+If the resident still has R1–R4 training left after the planning year, an
+eligible later posting can show how they could meet the requirement. Only
+postings in the current draft count towards its planned coverage. A later
+option does not reserve a place, and its availability is unknown.
+
+If the resident has already completed R1–R4 with a cluster missing, the
+scheduler flags the gap and continues planning R5. The gap stays open for
+review because an R5 posting cannot fill it.
 
 ## NNI special case
 
-- NNI belongs to SHS and NNI Neurology counts towards SHS cluster credit.
-- In R1, NNI Neurology remains paired with TTSH General Medicine because of
-  their proximity. This pairing does not change NNI's cluster.
-- SHS Inpatient Psychiatry remains a preferred option after TTSH/NNI for
-  further exposure, alongside NUHS. NNI already provides SHS credit; a second
-  SHS posting is not required to award that credit.
-- A resident who completes TTSH General Medicine and NNI Neurology has NHG
-  and SHS coverage, and still needs NUHS coverage by the end of R4.
+NNI belongs to SHS. In R1, residents take NNI Neurology alongside TTSH General
+Medicine because the two institutions are close to each other. Completing the
+pair gives the resident NHG credit from TTSH and SHS credit from NNI.
+
+Either SHS or NUHS is a preferred destination for the next inpatient posting.
+Another SHS posting gives further exposure there. A NUHS posting covers the
+third cluster.
