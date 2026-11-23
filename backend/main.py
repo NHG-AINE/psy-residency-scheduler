@@ -12,14 +12,14 @@ from starlette.concurrency import run_in_threadpool
 if __package__:
     from .workbook_export import export_workbook
     from .scheduler import DraftCancelled, draft_schedule
-    from .draft_edits import validate_draft_change
+    from .draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
     from workbook_export import export_workbook
     from scheduler import DraftCancelled, draft_schedule
-    from draft_edits import validate_draft_change
+    from draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
@@ -154,6 +154,7 @@ class DraftInsert(DraftBlockChange):
 class DraftChangeRequest(RequirementLedgerRequest):
     draft: dict
     change: Annotated[DraftEdit | DraftSwap | DraftInsert, Field(discriminator="kind")]
+    baseline_residents: list[dict] | None = None
 
 
 @app.post("/api/draft/validate-change")
@@ -161,7 +162,10 @@ async def validate_change(request: DraftChangeRequest):
     try:
         if request.workbook["target_year"] != max(item["year"] for item in request.workbook["available_years"]):
             raise ValueError("Edit postings in the latest planning year of this workbook.")
-        return await run_in_threadpool(validate_draft_change, request.workbook, request.store, request.draft, request.change.model_dump())
+        return await run_in_threadpool(validate_draft_change, request.workbook, request.store, request.draft,
+                                       request.change.model_dump(), request.baseline_residents)
+    except DraftWarningBaselineRequired as exc:
+        raise HTTPException(422, {"code": "draft_warning_baseline_required", "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, IndexError, TypeError, AttributeError) as exc:

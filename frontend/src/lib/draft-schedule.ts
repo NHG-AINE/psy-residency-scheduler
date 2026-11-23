@@ -197,14 +197,25 @@ export async function generateDraft(workbook: Workbook, store: ReviewStore, sign
   return data as DraftSchedule
 }
 
-export async function validateDraftChange(workbook: Workbook, store: ReviewStore, draft: DraftSchedule, change: DraftChange, signal: AbortSignal): Promise<DraftChangeResult> {
-  const response = await fetch('/api/draft/validate-change', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workbook, store, draft, change }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-  })
-  const data = await response.json().catch(() => null)
+export async function validateDraftChange(workbook: Workbook, store: ReviewStore, draft: DraftSchedule, change: DraftChange,
+  signal: AbortSignal, original?: DraftSchedule | null): Promise<DraftChangeResult> {
+  async function check(baseline?: DraftSchedule) {
+    const baseline_residents = baseline?.residents.map(({ source, route, months, carryforward }) => ({ source, route, months, carryforward }))
+    const response = await fetch('/api/draft/validate-change', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workbook, store, draft, change, baseline_residents }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(baseline ? 60_000 : 40_000)]),
+    })
+    return { response, data: await response.json().catch(() => null) }
+  }
+  let { response, data } = await check()
+  if (response.status === 422 && data?.detail?.code === 'draft_warning_baseline_required'
+    && original && original !== draft && !signal.aborted) {
+    ({ response, data } = await check(original))
+  }
   if (!response.ok || !Array.isArray(data?.issues) || (data.draft !== null && (data.draft?.status !== 'edited' || !Array.isArray(data.draft.residents)))) {
-    throw new Error(typeof data?.detail === 'string' ? data.detail : 'Could not check this change. Try again.')
+    const message = typeof data?.detail === 'string' ? data.detail : data?.detail?.message
+    throw new Error(typeof message === 'string' ? message : 'Could not check this change. Try again.')
   }
   return data
 }
