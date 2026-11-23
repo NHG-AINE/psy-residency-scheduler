@@ -2,47 +2,92 @@
 
 ## Scope
 
-- Recognize catalogue posting labels, not completed training requirements.
-- Preserve original labels, recorded R-years, monthly statuses and workbook sources.
-- Do not calculate duration credit, completion, progression or outstanding requirements.
+History review matches the posting names in the workbook to the Postings catalogue.
+It covers all annual sheets in the upload, whichever planning year is selected on the timetable.
+
+Each entry keeps its original wording, recorded R-year, monthly status and source cells.
+The requirements ledger handles training credit, completion and outstanding requirements.
 
 ## Automatic matching rules
 
-- Match exact names, ignoring capitalization and extra spaces; handle `(Elective)` and `(Remediation)` separately from the name.
-- Check all recorded R-years together: `R2,R3` considers both years.
-- With `(Elective)`, consider electives only, regardless of capitalization.
-- Otherwise, prefer a unique core candidate; if none exists, allow a unique elective candidate.
-- If no exact candidate qualifies in the recorded years, check earlier years below the highest recorded R-year. Never use this fallback to bypass ambiguity in the recorded years.
-- For remediation, check earlier years directly. `R2,R3` includes R1 and R2; R1 has no earlier year. Apply the same elective-marker and core-precedence rules.
-- Select only one eligible candidate. Multiple remaining candidates, missing recorded years, or unknown/mixed catalogue years require review. Never automatically select a higher-year posting.
-- Keep other catalogue candidates available as alternatives.
-- Identity issues alone do not block label recognition; they remain in import Issues.
-- Respect valid saved decisions. Stale, conflicting or unsafe resident-specific decisions remain unapplied and need review.
-- Different wording or damaged text requires an approved mapping. No substring or optional trailing “Psychiatry” matching is implemented.
-- Store approved mappings as review data, not in this document or application code.
-- A missing optional elective catalogue provides no elective candidates but does not fail import.
+Compare the full posting name, ignoring capitalisation and extra spaces. Treat `&` and
+`and` as equivalent. Ignore `(North)`, `(South)`, `(East)` and `(West)` when comparing
+names. For example, `IMH General Psychiatry (East)` matches `IMH General Psychiatry`.
+In `IMH Adult Neurodevelopmental Disorders Service (ANDS)`, `(ANDS)` remains part of the name.
+
+Read `(Elective)` and `(Remediation)` separately because they affect which postings are
+eligible. Other wording differences or damaged text need an approved mapping. A partial
+name match or an extra trailing `Psychiatry` is insufficient.
+
+1. If the label includes `(Elective)`, consider only electives. Otherwise, keep both
+   core and elective candidates.
+2. Check all recorded R-years together. For `R2,R3`, an exact match in either year is
+   in scope. If neither year has a match, check years below the highest recorded year.
+   If the recorded years already have competing matches after applying the category
+   preference below, send the entry for review.
+3. For remediation, start with the earlier years directly. A resident recorded as
+   `R2,R3` can match R1 or R2. A resident recorded only as R1 has no earlier year to check.
+4. Within the eligible years, choose the sole core match if there is one. If there
+   are no core matches, choose the sole elective match. Multiple eligible core
+   matches still need review, even if there is only one elective.
+5. Leave the entry for review if the recorded R-year is missing or if a matching
+   catalogue entry has an unknown or mixed R-year. Never automatically select a
+   posting above the highest recorded year. Keep the other exact candidates visible for review.
+
+If the catalogue contains no elective entries, the matcher has no elective candidates.
+The workbook still needs a `Postings` or `Posting` sheet.
 
 ## Review table and decisions
 
-- Show original labels, months, recorded years, candidates and review reasons.
-- Group consecutive months only when MCR, identity, label and recorded-year context agree, including across tabs. Keep unsafe identities and separated periods apart; exclude LOA and blanks.
-- **Needs review:** unresolved labels and invalid saved decisions only.
-- **All entries:** also show automatic and manually confirmed labels, including open requirement years and recognised remediation.
-- A valid label match leaves Needs review even if its requirement year has not been manually confirmed.
-- Automatic matching does not save a decision, assign a requirement year or award credit.
-- **Resident decision:** confirms a label for that resident and those months. Requirement year is optional, separate and must fit the catalogue entry; it never changes the recorded R-year.
-- **Shared mapping:** applies to the original label, recorded-year context and core/elective category. It confirms wording only, not other residents’ requirement years.
-- An explicit elective marker requires an elective target for manual decisions too.
-- Identity conflicts block resident-specific decisions and editor actions, but not shared wording mappings. Invalid saved resident decisions retain a visible reason.
-- Recognised remediation can count in the requirements ledger under the usual identity, requirement-year, institution and duration rules. There is no separate remediation credit approval step; label recognition alone does not establish completion.
+- Show the original posting, months, recorded R-year, source cells, catalogue
+  candidates and reason for review.
+- Group consecutive months when the resident's MCR, name, recorded R-year and original
+  posting text agree. A posting can continue from June on one sheet to July on the next.
+  A blank month, LOA or a change of label breaks the run. Where identity is uncertain,
+  keep records from different workbook rows separate.
+- **Needs review** shows unresolved labels and entries with invalid saved decisions.
+  Once a label is matched, an unconfirmed requirement year alone does not keep it in this list.
+- **All entries** also includes automatic matches, manually confirmed labels and recognised remediation.
+
+Choose **This resident and these months** to confirm a posting for one resident and
+period. You may also confirm the requirement year if it fits the catalogue entry.
+The workbook's recorded R-year stays as entered.
+
+Choose **Shared label mapping** to reuse a wording decision for the same original
+label, recorded-year context and core or elective category. Each resident's requirement
+year is assessed separately. An explicit `(Elective)` label must map to an elective
+under either option. Store approved mappings as review data.
+
+Identity issues appear in Issues and do not prevent label recognition. If the resident's
+identity is uncertain, the editor still allows a shared mapping. Resolve the identity
+issue before saving a resident-specific decision.
+
+Valid saved decisions take precedence over automatic matches. Stale, conflicting or
+unsafe decisions stay unapplied, with the reason visible for review. An automatic match
+does not create a saved decision or confirm a requirement year. Recognised remediation
+can count in the ledger under the usual identity, year, institution and duration rules.
+It needs no separate remediation approval.
 
 ## Saving and reuploading
 
-- Save decisions in localStorage for the current browser and site. There is no server storage or shared-user synchronization.
-- Refreshing clears the uploaded workbook, not saved decisions. Reuploading reapplies compatible decisions; workbooks are not stored.
-- Export/import review JSON for backup or transfer. It contains resident identifiers and history, so handle it like the workbook.
-- Identify resident decisions by normalized MCR, exact labels and calendar months; check name and recorded-year context separately.
-- Identify catalogue targets by category, year and full label; also check relevant notes, duration and limits. Row positions are not identifiers, so reordering rows or moving sheets preserves compatible decisions.
-- Changed context/catalogue content, missing targets and conflicts need review. Absent periods stay saved for later imports. Existing decisions made for a shorter cutoff-period may overlap a newly combined full run; keep them unapplied with a changed-period reason until reviewed. Never broaden them automatically.
-- Validate JSON version, fields and scopes before saving. Conflicting scopes reject the whole import; remove the existing decision before importing its replacement. The inline editor can replace its own scope.
-- Storage failures preserve previous decisions and keep the editor open. Unreadable saved data blocks saving until the user explicitly starts new review data.
+- Review decisions are saved in this browser for this site. Refreshing the page can
+  restore the uploaded workbook and generated draft from the saved workbook session.
+  Uploading a workbook again reapplies compatible review decisions.
+- To back up decisions or move them to another browser, use **Export review JSON**
+  and **Import review JSON**. Decisions do not sync between users. The JSON contains
+  resident identifiers and posting history, so handle it like the workbook.
+- A resident decision is tied to the MCR, original labels and calendar months. The
+  app also checks the name and recorded R-year. Catalogue entries are identified
+  by category, year and full label. The app checks their duration, capacity, remarks,
+  allowed block lengths and credit rules. Moving an otherwise identical entry to
+  another row or sheet preserves the match.
+- For example, suppose you confirmed January–March and a later upload shows the
+  posting continued through June. The app flags the changed period for review. It
+  does not extend your decision to April–June. If the period is absent from an
+  upload, the decision stays saved for a later one.
+- The app checks the JSON version, fields and decision scopes before importing. If
+  an imported decision conflicts with an existing one, the whole import is rejected.
+  Remove the existing decision before importing its replacement, or use the inline
+  editor to replace that decision directly.
+- If saving fails, the editor stays open and existing decisions are preserved. If
+  saved data is unreadable, saving stays blocked until you choose to start new review data.
