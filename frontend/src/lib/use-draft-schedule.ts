@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { canGenerateDraft, cancelDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
-import type { DraftResult } from './draft-schedule'
+import type { DraftResult, DraftSchedule } from './draft-schedule'
 import type { SavedDraft } from './workbook-session'
 import { readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './history-review'
 import type { Workbook } from './workbook'
@@ -71,6 +71,19 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
     } catch { setNotice('Review decisions could not be checked. The saved workbook was restored without its draft.') }
   }, [updateResult])
   const getSavedResult = useCallback(() => resultRef.current.saved, [])
+  const applyChange = useCallback((previous: DraftSchedule, data: DraftSchedule) => {
+    const saved = resultRef.current.saved
+    if (!saved || saved.data !== previous || active.current || data.status !== 'edited') return false
+    updateResult({ saved: { ...saved, data, undo: [...(saved.undo ?? []), previous] }, failure: null })
+    return true
+  }, [updateResult])
+  const undoChange = useCallback(() => {
+    const saved = resultRef.current.saved
+    const previous = saved?.undo?.at(-1)
+    if (!saved || !previous || active.current) return false
+    updateResult({ saved: { ...saved, data: previous, undo: saved.undo?.slice(0, -1) }, failure: null })
+    return true
+  }, [updateResult])
   const canGenerate = canGenerateDraft(workbook, selectedYear, importing)
   async function generate() {
     if (!workbook || !canGenerate || importing || active.current) return
@@ -98,7 +111,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   }
   const visible = canGenerate && result.saved?.year === workbook?.target_year ? result.saved : null
   const onOriginYear = canGenerate && originYear === selectedYear
-  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null,
+  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, undoChange, canUndo: !!visible?.undo?.length,
     elapsedSeconds: visible?.elapsedSeconds ?? null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>

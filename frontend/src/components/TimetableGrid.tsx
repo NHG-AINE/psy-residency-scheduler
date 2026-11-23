@@ -16,6 +16,7 @@ export default function TimetableGrid({ children }: { children: ReactNode }) {
     const labels = grid.current?.querySelectorAll('.posting-name')
     if (!labels?.length) return
     function sync(label: Element) {
+      if (label.parentElement instanceof HTMLButtonElement) return
       if (isTruncated(label)) label.parentElement?.setAttribute('tabindex', '0')
       else label.parentElement?.removeAttribute('tabindex')
     }
@@ -78,7 +79,9 @@ export default function TimetableGrid({ children }: { children: ReactNode }) {
   function postingAt(target: EventTarget | null) {
     if (!(target instanceof Element)) return null
     if (popup.current?.contains(target)) return active
-    return target.closest('button, [popover]') ? null : target.closest<HTMLElement>('[data-posting-tooltip]')
+    const button = target.closest<HTMLButtonElement>('button')
+    if (button) return button.hasAttribute('data-posting-tooltip') ? button : null
+    return target.closest<HTMLElement>('[data-posting-tooltip]')
   }
 
   return <div className="table-scroll timetable" ref={grid}
@@ -93,10 +96,10 @@ export default function TimetableGrid({ children }: { children: ReactNode }) {
       if (event.pointerType !== 'touch' && postingAt(event.target) !== postingAt(event.relatedTarget)) setHovered(null)
     }}
     onFocus={(event) => {
-      if (event.target.matches('[data-posting-tooltip][tabindex]:focus-visible')) setFocused(event.target)
+      if (event.target.matches('[data-posting-tooltip]:focus-visible')) setFocused(event.target)
     }}
     onBlur={(event) => { if (event.target === focused) setFocused(null) }}
-    onClick={() => setHovered(null)}>
+    onClick={() => { setHovered(null); setFocused(null) }}>
     {children}
     {active && <div className="posting-tooltip" ref={popup} popover="manual" role="tooltip" aria-hidden="true" />}
   </div>

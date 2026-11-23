@@ -36,6 +36,8 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, on
         {state.cancelling ? 'Cancelling…' : 'Cancel generation'}
       </button>
     </> : state.draft ? <>
+      {!!state.draft.edit_options?.length && <button type="button" className="button button-secondary" disabled={exporting || state.pending || !state.canUndo}
+        onClick={state.undoChange}>Undo last change</button>}
       <DraftReview key={workbook.target_year} draft={state.draft} workbook={workbook} yearLabel={yearLabel} onFind={onFind} />
       <button ref={primary} type="button" className="button" disabled={exporting || state.pending} onClick={onExport}>
         {exporting ? 'Exporting…' : 'Export Excel'}
