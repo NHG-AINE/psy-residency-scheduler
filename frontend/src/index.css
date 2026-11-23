@@ -398,6 +398,8 @@
   box-shadow: 0 5px 18px #29252424; font-size: .8125rem; line-height: 1.5; text-align: left; color: #67436b; pointer-events: none; }
 .draft-block-reason.hard { color: #9f352e; }
 .draft-block-reason strong { display: block; margin-bottom: .25rem; }
+.draft-issue-list { list-style: disc outside; padding-inline-start: 1rem; }
+.draft-issue-list li + li { margin-top: .5rem; }
 .draft-block-editor { position: fixed; inset: auto; margin: 0; width: min(24rem, calc(100vw - 1.5rem)); max-height: calc(100dvh - 1.5rem);
   overflow: auto; padding: 1.125rem; border: 1px solid var(--color-hairline); border-radius: .875rem; background: var(--color-surface);
   color: var(--color-primary); box-shadow: 0 10px 34px #29252428; font-size: .875rem; line-height: 1.5; }

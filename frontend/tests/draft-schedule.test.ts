@@ -410,8 +410,10 @@ test('released swaps wait, require confirmation for warnings, and show blocking 
     assert.doesNotMatch(checking, /Apply swap/)
     const confirmation = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: warning }))
     assert.match(confirmation, /role="dialog".*aria-describedby=.*exceed capacity.*Cancel.*Apply swap/)
+    assert.match(confirmation, /<p[^>]*>The swap would exceed capacity\.<\/p>/)
     const rejection = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: blocked }))
     assert.match(rejection, /Swap blocked.*posting must come first.*Dismiss/)
+    assert.match(rejection, /<ul[^>]*><li[^>]*>The swap would exceed capacity\.<\/li><li[^>]*>The posting must come first\.<\/li><\/ul>/)
     assert.doesNotMatch(rejection, /Apply swap/)
   } finally {
     await vite.close()
