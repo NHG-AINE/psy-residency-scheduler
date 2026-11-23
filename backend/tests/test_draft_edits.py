@@ -95,6 +95,62 @@ class DraftEditTests(unittest.TestCase):
         self.assertIsNone(rejected["draft"])
         self.assertIn("NNI Neurology", rejected["issues"][0]["message"])
 
+    def test_r1_split_medicine_blocks_stay_editable_after_each_swap(self):
+        book = r1_book(3)
+        book["postings"]["core"] = [row for row in book["postings"]["core"] if row["posting"] not in {
+            "TTSH General Medicine", "NNI Neurology", "NUH Medicine & Neurology"}]
+        medicine, neurology = "SGH General Medicine", "SGH Neurology"
+        for row in book["postings"]["core"]:
+            if row["posting"] == medicine:
+                row.update(max="2", allowed_block_lengths=[2, 4], fulfils_requirements=["General Medicine"],
+                           additional_requirement=None, additional_credit_months=None)
+            if row["posting"] == neurology:
+                row["max"] = "1"
+        for resident in book["residents"]:
+            resident["postings"][3].update(status="loa", value="LOA")
+
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        self.assertEqual(draft["capacity_overflows"], [])
+        # Capacity forces the three schedules to cover each valid Neurology window.
+        index = next(i for i, resident in enumerate(draft["residents"]) if resident["months"][2]["label"] == neurology)
+        original = draft["residents"][index]
+        other_index = next(i for i in range(3) if i != index)
+        other = draft["residents"][other_index]
+        active = [month for month in original["months"][:7] if month["status"] == "posting"]
+        first, middle, last = (month["month"] for month in active[::2])
+        starts = [first, first, middle, middle, last, last]
+        self.assertEqual([month["block_start"] for month in active], starts)
+        self.assertEqual(len({month["block_start"] for month in other["months"] if month["label"] == medicine}), 1)
+
+        def apply(current, change):
+            result = validate_draft_change(book, STORE, json.loads(json.dumps(current)), change)
+            self.assertIsNotNone(result["draft"], result["issues"])
+            return result["draft"]
+
+        for start, destination, labels in (
+            (first, middle, [neurology, medicine, medicine]),
+            (middle, last, [medicine, medicine, neurology]),
+        ):
+            with self.subTest(start=start, destination=destination):
+                swap = {"kind": "swap", "resident": original["source"], "start": start, "destination": destination}
+                swapped = apply(draft, swap)
+                edited = swapped["residents"][index]
+                head = [month for month in edited["months"][:7] if month["status"] == "posting"]
+                self.assertEqual([month["label"] for month in head], [label for label in labels for _ in range(2)])
+                self.assertEqual([month["block_start"] for month in head], starts)
+                self.assertEqual(edited["months"][3], original["months"][3])
+                self.assertEqual(swapped["residents"][other_index]["months"], other["months"])
+
+                inpatient = other["months"][7]
+                option = next(o for o in draft["edit_options"]
+                              if o["requirement_id"] == "r1.inpatient_psychiatry" and o["label"] != inpatient["label"])
+                changed_other = apply(swapped, {"kind": "edit", "resident": other["source"], "start": inpatient["block_start"],
+                    "posting": option["posting"], "institution": option["institution"], "offering": option["source"]})
+                self.assertEqual(changed_other["residents"][index]["months"], edited["months"])
+                reversed_draft = apply(changed_other, {**swap, "start": destination, "destination": start})
+                self.assertEqual(reversed_draft["residents"][index]["months"], original["months"])
+                self.assertEqual(reversed_draft["residents"][other_index]["months"], changed_other["residents"][other_index]["months"])
+
     def test_swap_r5_shared_credit_and_recalculate_the_request_through_api(self):
         book = combined_book()
         source = book["residents"][0]["source"]

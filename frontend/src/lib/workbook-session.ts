@@ -1,9 +1,37 @@
 import type { Workbook } from './workbook.ts'
-import { isWorkbook, workbookError } from './workbook.ts'
+import { isWorkbook, sameSource, workbookError } from './workbook.ts'
 import type { DraftSchedule } from './draft-schedule.ts'
 
 export type SavedDraft = { year: number; data: DraftSchedule; elapsedSeconds: number; reviewSignature: string; undo?: DraftSchedule[] }
 export type WorkbookSession = { version: 1; file: File; fileName: string; lastModified: number; workbook: Workbook; draft: SavedDraft | null }
+
+function restoreSplitMedicine(draft: DraftSchedule, previous: DraftSchedule | undefined): DraftSchedule {
+  if (draft.status !== 'edited' || !previous) return draft
+  const medicine = 'r1.general_medicine'
+  const neurology = 'r1.neurology'
+  const residents = draft.residents.map((resident) => {
+    if (!resident?.source || !Array.isArray(resident.months)) return resident
+    const block = resident.months.filter((month) => month?.status === 'posting' && month.target?.requirement_id === medicine)
+    if (block.length !== 4) return resident
+    const start = block[0].month
+    const split = block[2].month
+    if (!block.every((month) => month.block_start === start)) return resident
+
+    const prior = previous.residents.find((person) => person?.source && sameSource(person.source, resident.source))
+    if (!Array.isArray(prior?.months)) return resident
+    // Restore a boundary only when undo history shows both two-month slots at these dates.
+    for (const [index, blockStart] of [start, split].entries()) {
+      const old = prior.months.filter((month) => month?.status === 'posting' && month.block_start === blockStart)
+      const requirement = old[0]?.target?.requirement_id
+      if (old.length !== 2 || (requirement !== medicine && requirement !== neurology)
+        || old.some((month, offset) => month.target?.requirement_id !== requirement || month.month !== block[index * 2 + offset].month)) return resident
+    }
+    const secondHalf = block.slice(2)
+    const months = resident.months.map((month) => secondHalf.includes(month) ? { ...month, block_start: split } : month)
+    return { ...resident, months }
+  })
+  return { ...draft, residents }
+}
 
 export function parseSession(value: unknown): WorkbookSession | null {
   if (value === undefined || value === null) return null
@@ -24,7 +52,13 @@ export function parseSession(value: unknown): WorkbookSession | null {
       !['optimal', 'feasible', 'edited'].includes(data?.status) || !Array.isArray(data.residents) || !Array.isArray(data.blockers)))))) {
     throw new Error('The saved draft could not be read. Choose the workbook again.')
   }
-  return { ...saved, file: new File([saved.file], saved.fileName, { type: saved.file.type, lastModified: saved.lastModified }), draft: saved.draft || null }
+  let draft = saved.draft || null
+  if (draft?.undo?.length) {
+    const undo: DraftSchedule[] = []
+    for (const snapshot of draft.undo) undo.push(restoreSplitMedicine(snapshot, undo.at(-1)))
+    draft = { ...draft, data: restoreSplitMedicine(draft.data, undo.at(-1)), undo }
+  }
+  return { ...saved, file: new File([saved.file], saved.fileName, { type: saved.file.type, lastModified: saved.lastModified }), draft }
 }
 
 async function accessSession(value?: WorkbookSession | null): Promise<unknown> {
