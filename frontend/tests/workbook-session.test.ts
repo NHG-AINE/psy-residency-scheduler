@@ -80,6 +80,9 @@ const reverseA = { ...swapA, start: august, destination: july }
 const edgeA = { ...swapA, kind: 'insert', side: 'after' } as const
 const reverseEdgeA = { ...reverseA, kind: 'insert', side: 'after' } as const
 const withoutReplay = () => { throw new Error('Unexpected replay') }
+const postingEdit = (start: string, option: number) => ({
+  kind: 'edit', resident, start, posting: 'Posting', institution: 'Site', offering: { sheet: 'Postings', row: 2, column: String(option) },
+}) as const
 
 function draftHistoryFixture(other?: { sheet: string; row: number }) {
   const saved = session()
@@ -91,6 +94,10 @@ function draftHistoryFixture(other?: { sheet: string; row: number }) {
   })
   const planned = (order: number[], status: DraftSchedule['status'] = 'edited', otherOrder = [1, 2, 3, 4]): DraftSchedule => ({
     ...original, status, residents: [row(resident, order), ...(other ? [row(other, otherOrder)] : [])],
+    edit_options: Array.from({ length: 6 }, (_, index) => ({
+      posting: 'Posting', institution: 'Site', category: 'core', residency_year: 'R2', label: 'Posting',
+      requirement_id: 'r2.geriatric_psychiatry', source: postingEdit(july, index + 1).offering,
+    })),
   })
   saved.draft!.data = planned([1, 2, 3, 4], 'feasible')
   return { saved, planned }
@@ -202,6 +209,76 @@ test('repeatedly reversing the latest swap restores the generated draft and clea
     assert.equal(saved.draft.data, generated)
     assert.equal(undoDraftEdit(saved.draft), null)
   }
+})
+
+test('reversing a posting edit restores the generated draft live and after reopening an older session', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const generated = saved.draft!
+  const edited = await prepareDraftEdit(generated, postingEdit(july, 5), planned([5, 2, 3, 4]), withoutReplay)
+  const reverse = postingEdit(july, 1)
+  const restored = await prepareDraftEdit(edited, reverse, planned([1, 2, 3, 4]), withoutReplay)
+  assert.equal(restored.data, generated.data)
+  assert.equal(undoDraftEdit(restored), null)
+
+  const old = { ...edited, data: planned([1, 2, 3, 4]), undo: [generated.data, edited.data],
+    undoChanges: [...edited.undoChanges!, reverse] }
+  const reopened = parseSession(structuredClone({ ...saved, draft: old }))!.draft!
+  assert.deepEqual(reopened.data, generated.data)
+  assert.equal(undoDraftEdit(reopened), null)
+})
+
+test('reversing a posting edit keeps an independent intervening edit undoable after reopening', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const generated = saved.draft!
+  const editB = postingEdit(september, 6)
+  const afterA = await prepareDraftEdit(generated, postingEdit(july, 5), planned([5, 2, 3, 4]), withoutReplay)
+  const afterAB = await prepareDraftEdit(afterA, editB, planned([5, 2, 6, 4]), withoutReplay)
+  const afterB = planned([1, 2, 6, 4])
+  let replayed = 0
+  for (const current of [afterAB, { ...afterAB, undoChanges: undefined }]) {
+    const reversed = await prepareDraftEdit(current, postingEdit(july, 1), afterB, async (base, change) => {
+      replayed++
+      assert.equal(base, generated.data)
+      assert.deepEqual(change, editB)
+      return { draft: afterB, issues: [] }
+    })
+    const reopened = parseSession(structuredClone({ ...saved, draft: reversed }))!.draft!
+    assert.deepEqual(reopened.data, afterB)
+    assert.deepEqual(reopened.undoChanges, [editB])
+    const undone = undoDraftEdit(reopened)!
+    assert.deepEqual(undone.data, generated.data)
+    assert.equal(undoDraftEdit(undone), null)
+  }
+  assert.equal(replayed, 2)
+})
+
+test('reversing the latest edit to the same block keeps the earlier edit undoable', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const first = postingEdit(july, 5), second = postingEdit(july, 6), reverse = postingEdit(july, 5)
+  const afterFirst = await prepareDraftEdit(saved.draft!, first, planned([5, 2, 3, 4]), withoutReplay)
+  const afterSecond = await prepareDraftEdit(afterFirst, second, planned([6, 2, 3, 4]), withoutReplay)
+  const returned = planned([5, 2, 3, 4])
+  assert.deepEqual(await prepareDraftEdit(afterSecond, reverse, returned, withoutReplay), afterFirst)
+
+  const old = { ...afterSecond, data: returned, undo: [...afterSecond.undo!, afterSecond.data],
+    undoChanges: [...afterSecond.undoChanges!, reverse] }
+  for (const draft of [old, { ...old, undoChanges: undefined }]) {
+    const reopened = parseSession(structuredClone({ ...saved, draft }))!.draft!
+    assert.deepEqual(reopened, afterFirst)
+  }
+})
+
+test('keeps chronological undo when an intervening swap moves the edited posting', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const edited = await prepareDraftEdit(saved.draft!, postingEdit(july, 5), planned([5, 2, 3, 4]), withoutReplay)
+  const swapped = await prepareDraftEdit(edited, swapA, planned([2, 5, 3, 4]), withoutReplay)
+  let replayed = false
+  const changed = await prepareDraftEdit(swapped, postingEdit(july, 1), planned([1, 5, 3, 4]), async () => {
+    replayed = true
+    return { draft: null, issues: [] }
+  })
+  assert.equal(replayed, false)
+  assert.deepEqual(undoDraftEdit(parseSession(structuredClone({ ...saved, draft: changed }))!.draft!), swapped)
 })
 
 test('restores a legacy session already at the generated plan, including original diagnostics', () => {
