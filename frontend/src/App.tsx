@@ -6,7 +6,7 @@ import { draftBaseline, draftUndoPreview, undoDraftEdit } from './lib/draft-edit
 import { restoreSession, saveSession } from './lib/workbook-session'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
-import RequestDetails from './components/RequestDetails'
+import RequestDetails, { RequestOutcomeDetails } from './components/RequestDetails'
 import RequestOutcomeFilter from './components/RequestOutcomeFilter'
 import type { DraftChangeIssue, DraftSchedule, RequestStatus } from './lib/draft-schedule'
 import { draftBlockerLabel, draftInsertion, draftPostings, draftPreviewIssuesForRow, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft } from './lib/draft-schedule'
@@ -24,7 +24,7 @@ import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
 import HistoricalPostingReview from './components/HistoricalPostingReview'
 import SearchField from './components/SearchField'
-import TimetableGrid from './components/TimetableGrid'
+import TimetableGrid, { PostingStatus } from './components/TimetableGrid'
 import { importWorkbook, monthLabel, sameSource, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
@@ -41,7 +41,7 @@ const linked = sameSource
 function RequestIndicatorIcon({ status }: { status: RequestStatus }) {
   return <svg viewBox="0 0 16 16" aria-hidden="true">{status === 'met'
     ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" />
-    : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg>
+    : <path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" strokeWidth="2" />}</svg>
 }
 
 function draftIssueStyle(issues: DraftChangeIssue[]) {
@@ -468,7 +468,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     }} onDragLeave={(event) => {
       if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }}>
-    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editing.move || editing.released || editing.returning || undo)}><table>
+    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editor || editing.move || editing.released || editing.returning || undo)}><table>
       <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
@@ -523,8 +523,12 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const savedIssues = issuesForCell(draft?.edit_warnings ?? [], resident.source, issueMonths)
             const issueStyle = draftIssueStyle(changedIssues.length ? changedIssues : savedIssues)
             const picked = held && start === held.start
-            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} suppressed={!!(editing.move || preview || returning || undoing)} />
-            const request = indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={name} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><RequestIndicatorIcon status={indicator.status} /></RequestDetails>
+            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} />
+            const request = indicator && <PostingStatus className={`request-indicator ${indicator.status}`}
+              label={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} for ${name}, ${range(block)}`}
+              details={<RequestOutcomeDetails row={indicator} />} interactive={indicator.status === 'not_met' && !!indicator.capacity?.length}>
+              <RequestIndicatorIcon status={indicator.status} />
+            </PostingStatus>
             const blockLabel = `${name} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`
             const makeBlock = (anchor: HTMLButtonElement): DraftBlock => ({ ...cell, name, label: value, id: blockId, anchor })
             if (start) return <td key={block[0].month} colSpan={block.length} className="draft-block-slot" data-posting-month={block[0].month}
@@ -543,7 +547,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
                   }} onDragEnd={editing.finishDrag}>
                   <span className="posting-name">{value}</span>
                 </button>
-                {request}{warning}
+                {warning}{request}
               </div>
               {(held || proposed || returning || undoing) && draftMonths[previewAnchor]?.month === block[0].month &&
                 <DraftMovePreview key={undoing ? 'undo' : 'move'} months={draftMonths} preview={preview} placeholderStart={hover ? held?.start : undefined}
@@ -557,7 +561,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
               data-posting-tooltip={`${projection}${hoverName} • ${hoverRange}`} aria-describedby={warning ? `${blockId}-reasons` : undefined}
               aria-label={`${show(resident.name)} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}>
               <span className="posting-name">{value}</span>
-              {request}{warning}
+              {warning}{request}
               {qualifiers.length > 0 && <span className="posting-markers">{qualifiers.map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
             </div></td>
           })}
