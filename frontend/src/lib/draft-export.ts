@@ -4,7 +4,7 @@ export async function exportDraft(file: File, targetYear: number, draft: DraftSc
   const form = new FormData()
   form.append('originalFile', file)
   form.append('target_year', String(targetYear))
-  form.append('draft', JSON.stringify(draft))
+  form.append('draft', JSON.stringify({ ...draft, edit_baseline: undefined }))
   let response: Response
   try {
     response = await fetch('/api/export', { method: 'POST', body: form, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000) })

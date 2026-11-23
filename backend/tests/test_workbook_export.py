@@ -42,6 +42,52 @@ def fixture():
 
 
 class ExportTests(unittest.TestCase):
+    def test_large_edited_draft_without_warning_baseline_exports_the_edit(self):
+        sheet = 'Jul 2027 - Jun 2028'
+
+        def populate(workbook):
+            for row in range(4, 168):
+                workbook[sheet].cell(row, 4, f'Resident {row - 2}')
+                workbook[sheet].cell(row, 6, 'R2')
+
+        content = structured_workbook_bytes(populate)
+        workbook = parse_workbook(content)
+        options = posting_catalogue(workbook['postings'])
+        normal = next(option for option in options if option['category'] == 'elective')
+        edited = next(option for option in options if option['label'] == 'IMH Child and Geriatric Psychiatry')
+        residents = []
+        for person in workbook['residents']:
+            preserved = {key: person[key] for key in ('source', 'name', 'mcr')}
+            target = edited if person['source']['row'] == 4 else normal
+            residents.append({**preserved, 'projected_year': 'R2', 'months': [
+                {'month': month['month'], 'status': 'loa' if month['status'] == 'loa' else 'posting',
+                 'block_start': month['month'], 'label': target['label'], 'target': target}
+                for month in person['postings']]})
+        self.assertEqual(len(residents), 165)
+        people = [{key: person[key] for key in ('source', 'name', 'mcr')} for person in residents]
+        overflows = [{'month': month['month'], 'residents': people, 'assigned': len(residents), 'max': 24,
+                      'source': normal['source'], 'label': normal['label'], 'category': normal['category']}
+                     for month in workbook['months']]
+        draft = {'status': 'edited', 'cutoff': '2027-06', 'residents': residents, 'capacity_overflows': overflows}
+        baseline = {'capacity_overflows': overflows, 'residents': [
+            {'source': person['source'], 'months': [normal['source']] * 12} for person in residents]}
+
+        client = TestClient(app)
+
+        def export(payload):
+            return client.post('/api/export', files={'originalFile': ('Example.xlsx', content)},
+                               data={'target_year': '2027', 'draft': json.dumps(payload, separators=(',', ':'))})
+
+        rejected = export({**draft, 'edit_baseline': baseline})
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        self.assertIn('maximum size', rejected.json()['detail'])
+        response = export(draft)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['content-type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        exported = load_workbook(BytesIO(response.content))
+        self.assertEqual(exported[sheet]['G4'].value, edited['label'])
+        self.assertEqual(exported[sheet]['G167'].value, normal['label'] + ' (Elective)')
+
     def test_only_planned_cells_year_and_name_annotations_change(self):
         content, draft = fixture()
         output, retained = export_workbook(content, 2027, draft)

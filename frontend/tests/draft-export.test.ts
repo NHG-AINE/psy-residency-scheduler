@@ -39,6 +39,44 @@ test('export sends original restored workbook and every draft resident regardles
   } finally { globalThis.fetch = fetch }
 })
 
+test('large edited drafts omit only the warning baseline from the export form', async () => {
+  const target = { category: 'core' as const, requirement_id: 'r2.child_adolescent_psychiatry',
+    residency_year: 'R2', institution: 'NUH', source: { sheet: 'Postings', row: 16, column: 'D' },
+    label: 'NUH Child & Adolescent Psychiatry' }
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(Date.UTC(2027, 6 + index, 1)).toISOString().slice(0, 7)
+    return { month: date, status: 'posting' as const, block_start: date, label: target.label, target }
+  })
+  const residents = Array.from({ length: 165 }, (_, index) => ({
+    source: { sheet: 'Jul 2027 - Jun 2028', row: index + 3 }, name: `Resident ${index + 1}`, mcr: null,
+    months, carryforward: [],
+  }))
+  const capacity_overflows = months.map(({ month }) => ({ ...target, month, max: 24, assigned: residents.length,
+    residents: residents.map(({ source, name, mcr }) => ({ source, name, mcr })) }))
+  const baseline = { capacity_overflows, residents: residents.map(({ source }) => ({
+    source, months: months.map(() => ({ ...target.source, row: 15 })),
+  })) }
+  const edited: DraftSchedule = { ...draft, status: 'edited', residents, capacity_overflows, edit_baseline: baseline }
+  const partLimit = 1024 * 1024
+  assert.ok(Buffer.byteLength(JSON.stringify(edited)) > partLimit)
+  const fetch = globalThis.fetch
+  const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  let sent = ''
+  try {
+    globalThis.fetch = async (_, init) => {
+      assert.ok(init?.body instanceof FormData)
+      sent = init.body.get('draft') as string
+      return Buffer.byteLength(sent) > partLimit
+        ? new Response(JSON.stringify({ detail: 'Part exceeded maximum size of 1024KB.' }), { status: 400 })
+        : new Response('xlsx', { headers: { 'Content-Type': mime } })
+    }
+    const exported = await exportDraft(new File(['original workbook'], 'Programme.xlsx'), 2027, edited)
+    assert.equal(exported.blob.type, mime)
+    assert.deepEqual(JSON.parse(sent), { ...draft, status: 'edited', residents, capacity_overflows })
+    assert.equal(edited.edit_baseline, baseline)
+  } finally { globalThis.fetch = fetch }
+})
+
 test('download uses draft filename and cleans the temporary link and URL on success or failure', () => {
   const savedDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
   const create = URL.createObjectURL, revoke = URL.revokeObjectURL, timer = globalThis.setTimeout
