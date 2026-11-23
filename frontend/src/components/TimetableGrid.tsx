@@ -5,15 +5,15 @@ function isTruncated(label: Element) {
   return label.scrollWidth > label.clientWidth
 }
 
-export default function TimetableGrid({ children }: { children: ReactNode }) {
+export default function TimetableGrid({ children, suppressTooltip = false }: { children: ReactNode; suppressTooltip?: boolean }) {
   const grid = useRef<HTMLDivElement>(null)
   const popup = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState<HTMLElement | null>(null)
   const [focused, setFocused] = useState<HTMLElement | null>(null)
-  const active = hovered ?? focused
+  const active = suppressTooltip ? null : hovered ?? focused
 
   useLayoutEffect(() => {
-    const labels = grid.current?.querySelectorAll('.posting-name')
+    const labels = grid.current?.querySelectorAll('[data-posting-tooltip] > .posting-name')
     if (!labels?.length) return
     function sync(label: Element) {
       if (label.parentElement instanceof HTMLButtonElement) return
@@ -99,7 +99,8 @@ export default function TimetableGrid({ children }: { children: ReactNode }) {
       if (event.target.matches('[data-posting-tooltip]:focus-visible')) setFocused(event.target)
     }}
     onBlur={(event) => { if (event.target === focused) setFocused(null) }}
-    onClick={() => { setHovered(null); setFocused(null) }}>
+    onClick={() => { setHovered(null); setFocused(null) }}
+    onDragStart={() => { setHovered(null); setFocused(null) }}>
     {children}
     {active && <div className="posting-tooltip" ref={popup} popover="manual" role="tooltip" aria-hidden="true" />}
   </div>
