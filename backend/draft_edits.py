@@ -52,12 +52,16 @@ def _period(run):
     return first if len(run) == 1 else f"{first} to {_month(run[-1]['month'])}"
 
 
+def _month_targets(person):
+    return [m["target"]["source"] if m.get("target") else None for m in person["months"]]
+
+
 def _comparison(draft):
     # Only keep the information needed to clear resolved warnings after subsequent edits.
     return {**{key: draft[key] for key in ("preference_scores", "capacity_overflows", "singletons", "soft_results")},
             "residents": [{
                 "source": person["source"], "route": person["route"], "cluster_coverage": person["cluster_coverage"],
-                "months": [m["target"]["source"] if m.get("target") else None for m in person["months"]],
+                "months": _month_targets(person),
                 "requests": [r["status"] for r in person["requests"]]
             } for person in draft["residents"]]}
 
@@ -304,7 +308,12 @@ def validate_draft_change(workbook, store, draft, change):
     comparison = _comparison(draft)
     issues = _soft_issues(comparison, result)
     baseline = draft.get("edit_baseline", comparison)
-    result.update(status="edited", edit_baseline=baseline,
-                  edit_warnings=issues if baseline is comparison else _soft_issues(baseline, result))
+    edit_warnings = issues if baseline is comparison else _soft_issues(baseline, result)
+    # Restoring the generated placements can bring back preferences the original draft missed.
+    if issues and not edit_warnings and [
+        (p["source"], p["months"]) for p in baseline["residents"]
+    ] == [(p["source"], _month_targets(p)) for p in result["residents"]]:
+        issues = []
+    result.update(status="edited", edit_baseline=baseline, edit_warnings=edit_warnings)
     result.pop("optimisation_stages", None)
     return {"draft": result, "issues": issues}
