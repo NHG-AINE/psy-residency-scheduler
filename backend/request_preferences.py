@@ -237,7 +237,7 @@ def add_request_objective(model, outcomes, placements, value=lambda variable: va
     return sum((scale // len(g)) * (len(g) - sum(g)) for g in groups)
 
 
-def unmet_request_reason(person, request, placements, options, stages):
+def unmet_request_reason(person, request, placements, options, stages, *, edited=False):
     """Explain proven individual restrictions; do not infer global conflicts."""
     key = request['requirement_id']
     requirement = next(r for r in person['requirements'] if r['requirement_id'] == key)
@@ -264,6 +264,8 @@ def unmet_request_reason(person, request, placements, options, stages):
         if matching and (not starts or min(starts) > max(request['starts'])):
             return 'training_progression', 'Outstanding training and required block order prevent a start within the requested period.'
         return 'no_valid_placement', "No placement matches this request under the resident's remaining training and timing rules."
+    if edited:
+        return 'not_selected', 'This request was not met in the edited timetable.'
     stage = next((s for s in stages if s['priority'] == 'resident_requests'), None)
     if stage is None:
         unfinished = next((s['priority'] for s in stages

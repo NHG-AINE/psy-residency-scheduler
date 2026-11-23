@@ -2,8 +2,8 @@ import json
 from urllib.parse import quote
 from fastapi.responses import JSONResponse, Response
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
-from typing import Literal
+from pydantic import BaseModel, Field
+from typing import Annotated, Literal
 from threading import Event
 from time import monotonic
 from uuid import uuid4
@@ -12,12 +12,14 @@ from starlette.concurrency import run_in_threadpool
 if __package__:
     from .workbook_export import export_workbook
     from .scheduler import DraftCancelled, draft_schedule
+    from .draft_edits import validate_draft_change
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
     from workbook_export import export_workbook
     from scheduler import DraftCancelled, draft_schedule
+    from draft_edits import validate_draft_change
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
@@ -124,6 +126,40 @@ async def cancel_draft(token: str):
 
 class DraftRequest(RequirementLedgerRequest):
     max_seconds: Literal[60, 120, 300, 600] = 120
+
+
+class DraftBlockChange(BaseModel):
+    resident: dict
+    start: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+class DraftEdit(DraftBlockChange):
+    kind: Literal["edit"]
+    posting: str = Field(min_length=1)
+    institution: str = Field(min_length=1)
+    offering: dict | None = None
+
+
+class DraftSwap(DraftBlockChange):
+    kind: Literal["swap"]
+    destination: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+class DraftChangeRequest(RequirementLedgerRequest):
+    draft: dict
+    change: Annotated[DraftEdit | DraftSwap, Field(discriminator="kind")]
+
+
+@app.post("/api/draft/validate-change")
+async def validate_change(request: DraftChangeRequest):
+    try:
+        if request.workbook["target_year"] != max(item["year"] for item in request.workbook["available_years"]):
+            raise ValueError("Edit postings in the latest planning year of this workbook.")
+        return await run_in_threadpool(validate_draft_change, request.workbook, request.store, request.draft, request.change.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, IndexError, TypeError, AttributeError) as exc:
+        raise HTTPException(422, "The draft inputs are incomplete. Generate a new draft and retry.") from exc
 
 
 @app.post("/api/draft")
