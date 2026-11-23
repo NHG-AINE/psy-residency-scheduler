@@ -172,6 +172,46 @@ class DraftEditTests(unittest.TestCase):
                 self.assertEqual(reversed_draft["residents"][index]["months"], original["months"])
                 self.assertEqual(reversed_draft["residents"][other_index]["months"], changed_other["residents"][other_index]["months"])
 
+    def test_r1_swap_preserves_inpatient_carryforward(self):
+        book = r1_book(3)
+        for person in book["residents"]:
+            for month in person["postings"][6:]:
+                month.update(status="loa", value="LOA")
+        for row in book["postings"]["core"]:
+            if row["posting"] == "SGH General Medicine":
+                row.update(max="2", allowed_block_lengths=[2, 4], fulfils_requirements=["General Medicine"],
+                           additional_requirement=None, additional_credit_months=None)
+            elif row["posting"] == "SGH Neurology":
+                row["max"] = "1"
+        book["postings"]["core"] = [row for row in book["postings"]["core"] if row["posting"]
+            not in {"TTSH General Medicine", "NNI Neurology", "NUH Medicine & Neurology"}]
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        index = next(i for i, person in enumerate(draft["residents"]) if person["months"][2]["label"] == "SGH Neurology")
+        person = draft["residents"][index]
+        change = {"kind": "swap", "resident": person["source"], "start": "2027-07", "destination": "2027-09"}
+        # The same swap must preserve either valid future destination.
+        for institution in ("NUH", "IMH"):
+            with self.subTest(institution=institution):
+                person["carryforward"] = [{"requirement_id": "r1.inpatient_psychiatry", "institution": institution, "months": 6}]
+                result = validate_draft_change(book, STORE, draft, change)
+                self.assertIsNotNone(result["draft"], result["issues"])
+                updated = result["draft"]["residents"][index]
+                self.assertEqual([month["label"] for month in updated["months"][:6]],
+                                 ["SGH Neurology"] * 2 + ["SGH General Medicine"] * 4)
+                self.assertEqual(updated["route"], person["route"])
+                self.assertEqual(updated["carryforward"], person["carryforward"])
+
+    def test_r1_cannot_swap_inpatient_before_medicine_and_neurology(self):
+        book = r1_book()
+        book["postings"]["core"] = [row for row in book["postings"]["core"]
+            if row["posting"] in {"NUH Medicine & Neurology", "SGH Inpatient Psychiatry"}]
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        person, = draft["residents"]
+        blocked = validate_draft_change(book, STORE, draft, {"kind": "swap", "resident": person["source"],
+            "start": "2027-07", "destination": "2028-01"})
+        self.assertIsNone(blocked["draft"])
+        self.assertEqual(blocked["issues"][0]["code"], "hard_constraint")
+
     def test_swap_r5_shared_credit_and_recalculate_the_request_through_api(self):
         book = combined_book()
         source = book["residents"][0]["source"]
