@@ -97,6 +97,14 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     stopMove(); clearPreview()
   }
 
+  function cancelForUndo() {
+    cancelMove(); setEditor(null); setReturning(null); announce('')
+  }
+
+  function announceUndo(name: string | null | undefined) {
+    announce(name ? `Undid the last change to ${name}’s draft.` : 'Undid the last draft change.')
+  }
+
   function check(change: DraftChange, affected: DraftCell[], release?: ReleasedMove) {
     clearPreview()
     const previous = getSavedResult()
@@ -228,5 +236,5 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   }
 
   return { editor, openEditor, closeEditor, move, moving, destination, released, proposed, returning, finishReturn, preview, checking, announcement,
-    clearPreview, check, startMove, selectDestination, apply, drop, dismissDrop, confirmDrop, finishDrag, endKeyboardMove }
+    clearPreview, check, startMove, selectDestination, apply, drop, dismissDrop, confirmDrop, finishDrag, endKeyboardMove, cancelForUndo, announceUndo }
 }

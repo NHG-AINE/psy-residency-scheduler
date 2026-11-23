@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRe
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
+import { draftUndoPreview, undoDraftEdit } from './lib/draft-edit-history'
 import { restoreSession, saveSession } from './lib/workbook-session'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
@@ -17,7 +18,7 @@ import DraftTimer from './components/DraftTimer'
 import DraftActions from './components/DraftActions'
 import MonthlyBreakdown from './components/MonthlyBreakdown'
 import ScrollToTop from './components/ScrollToTop'
-import { scrollToPosition } from './lib/scroll'
+import { revealTimetableCells, scrollToPosition } from './lib/scroll'
 import ResidentRequirements from './components/ResidentRequirements'
 import ImportIssues from './components/ImportIssues'
 import PostingReference from './components/PostingReference'
@@ -55,32 +56,41 @@ function draftIssueStyle(issues: DraftChangeIssue[]) {
   return issues.some((issue) => issue.severity === 'hard') ? 'hard' : issues.length ? 'soft' : ''
 }
 
-function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anchorLength, source, warnings, requestIndicator, onReturned }: {
+type UndoPreview = NonNullable<ReturnType<typeof draftUndoPreview>>
+
+function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anchorLength, source, warnings, requestIndicator, undo, onSettled }: {
   months: DraftSchedule['residents'][number]['months']; preview: (string | undefined)[] | null
   placeholderStart?: string; anchorIndex: number; anchorLength: number
   source: Source; warnings: DraftChangeIssue[]; requestIndicator: ReturnType<typeof requestSummary>['indicator']
-  onReturned?: () => void
+  undo?: UndoPreview | null; onSettled?: () => void
 }) {
   const layer = useRef<HTMLDivElement>(null)
-  const finishReturn = useRef(onReturned)
-  useLayoutEffect(() => { finishReturn.current = onReturned })
-  const returning = !!onReturned
+  const finish = useRef(onSettled)
+  const [undoReady, setUndoReady] = useState(false)
+  useLayoutEffect(() => { finish.current = onSettled })
+  useLayoutEffect(() => {
+    if (!undo || !layer.current) return
+    // Resolve the initial card positions before applying the undo layout.
+    layer.current.getBoundingClientRect()
+    setUndoReady(true)
+  }, [undo])
+  const settling = !!onSettled && (!undo || undoReady)
   useLayoutEffect(() => {
     const element = layer.current
-    if (!returning || !element) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { finishReturn.current?.(); return }
+    if (!settling || !element) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { finish.current?.(); return }
     let current = true
     const frame = requestAnimationFrame(() => {
       const animations = element.getAnimations({ subtree: true })
       void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
-        if (current) finishReturn.current?.()
+        if (current) finish.current?.()
       })
     })
     return () => { current = false; cancelAnimationFrame(frame) }
-  }, [returning])
+  }, [settling])
   const parts: { start: string; index: number; length: number; key: string }[] = []
   const counts = new Map<string, number>()
-  const positions = preview ?? months.map((month) => month.block_start)
+  const positions = (undo ? (undoReady ? undo.positions : null) : preview) ?? months.map((month) => month.block_start)
   positions.forEach((start, index) => {
     if (!start) return
     const previous = parts.at(-1)
@@ -94,21 +104,35 @@ function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anch
   })
   // Keep the DOM order fixed so React can update transforms without moving the cards.
   parts.sort((first, second) => first.start.localeCompare(second.start) || first.index - second.index)
-  return <div ref={layer} className="draft-move-preview" aria-hidden="true" data-visible={!!preview || returning}>
+  return <div ref={layer} className="draft-move-preview" aria-hidden="true" data-visible={!!(preview || onSettled || undo)}>
     {parts.map(({ start, index, length, key }) => {
       const block = months.filter((month) => month.block_start === start)
       const placeholder = start === placeholderStart
       const issueStyle = placeholder ? '' : draftIssueStyle(issuesForCell(warnings, source, block.map((month) => month.month)))
       const precedingMonths = positions.slice(0, index).filter((position) => position === start).length
       const request = placeholder ? undefined : requestIndicator(block[precedingMonths].month)
-      return <div key={key} className={`posting-value ${block[0].target?.category ?? 'core'} ${issueStyle}${placeholder ? 'draft-insertion-gap' : ''}`}
-        style={{ transform: `translateX(${100 * (index - anchorIndex) / anchorLength}cqw)`, width: `calc(${100 * length / anchorLength}% - 8px)` }}>
-        {!placeholder && <span className="posting-name">{block[0].label}</span>}
-        {issueStyle && <span className={`draft-block-flag ${issueStyle}`}><DraftBlockFlagIcon /></span>}
-        {request && <span className={`request-indicator ${request.status}`}><RequestIndicatorIcon status={request.status} /></span>}
-      </div>
+      const restored = undo && !undo.positions && undo.months.includes(months[index].month) ? undo.restored[index] : undefined
+      const style = { transform: `translateX(${100 * (index - anchorIndex) / anchorLength}cqw)`, width: `calc(${100 * length / anchorLength}% - 8px)` }
+      return <DraftPreviewCard key={key} style={style} category={block[0].target?.category ?? 'core'} issueStyle={issueStyle}
+        placeholder={placeholder} request={request?.status} label={block[0].label} restored={restored} undoReady={undoReady} />
     })}
   </div>
+}
+
+function DraftPreviewCard({ style, category, issueStyle, placeholder, request, label, restored, undoReady }: {
+  style: { transform: string; width: string }; category: string; issueStyle: string; placeholder: boolean;
+  request?: RequestStatus; label: string | null; restored?: DraftSchedule['residents'][number]['months'][number]; undoReady: boolean
+}) {
+  return <>
+    <div className={`posting-value ${category} ${issueStyle}${placeholder ? ' draft-insertion-gap' : ''}`}
+      style={{ ...style, opacity: restored && undoReady ? 0 : undefined }}>
+      {!placeholder && <span className="posting-name">{label}</span>}
+      {issueStyle && <span className={`draft-block-flag ${issueStyle}`}><DraftBlockFlagIcon /></span>}
+      {request && <span className={`request-indicator ${request}`}><RequestIndicatorIcon status={request} /></span>}
+    </div>
+    {restored?.status === 'posting' && <div className={`posting-value ${restored.target?.category ?? 'core'}`}
+      style={{ ...style, opacity: undoReady ? 1 : 0 }}><span className="posting-name">{restored.label}</span></div>}
+  </>
 }
 
 function revealElement(target: HTMLElement) {
@@ -203,11 +227,13 @@ function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
   return { ...saved, signature: reviewSignature(saved.store) }
 }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, actions, exportError, focusSource, labels, onLabels }: {
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, onExport, onDiscard, onFind, onUndoApplied, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
   importLoading: boolean; exporting: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
   onReady: (target: HTMLElement, workbook: Workbook, labelsReady: boolean) => (() => void) | undefined
-  filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
+  filters: ReactNode; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
+  onUndoApplied: (draft: DraftSchedule) => void
+  exportError: string | undefined; focusSource: Source | null
   labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
 }) {
   const { draft, error: draftError, failedAttempt } = draftState
@@ -238,15 +264,81 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const hasEditOptions = !!draft?.edit_options?.length
   const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
   const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState)
+  const [undo, setUndo] = useState<UndoPreview | null>(null)
+  const [undoNotice, setUndoNotice] = useState<{ draft: DraftSchedule; name: string } | null>(null)
+  const hiddenUndo = undoNotice?.draft === draft ? undoNotice.name : null
+  const undoOperation = useRef<{ row: HTMLTableRowElement; draft: DraftSchedule; finish: (mounted?: boolean) => void } | null>(null)
   const cancelHiddenMove = useEffectEvent(() => {
     if (editing.released && !editing.released.anchor.isConnected) editing.dismissDrop(false)
     if (editing.returning && !editing.returning.anchor.isConnected) editing.finishReturn(editing.returning)
+    const operation = undoOperation.current
+    if (operation && (loading || draft !== operation.draft || !operation.row.isConnected)) operation.finish()
   })
-  useLayoutEffect(() => { cancelHiddenMove() }, [residents, editing.released, editing.returning])
+  useLayoutEffect(() => { cancelHiddenMove() }, [residents, draft, loading, editing.released, editing.returning])
+  useLayoutEffect(() => () => undoOperation.current?.finish(false), [])
   const moveSource = (editing.move ?? editing.released)?.from.source
   const editor = editing.editor
   const editorResident = editor && draft?.residents.find((person) => sameSource(person.source, editor.source))
   const editorCurrent = editorResident?.months.find((month) => month.month === editor?.start)?.target?.source
+
+  function undoLastChange() {
+    if (undoOperation.current || exporting || draftState.pending) return
+    const saved = draftState.getSavedResult()
+    const restored = undoDraftEdit(saved)
+    if (!saved || !restored || saved.data !== draft) return
+    setUndoNotice(null)
+    editing.cancelForUndo()
+    const preview = draftUndoPreview(saved, restored.data)
+    const row = preview && document.getElementById(residentRowId(preview.resident))?.closest('tr')
+    const months = workbook.months.map(({ month }) => month)
+    const cells = row && [...row.querySelectorAll<HTMLTableCellElement>('[data-posting-month]')].filter((cell) => {
+      const start = months.indexOf(cell.dataset.postingMonth ?? '')
+      return start >= 0 && months.slice(start, start + cell.colSpan).some((month) => preview.months.includes(month))
+    })
+    const restore = (mounted = true) => {
+      if (!draftState.applyChange(saved, restored)) return
+      onUndoApplied(restored.data)
+      if (!mounted) return
+      const filtered = preview && workbook.residents.some((resident) => sameSource(resident.source, preview.resident))
+        && !residents.some((resident) => sameSource(resident.source, preview.resident))
+      if (filtered) setUndoNotice({ draft: restored.data, name: show(preview.name) })
+      else editing.announceUndo(preview?.name)
+    }
+    if (!row || !preview || !cells?.length || !timetable.current?.contains(row)) { restore(); return }
+    const events = ['pointerdown', 'click', 'keydown', 'wheel', 'touchstart', 'resize'] as const
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let stopScroll: (() => void) | undefined
+    const finish = (mounted = true) => {
+      undoOperation.current = null
+      stopScroll?.()
+      for (const event of events) window.removeEventListener(event, interrupt, true)
+      motion.removeEventListener('change', reduceMotion)
+      document.removeEventListener('visibilitychange', finishWhenHidden)
+      restore(mounted)
+      if (mounted) setUndo(null)
+    }
+    function interrupt(event: Event) {
+      const activating = event.type === 'pointerdown' || event.type === 'touchstart' || event.type === 'click'
+        || (event instanceof KeyboardEvent && (event.key === 'Enter' || event.key === ' '))
+      if (activating
+        && event.target instanceof Element && event.target.closest('[data-draft-undo]')) return
+      finish()
+    }
+    function reduceMotion() {
+      if (motion.matches) finish()
+    }
+    function finishWhenHidden() {
+      if (document.hidden) finish()
+    }
+    undoOperation.current = { row, draft: saved.data, finish }
+    for (const event of events) window.addEventListener(event, interrupt, { capture: true, passive: true })
+    motion.addEventListener('change', reduceMotion)
+    document.addEventListener('visibilitychange', finishWhenHidden)
+    stopScroll = revealTimetableCells(row, cells, () => {
+      if (motion.matches || !row.isConnected) finish()
+      else setUndo(preview)
+    }, finish)
+  }
 
   function dragOver(event: DragEvent<HTMLTableCellElement>, cell: DraftCell) {
     const move = editing.moving.current
@@ -349,16 +441,22 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
           <button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button>
           <button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button>
         </div>
-        {draft && !draftState.busy && (draft.status === 'edited' ? <span className="draft-edited-label">Edited draft</span> : <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />)}
+        {draft && !draftState.busy && <div className="timetable-draft-status">
+          {draft.status === 'edited' ? <span className="draft-edited-label">Edited draft</span>
+            : <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />}
+        </div>}
       </div>
-      {actions}
+      <DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`}
+        exporting={exporting} onUndo={undoLastChange} onExport={onExport} onDiscard={onDiscard} onFind={onFind} />
     </div>
     {filters}
     {draft && !hasEditOptions && <p className="table-note draft-edit-controls">Regenerate this draft to edit its posting blocks.</p>}
     {hasEditOptions && <details className="draft-edit-controls"><summary>Timetable controls</summary>
       <p>Select a posting to edit it. Drag to a block’s edge to insert before or after it, or to the centre of an equal-length block to swap. With the keyboard, press Space to pick up a block, use the arrow keys to choose a swap or hold Shift while using the arrows to insert, then press Enter to drop or Escape to cancel.</p>
     </details>}
-    <p className="sr-only" role="status">{editing.announcement}</p>
+    <p className={hiddenUndo ? 'table-note' : 'sr-only'} role="status">
+      {hiddenUndo ? `Undid the last change to ${hiddenUndo}’s draft. The resident’s row was filtered out when you selected Undo.` : editing.announcement}
+    </p>
     {failedAttempt && <div className="draft-feedback" role="status">
       {draft && <p>The current draft is still available.</p>}
       <p>{failedAttempt.status === 'blocked' ? 'Draft generation blocked. Resolve the input issues below, then generate again.' : failedAttempt.status === 'infeasible' ? 'No feasible draft meets the current constraints. Review availability, posting eligibility and outstanding training.' : failedAttempt.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>
@@ -372,7 +470,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     }} onDragLeave={(event) => {
       if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }}>
-    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editing.move || editing.released || editing.returning)}><table>
+    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editing.move || editing.released || editing.returning || undo)}><table>
       <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
@@ -383,6 +481,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const held = editing.move && sameSource(resident.source, editing.move.from.source) ? editing.move.from : null
         const proposed = editing.proposed && sameSource(resident.source, editing.proposed.from.source) ? editing.proposed.blocks : null
         const returning = editing.returning && sameSource(resident.source, editing.returning.from.source) ? editing.returning : null
+        const undoing = undo && sameSource(resident.source, undo.resident) ? undo : null
         const destination = editing.destination
         const canSwap = held && destination && !destination.side && held.start !== destination.start && !draftDestinationError(held, destination)
         const insertion = held && destination?.side && sameSource(resident.source, destination.source)
@@ -391,7 +490,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const preview = proposed ?? hover
         const previewAnchor = draftMonths.findIndex((month) => month.block_start)
         const previewIssues = draftPreviewIssuesForRow(editing.preview?.issues ?? [], resident.source, moveSource, destination?.source)
-        return <tr key={rowId} data-previewing={!!(preview || returning)}>
+        return <tr key={rowId} data-previewing={!!(preview || returning || undoing)}>
           <th scope="row" id={rowId} tabIndex={-1}>
             <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
             {rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => {
@@ -426,11 +525,11 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const savedIssues = issuesForCell(draft?.edit_warnings ?? [], resident.source, issueMonths)
             const issueStyle = draftIssueStyle(changedIssues.length ? changedIssues : savedIssues)
             const picked = held && start === held.start
-            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} suppressed={!!(editing.move || preview || returning)} />
+            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} suppressed={!!(editing.move || preview || returning || undoing)} />
             const request = indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={name} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><RequestIndicatorIcon status={indicator.status} /></RequestDetails>
             const blockLabel = `${name} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`
             const makeBlock = (anchor: HTMLButtonElement): DraftBlock => ({ ...cell, name, label: value, id: blockId, anchor })
-            if (start) return <td key={block[0].month} colSpan={block.length} className="draft-block-slot"
+            if (start) return <td key={block[0].month} colSpan={block.length} className="draft-block-slot" data-posting-month={block[0].month}
               onDragOver={(event) => dragOver(event, cell)} onDrop={(event) => dropOnCell(event, cell)}>
               <div className={`draft-posting-cell${issueStyle ? ` ${issueStyle}` : ''}${picked ? ' picked' : ''}${aimed ? ' aimed' : ''}${swapping ? ' swap-target' : ''}`}>
                 <button type="button" id={blockId} className={`posting-value ${category} draft-block-button`} aria-label={blockLabel}
@@ -448,10 +547,11 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
                 </button>
                 {request}{warning}
               </div>
-              {(held || proposed || returning) && draftMonths[previewAnchor]?.month === block[0].month &&
-                <DraftMovePreview months={draftMonths} preview={preview} placeholderStart={hover ? held?.start : undefined}
+              {(held || proposed || returning || undoing) && draftMonths[previewAnchor]?.month === block[0].month &&
+                <DraftMovePreview key={undoing ? 'undo' : 'move'} months={draftMonths} preview={preview} placeholderStart={hover ? held?.start : undefined}
                   anchorIndex={previewAnchor} anchorLength={block.length} source={resident.source} warnings={draft?.edit_warnings ?? []}
-                  requestIndicator={requestIndicator} onReturned={returning && !preview ? () => editing.finishReturn(returning) : undefined} />}
+                  requestIndicator={requestIndicator} undo={undoing} onSettled={undoing ? () => undoOperation.current?.finish()
+                    : returning && !preview ? () => editing.finishReturn(returning) : undefined} />}
             </td>
             return <td key={block[0].month} colSpan={block.length}
               onDragOver={(event) => dragOver(event, cell)} onDrop={(event) => dropOnCell(event, cell)}
@@ -557,7 +657,7 @@ export default function App() {
   const exportController = useRef<AbortController | null>(null)
   useEffect(() => () => { exportController.current?.abort(); exportSnapshot.current = { file: null, draft: null } }, [])
   async function downloadExcel() {
-    const draft = draftState.draft
+    const draft = getSavedResult()?.data
     if (!file || !workbook || !hasDraft || !draft || !draftState.canGenerate || draftState.pending || exporting) return
     const originalFile = file
     const targetYear = workbook.target_year
@@ -730,7 +830,8 @@ export default function App() {
           onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring} exporting={exporting}
           labels={selectedLabels} onLabels={saveLabels}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
-          actions={<DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
+          onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable}
+          onUndoApplied={(draft) => setRequestSelection((selection) => selection?.draft === draftState.draft ? { ...selection, draft } : selection)}
           filters={<div className="search-toolbar timetable-filters">
             <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR" value={query} disabled={busy} onChange={setQuery} />
             <RequestOutcomeFilter draft={draftState.draft} selected={requestFilter} onChange={selectRequestFilter} disabled={busy} />
