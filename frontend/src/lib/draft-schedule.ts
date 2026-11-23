@@ -58,6 +58,13 @@ export function draftSwapOutcome(result: DraftChangeResult) {
   return result.issues.length ? 'warning' : 'clean'
 }
 
+export function draftSwapLayout(months: DraftSchedule['residents'][number]['months'], start: string, destination: string) {
+  const blocks = months.map((month) => month.status === 'posting' ? month.block_start : undefined)
+  const count = blocks.filter((block) => block === start).length
+  if (!count || start === destination || count !== blocks.filter((block) => block === destination).length) return null
+  return blocks.map((block) => block === start ? destination : block === destination ? start : block)
+}
+
 export function draftInsertion(months: DraftSchedule['residents'][number]['months'], start: string,
   destination: string, side: DraftInsertionSide) {
   const blocks = months.map((month) => month.status === 'posting' ? month.block_start : undefined)

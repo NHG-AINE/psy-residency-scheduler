@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
@@ -55,11 +55,29 @@ function draftIssueStyle(issues: DraftChangeIssue[]) {
   return issues.some((issue) => issue.severity === 'hard') ? 'hard' : issues.length ? 'soft' : ''
 }
 
-function DraftInsertionPreview({ months, preview, held, anchorIndex, anchorLength, source, warnings, requestIndicator }: {
+function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anchorLength, source, warnings, requestIndicator, onReturned }: {
   months: DraftSchedule['residents'][number]['months']; preview: (string | undefined)[] | null
-  held: string; anchorIndex: number; anchorLength: number
+  placeholderStart?: string; anchorIndex: number; anchorLength: number
   source: Source; warnings: DraftChangeIssue[]; requestIndicator: ReturnType<typeof requestSummary>['indicator']
+  onReturned?: () => void
 }) {
+  const layer = useRef<HTMLDivElement>(null)
+  const finishReturn = useRef(onReturned)
+  useLayoutEffect(() => { finishReturn.current = onReturned })
+  const returning = !!onReturned
+  useLayoutEffect(() => {
+    const element = layer.current
+    if (!returning || !element) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { finishReturn.current?.(); return }
+    let current = true
+    const frame = requestAnimationFrame(() => {
+      const animations = element.getAnimations({ subtree: true })
+      void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
+        if (current) finishReturn.current?.()
+      })
+    })
+    return () => { current = false; cancelAnimationFrame(frame) }
+  }, [returning])
   const parts: { start: string; index: number; length: number; key: string }[] = []
   const counts = new Map<string, number>()
   const positions = preview ?? months.map((month) => month.block_start)
@@ -74,10 +92,12 @@ function DraftInsertionPreview({ months, preview, held, anchorIndex, anchorLengt
       parts.push({ start, index, length: 1, key: `${start}-${count}` })
     }
   })
-  return <div className="draft-insertion-preview" aria-hidden="true" data-visible={!!preview}>
+  // Keep the DOM order fixed so React can update transforms without moving the cards.
+  parts.sort((first, second) => first.start.localeCompare(second.start) || first.index - second.index)
+  return <div ref={layer} className="draft-move-preview" aria-hidden="true" data-visible={!!preview || returning}>
     {parts.map(({ start, index, length, key }) => {
       const block = months.filter((month) => month.block_start === start)
-      const placeholder = start === held
+      const placeholder = start === placeholderStart
       const issueStyle = placeholder ? '' : draftIssueStyle(issuesForCell(warnings, source, block.map((month) => month.month)))
       const precedingMonths = positions.slice(0, index).filter((position) => position === start).length
       const request = placeholder ? undefined : requestIndicator(block[precedingMonths].month)
@@ -218,6 +238,11 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const hasEditOptions = !!draft?.edit_options?.length
   const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
   const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState)
+  const cancelHiddenMove = useEffectEvent(() => {
+    if (editing.released && !editing.released.anchor.isConnected) editing.dismissDrop(false)
+    if (editing.returning && !editing.returning.anchor.isConnected) editing.finishReturn(editing.returning)
+  })
+  useLayoutEffect(() => { cancelHiddenMove() }, [residents, editing.released, editing.returning])
   const moveSource = (editing.move ?? editing.released)?.from.source
   const editor = editing.editor
   const editorResident = editor && draft?.residents.find((person) => sameSource(person.source, editor.source))
@@ -347,7 +372,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     }} onDragLeave={(event) => {
       if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }}>
-    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!editing.move}><table>
+    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editing.move || editing.released || editing.returning)}><table>
       <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
@@ -356,13 +381,17 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const rowId = residentRowId(resident.source)
         const draftMonths = draft?.residents.find((item) => sameSource(item.source, resident.source))?.months ?? []
         const held = editing.move && sameSource(resident.source, editing.move.from.source) ? editing.move.from : null
+        const proposed = editing.proposed && sameSource(resident.source, editing.proposed.from.source) ? editing.proposed.blocks : null
+        const returning = editing.returning && sameSource(resident.source, editing.returning.from.source) ? editing.returning : null
         const destination = editing.destination
         const canSwap = held && destination && !destination.side && held.start !== destination.start && !draftDestinationError(held, destination)
         const insertion = held && destination?.side && sameSource(resident.source, destination.source)
           ? draftInsertion(draftMonths, held.start, destination.start, destination.side) : null
+        const hover = insertion?.changed ? insertion.blocks : null
+        const preview = proposed ?? hover
         const previewAnchor = draftMonths.findIndex((month) => month.block_start)
         const previewIssues = draftPreviewIssuesForRow(editing.preview?.issues ?? [], resident.source, moveSource, destination?.source)
-        return <tr key={rowId} data-inserting={!!insertion?.changed}>
+        return <tr key={rowId} data-previewing={!!(preview || returning)}>
           <th scope="row" id={rowId} tabIndex={-1}>
             <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
             {rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => {
@@ -397,7 +426,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const savedIssues = issuesForCell(draft?.edit_warnings ?? [], resident.source, issueMonths)
             const issueStyle = draftIssueStyle(changedIssues.length ? changedIssues : savedIssues)
             const picked = held && start === held.start
-            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} suppressed={!!editing.move} />
+            const warning = savedIssues.length > 0 && <DraftBlockReasons issues={savedIssues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} suppressed={!!(editing.move || preview || returning)} />
             const request = indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={name} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><RequestIndicatorIcon status={indicator.status} /></RequestDetails>
             const blockLabel = `${name} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`
             const makeBlock = (anchor: HTMLButtonElement): DraftBlock => ({ ...cell, name, label: value, id: blockId, anchor })
@@ -419,13 +448,14 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
                 </button>
                 {request}{warning}
               </div>
-              {held && draftMonths[previewAnchor]?.month === block[0].month &&
-                <DraftInsertionPreview months={draftMonths} preview={insertion?.changed ? insertion.blocks : null} held={held.start}
-                  anchorIndex={previewAnchor} anchorLength={block.length} source={resident.source} warnings={draft?.edit_warnings ?? []} requestIndicator={requestIndicator} />}
+              {(held || proposed || returning) && draftMonths[previewAnchor]?.month === block[0].month &&
+                <DraftMovePreview months={draftMonths} preview={preview} placeholderStart={hover ? held?.start : undefined}
+                  anchorIndex={previewAnchor} anchorLength={block.length} source={resident.source} warnings={draft?.edit_warnings ?? []}
+                  requestIndicator={requestIndicator} onReturned={returning && !preview ? () => editing.finishReturn(returning) : undefined} />}
             </td>
             return <td key={block[0].month} colSpan={block.length}
               onDragOver={(event) => dragOver(event, cell)} onDrop={(event) => dropOnCell(event, cell)}
-              className={issueStyle ? `draft-static-destination ${issueStyle}` : undefined}><div className={`posting-value ${category}`} role="group"
+              className={`draft-static-destination ${issueStyle}`}><div className={`posting-value ${category}`} role="group"
               data-posting-tooltip={`${projection}${hoverName} • ${hoverRange}`} aria-describedby={warning ? `${blockId}-reasons` : undefined}
               aria-label={`${show(resident.name)} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}>
               <span className="posting-name">{value}</span>
@@ -437,7 +467,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })}</tbody>
     </table></TimetableGrid>}
     </div>
-    {editing.released && <DraftMoveFeedback anchor={editing.released.anchor} kind={editing.released.kind} checking={editing.checking} preview={editing.preview}
+    {editing.released && <DraftMoveFeedback anchor={editing.released.anchor} kind={editing.released.kind} checking={editing.checking} preview={editing.preview} proposal={editing.proposed?.description}
       onApply={editing.confirmDrop} onDismiss={() => editing.dismissDrop()} />}
     {editor && draft && editorResident && <DraftBlockEditor block={editor} options={draft.edit_options ?? []} current={editorCurrent}
       years={`${editorResident.recorded_year ?? ''};${editorResident.projected_year ?? ''};${workbook.residents.find((person) => sameSource(person.source, editor.source))?.residency_year ?? ''}`}

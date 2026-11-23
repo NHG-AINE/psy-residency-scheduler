@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { prepareDraftEdit } from './draft-edit-history'
-import { draftInsertion, draftSwapOutcome, validateDraftChange } from './draft-schedule'
+import { draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
 import type { DraftState } from './use-draft-schedule'
@@ -11,7 +11,7 @@ import type { SavedDraft } from './workbook-session'
 export type DraftBlock = { source: Source; name: string; label: string; start: string; months: string[]; id: string; anchor: HTMLButtonElement }
 export type DraftCell = Pick<DraftBlock, 'source' | 'start' | 'months'> & { leave?: boolean; label: string }
 export type DraftDestination = DraftCell & { side?: DraftInsertionSide }
-type ReleasedMove = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean; kind: 'insert' | 'swap' }
+type ReleasedMove = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean; kind: 'insert' | 'swap'; blocks: (string | undefined)[] | null; description: string }
 
 function sameBlock(a: DraftCell | null | undefined, b: DraftCell | null | undefined) {
   return !!a && !!b && sameSource(a.source, b.source) && a.start === b.start
@@ -45,15 +45,17 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   const target = useRef<DraftDestination | null>(null)
   const [destination, setDestination] = useState<DraftDestination | null>(null)
   const [released, setReleased] = useState<ReleasedMove | null>(null)
+  const [returning, setReturning] = useState<ReleasedMove | null>(null)
   const [preview, setPreview] = useState<DraftChangeResult | null>(null)
   const [checking, setChecking] = useState(false)
+  const proposed = released?.blocks && (checking || (preview && draftSwapOutcome(preview) === 'warning')) ? released : null
   const [announcement, announce] = useState('')
   const [context, setContext] = useState({ workbook, store, draft, disabled })
   const active = useRef<{ controller: AbortController; prepared?: { previous: SavedDraft; next: SavedDraft; issues: DraftChangeIssue[] } } | null>(null)
   if (context.workbook !== workbook || context.store !== store || context.draft !== draft || context.disabled !== disabled) {
     if (move || released) announce('')
     setContext({ workbook, store, draft, disabled })
-    setEditor(null); setMove(null); setDestination(null); setReleased(null); setPreview(null); setChecking(false)
+    setEditor(null); setMove(null); setDestination(null); setReleased(null); setReturning(null); setPreview(null); setChecking(false)
   }
 
   function clearPreview() {
@@ -73,6 +75,7 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function openEditor(block: DraftBlock) {
     if (disabled) return
+    if (proposed) setReturning(proposed)
     stopMove(); clearPreview(); setEditor(block)
   }
 
@@ -83,6 +86,7 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function startMove(from: DraftBlock, keyboard: boolean) {
     if (disabled) return
+    if (proposed) setReturning(proposed)
     cancelMove()
     const next = { from, keyboard }
     moving.current = next; setMove(next)
@@ -120,7 +124,10 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
       }
       if (signal.aborted || active.current !== operation) return
       const outcome = draftSwapOutcome(result)
-      if (release && outcome === 'clean' && apply(release.focus)) return
+      if (release && outcome === 'clean') {
+        if (await applyReleased(release) || signal.aborted || active.current !== operation) return
+      }
+      if (release?.blocks && outcome !== 'warning') setReturning(release)
       setPreview(result); setChecking(false)
       if (release) {
         announce(outcome === 'warning' ? `Review the ${action} warning before applying.`
@@ -142,10 +149,20 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   function apply(block: DraftBlock) {
     const prepared = active.current?.prepared
     if (!prepared || !applyChange(prepared.previous, prepared.next)) return false
-    cancelMove(); setEditor(null)
+    cancelMove(); setEditor(null); setReturning(null)
     announce(`${block.name}’s draft updated.${prepared.issues.length ? ` ${prepared.issues.map((issue) => issue.message).join(' ')}` : ''}`)
     requestAnimationFrame(() => focusBlock(block))
     return true
+  }
+
+  async function applyReleased(release: ReleasedMove) {
+    const operation = active.current
+    if (!operation?.prepared) return false
+    // A fast response can arrive while the cards are still moving into place.
+    await new Promise(requestAnimationFrame)
+    const layer = release.anchor.closest('tr')?.querySelector('.draft-move-preview')
+    await Promise.allSettled(layer?.getAnimations({ subtree: true }).map((animation) => animation.finished) ?? [])
+    return release.anchor.isConnected && active.current === operation && apply(release.focus)
   }
 
   function finishDrag() {
@@ -166,10 +183,18 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     const movedIndex = insertion?.blocks.indexOf(from.start) ?? -1
     const focusMonth = row?.months[movedIndex]?.month ?? next.start
     const focus = { ...from, id: `${from.id.slice(0, -7)}${focusMonth}` }
-    const release = { from, focus, anchor, keyboard, kind } as const
+    const message = draftDestinationError(from, next)
+    const blocks = message || !row ? null : next.side ? insertion?.blocks ?? null : draftSwapLayout(row.months, from.start, next.start)
+    const movedBlocks = row && blocks ? [...new Set(blocks.filter((start, index) => start && start !== row.months[index].block_start))] : []
+    const description = movedBlocks.map((start) => {
+      const label = row?.months.find((month) => month.block_start === start)?.label
+      const months = row?.months.filter((_, index) => blocks?.[index] === start).map((month) => month.month) ?? []
+      return `${monthRanges(months)}, ${label}.`
+    }).join(' ')
+    const release = { from, focus, anchor, keyboard, kind, blocks, description } as const
+    setReturning(null)
     target.current = next; setDestination(next)
     moving.current = null; setMove(null); setReleased(release)
-    const message = draftDestinationError(from, next)
     if (message) {
       clearPreview()
       setPreview({ draft: null, issues: [{ severity: 'hard', code: 'invalid_destination', message,
@@ -183,12 +208,17 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function dismissDrop(restoreFocus = true) {
     if (!released) return
+    if (proposed) setReturning(proposed)
     cancelMove(); announce(checking ? 'Move cancelled.' : '')
     if (restoreFocus) focusBlock(released.from)
   }
 
   function confirmDrop() {
-    if (released) apply(released.focus)
+    if (released && !checking && preview && draftSwapOutcome(preview) === 'warning') void applyReleased(released)
+  }
+
+  function finishReturn(release: ReleasedMove) {
+    setReturning((current) => current === release ? null : current)
   }
 
   function endKeyboardMove(restoreFocus: boolean) {
@@ -197,6 +227,6 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     if (restoreFocus && from) focusBlock(from)
   }
 
-  return { editor, openEditor, closeEditor, move, moving, destination, released, preview, checking, announcement,
+  return { editor, openEditor, closeEditor, move, moving, destination, released, proposed, returning, finishReturn, preview, checking, announcement,
     clearPreview, check, startMove, selectDestination, apply, drop, dismissDrop, confirmDrop, finishDrag, endKeyboardMove }
 }
