@@ -186,7 +186,7 @@ def _add_notes(parts, sheet_path, sheet_xml, notes):
 
 def export_workbook(content, target_year, draft):
     workbook = parse_workbook(content)
-    if target_year != workbook['target_year'] or draft.get('status') not in {'optimal', 'feasible'} or draft.get('cutoff') != f'{target_year}-06':
+    if target_year != workbook['target_year'] or draft.get('status') not in {'optimal', 'feasible', 'edited'} or draft.get('cutoff') != f'{target_year}-06':
         raise WorkbookError('Export requires a completed draft for the latest planning year.')
     original = load_workbook(BytesIO(content), data_only=False, keep_links=True)
     try:

@@ -23,22 +23,54 @@ export type CapacityOverflow = CapacityRow & {
   residents: { name: string | null; mcr: string | null; source: Source }[]
 }
 type ResidentWarning = { source: Source; name: string | null; mcr: string | null; reasons: DraftSchedule['blockers'] }
+export type DraftEditOption = {
+  posting: string; institution: string; residency_year: string; label: string; source: Source; category: 'core' | 'elective'; requirement_id: string
+}
 export type DraftSchedule = {
   capacity_overflows?: CapacityOverflow[]
   capacity_coverage_notes?: { code: string; source: Source }[]
-  status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal'
+  status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal' | 'edited'
+  edit_options?: DraftEditOption[]
+  edit_warnings?: DraftChangeIssue[]
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
   skipped_residents?: ResidentWarning[]
   historical_cluster_warnings?: ResidentWarning[]
-  residents: { source: Source; name: string | null; mcr: string | null; route?: string; projected_year?: string
+  residents: { source: Source; name: string | null; mcr: string | null; route?: string; projected_year?: string; recorded_year?: string
     requests?: RequestOutcome[]
-    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string } | null }[]
+    months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; block_start?: string; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string; institution?: string } | null }[]
     carryforward: { requirement_id: string; institution: string; months: number }[] }[]
   soft_priority?: string[]
   wall_time_seconds?: number
   optimisation_stages?: { priority: string; status: string; wall_time_seconds: number }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
+}
+
+export type DraftChange = { resident: Source; start: string } & (
+  { kind: 'edit'; posting: string; institution: string; offering: Source } | { kind: 'swap'; destination: string })
+export type DraftChangeIssue = { severity: 'hard' | 'soft'; code: string; message: string; affected: { source: Source; month: string }[] }
+export type DraftChangeResult = { draft: DraftSchedule | null; issues: DraftChangeIssue[] }
+
+export function draftPostingChoices(options: DraftEditOption[], years: string) {
+  const eligibleYears = new Set(years.toUpperCase().match(/\bR[1-5]\b/g))
+  const postings = new Map<string, DraftEditOption[]>()
+  for (const option of options) {
+    if (!option.posting || !option.institution || !option.residency_year.toUpperCase().match(/\bR[1-5]\b/g)?.some((year) => eligibleYears.has(year))) continue
+    const key = JSON.stringify([option.posting, option.category])
+    const group = postings.get(key) ?? []
+    group.push(option)
+    postings.set(key, group)
+  }
+  return [...postings.entries()].map(([key, offers]) => {
+    const { posting, category } = offers[0]
+    const distinct = postings.has(JSON.stringify([posting, category === 'core' ? 'elective' : 'core']))
+    return { key, label: distinct ? `${posting} (${category})` : posting,
+      offers: [...offers].sort((a, b) => a.institution.localeCompare(b.institution) || a.residency_year.localeCompare(b.residency_year)) }
+  }).sort((a, b) => a.label.localeCompare(b.label))
+}
+
+export function isUsableDraft(draft: DraftSchedule | null | undefined): draft is DraftSchedule {
+  return !!draft && ['optimal', 'feasible', 'edited'].includes(draft.status)
 }
 
 export type DraftResult = { saved: SavedDraft | null; failure: DraftSchedule | null }
@@ -50,7 +82,7 @@ export function settleDraftAttempt(current: DraftResult, attempt: SavedDraft, op
 }
 
 export function requestSummary(resident: Resident, draft: DraftSchedule | null) {
-  const rows = draft && ['optimal', 'feasible'].includes(draft.status)
+  const rows = isUsableDraft(draft)
     ? draft.residents.find((person) => sameSource(person.source, resident.source))?.requests?.filter((row) => row.duplicate_of === undefined) || [] : []
   const counts = { met: 0, not_met: 0, pending: 0 }
   for (const row of rows) counts[row.status]++
@@ -62,7 +94,7 @@ export type RequestStatus = RequestOutcome['status']
 
 export function requestTotals(draft: DraftSchedule | null) {
   const counts = { met: 0, not_met: 0, pending: 0 }
-  if (draft && ['optimal', 'feasible'].includes(draft.status)) {
+  if (isUsableDraft(draft)) {
     for (const person of draft.residents) {
       for (const row of person.requests || []) {
         if (row.duplicate_of === undefined) counts[row.status]++
@@ -73,7 +105,7 @@ export function requestTotals(draft: DraftSchedule | null) {
 }
 
 export function filterRequestResidents(residents: Resident[], draft: DraftSchedule | null, status: RequestStatus | null) {
-  if (!status || !draft || !['optimal', 'feasible'].includes(draft.status)) return residents
+  if (!status || !isUsableDraft(draft)) return residents
   return residents.filter((resident) => requestSummary(resident, draft).counts[status] > 0)
 }
 
@@ -113,10 +145,22 @@ export async function generateDraft(workbook: Workbook, store: ReviewStore, sign
   return data as DraftSchedule
 }
 
+export async function validateDraftChange(workbook: Workbook, store: ReviewStore, draft: DraftSchedule, change: DraftChange, signal: AbortSignal): Promise<DraftChangeResult> {
+  const response = await fetch('/api/draft/validate-change', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workbook, store, draft, change }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok || !Array.isArray(data?.issues) || (data.draft !== null && (data.draft?.status !== 'edited' || !Array.isArray(data.draft.residents)))) {
+    throw new Error(typeof data?.detail === 'string' ? data.detail : 'Could not check this change. Try again.')
+  }
+  return data
+}
+
 // Display copies only: source retains the location being replaced, never generated evidence.
 // This overlay must never be passed to the history review or requirement ledger.
 export function draftPostings(resident: Resident, draft: DraftSchedule | null): Resident['postings'] {
-  if (!draft || !['optimal', 'feasible'].includes(draft.status)) return resident.postings
+  if (!isUsableDraft(draft)) return resident.postings
   const person = draft.residents.find((candidate) => sameSource(candidate.source, resident.source))
   const unresolved = draft.skipped_residents?.find((candidate) => sameSource(candidate.source, resident.source))
     ?.reasons.some((reason) => ['unresolved_history', 'pending_history_review'].includes(reason.code))
@@ -128,12 +172,12 @@ export function draftPostings(resident: Resident, draft: DraftSchedule | null): 
       return { ...posting, status: 'requirements_completed' }
     }
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
-      ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core' } : posting
+      ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core', draftBlockStart: month.block_start } : posting
   })
 }
 
 export function draftResidentYear(resident: Resident, draft: DraftSchedule | null) {
-  const projected = draft && ['optimal', 'feasible'].includes(draft.status)
+  const projected = isUsableDraft(draft)
     ? draft.residents.find((person) => sameSource(person.source, resident.source))?.projected_year
     : null
   return projected ?? resident.residency_year
@@ -141,7 +185,7 @@ export function draftResidentYear(resident: Resident, draft: DraftSchedule | nul
 
 // Display order only: draft cohort first, then route within the R1 cohort.
 export function groupDraftResidents(residents: Resident[], draft: DraftSchedule | null, entries?: HistoryEntry[]): Resident[] {
-  const successfulDraft = draft && ['optimal', 'feasible'].includes(draft.status) ? draft : null
+  const successfulDraft = isUsableDraft(draft) ? draft : null
   if (!successfulDraft && !entries) return residents
   const routes = ['SGH', 'TTSH/NNI', 'NUH']
   return residents.map((resident) => {

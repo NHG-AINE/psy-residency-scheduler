@@ -8,7 +8,10 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
 import RequestOutcomeFilter from './components/RequestOutcomeFilter'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft } from './lib/draft-schedule'
+import { issuesForCell, useDraftBlockEditing } from './lib/use-draft-block-editing'
+import type { DraftBlock } from './lib/use-draft-block-editing'
+import DraftBlockEditor, { DraftBlockReasons } from './components/DraftBlockEditor'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
 import DraftActions from './components/DraftActions'
@@ -90,7 +93,7 @@ function Review({ workbook, view, query, year, onHistoryReview, historyResident,
   if (view === 'Postings') return <PostingReference workbook={workbook} />
   if (view === 'Requests') {
     const requests = workbook.requests.filter((request) => request.posting_request?.trim() && matches(request.name, request.mcr))
-    const pending = year === workbook.target_year && draftState.draft && ['optimal', 'feasible'].includes(draftState.draft.status)
+    const pending = year === workbook.target_year && isUsableDraft(draftState.draft)
       ? draftState.draft.residents.flatMap((person) => person.requests || []).filter((outcome) => outcome.status === 'pending') : []
     return <><p className="table-note">Requests are not assigned to a planning year. The selected year changes resident links, not request dates or the recorded request rows.</p>{requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small>{pending.filter((outcome) => sameSource(outcome.request.source, request.source)).map((outcome, i) => <small key={i}>Draft pending: {outcome.reason}</small>)}</td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>}</>
   }
@@ -126,9 +129,9 @@ function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
   return { ...saved, signature: reviewSignature(saved.store) }
 }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, filters, actions, exportError, focusSource, labels, onLabels }: {
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, actions, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
-  importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
+  importLoading: boolean; exporting: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
   onReady: (target: HTMLElement, workbook: Workbook, labelsReady: boolean) => (() => void) | undefined
   filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
   labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
@@ -158,6 +161,13 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   }, [workbook, onLabels, rawReviews, savedReviews, attempt, importLoading, resolution])
   const error = !importLoading && !resolution ? savedReviews.error || (failure?.workbook === workbook && failure.review === savedReviews && failure.attempt === attempt ? failure.message : '') : ''
   const loading = importLoading || (!resolution && !error)
+  const hasEditOptions = !!draft?.edit_options?.length
+  const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
+  const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState.applyChange)
+  const editor = editing.editor
+  const editorResident = editor && draft?.residents.find((person) => sameSource(person.source, editor.source))
+  const editorCurrent = editorResident?.months.find((month) => month.month === editor?.start)?.target?.source
+
   useLayoutEffect(() => {
     if (loading || !focusSource || focusedSource.current === focusSource) return
     const target = document.getElementById(residentRowId(focusSource))
@@ -199,11 +209,16 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
           <button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button>
           <button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button>
         </div>
-        {draft && !draftState.busy && <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />}
+        {draft && !draftState.busy && (draft.status === 'edited' ? <span className="draft-edited-label">Edited draft</span> : <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />)}
       </div>
       {actions}
     </div>
     {filters}
+    {draft && !hasEditOptions && <p className="table-note draft-edit-controls">Regenerate this draft to edit its posting blocks.</p>}
+    {hasEditOptions && <details className="draft-edit-controls"><summary>Timetable controls</summary>
+      <p>Select a posting to edit it.</p>
+    </details>}
+    <p className="sr-only" role="status">{editing.announcement}</p>
     {failedAttempt && <div className="draft-feedback" role="status">
       {draft && <p>The current draft is still available.</p>}
       <p>{failedAttempt.status === 'blocked' ? 'Draft generation blocked. Resolve the input issues below, then generate again.' : failedAttempt.status === 'infeasible' ? 'No feasible draft meets the current constraints. Review availability, posting eligibility and outstanding training.' : failedAttempt.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>
@@ -220,6 +235,8 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident) => {
         const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
         const rowId = residentRowId(resident.source)
+        const draftMonths = draft?.residents.find((item) => sameSource(item.source, resident.source))?.months ?? []
+        const previewIssues = editing.preview?.issues ?? []
         return <tr key={rowId}>
           <th scope="row" id={rowId} tabIndex={-1}>
             <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
@@ -241,11 +258,39 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const indicator = requestIndicator(block[0].month)
             const projection = category === 'requirements_completed' ? 'Draft projection - ' : ''
             const draftPrefix = projection || (block[0].draft ? 'Draft assignment - ' : '')
-            return <td key={block[0].month} colSpan={block.length}><div className={`posting-value ${category}`} role="group"
+            const start = block[0].draftBlockStart
+            const blockId = `${rowId}-${block[0].month}`
+            const name = show(resident.name)
+            const cellMonths = block.map((month) => month.month)
+            const cell = { source: resident.source, start: start ?? block[0].month, leave: status === 'loa',
+              months: start ? draftMonths.filter((month) => month.block_start === start).map((month) => month.month) : [] }
+            const issueMonths = cell.months.length ? cell.months : cellMonths
+            const changedIssues = issuesForCell(previewIssues, resident.source, issueMonths)
+            const savedIssues = issuesForCell(draft?.edit_warnings ?? [], resident.source, issueMonths)
+            const issues = changedIssues.length ? changedIssues : savedIssues
+            const issueStyle = issues.some((item) => item.severity === 'hard') ? 'hard' : issues.length ? 'soft' : ''
+            const warning = issues.length > 0 && <DraftBlockReasons issues={issues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} show={false} />
+            const request = indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={name} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>
+            const blockLabel = `${name} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`
+            const makeBlock = (anchor: HTMLButtonElement): DraftBlock => ({ ...cell, name, label: value, id: blockId, anchor })
+            if (start) return <td key={block[0].month} colSpan={block.length}>
+              <div className={`draft-posting-cell${issueStyle ? ` ${issueStyle}` : ''}`}>
+                <button type="button" id={blockId} className={`posting-value ${category} draft-block-button`} aria-label={blockLabel}
+                  aria-describedby={issues.length ? `${blockId}-reasons` : undefined}
+                  aria-haspopup="dialog" disabled={!canEdit}
+                  data-posting-tooltip={`${hoverName} · ${hoverRange}`} data-draft-start={start}
+                  onClick={(event) => editing.openEditor(makeBlock(event.currentTarget))}>
+                  <span className="posting-name">{value}</span>
+                </button>
+                {request}{warning}
+              </div>
+            </td>
+            return <td key={block[0].month} colSpan={block.length}
+              className={issueStyle ? `draft-static-destination ${issueStyle}` : undefined}><div className={`posting-value ${category}`} role="group"
               data-posting-tooltip={`${projection}${hoverName} • ${hoverRange}`}
               aria-label={`${show(resident.name)} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}>
               <span className="posting-name">{value}</span>
-              {indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={show(resident.name)} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>}
+              {request}{warning}
               {qualifiers.length > 0 && <span className="posting-markers">{qualifiers.map((marker) => <span className={`posting-marker${marker === 'Remediation' ? ' posting-marker-remediation' : ''}`} key={marker}>{marker}</span>)}</span>}
             </div></td>
           })}
@@ -253,6 +298,12 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })}</tbody>
     </table></TimetableGrid>}
     </div>
+    {editor && draft && editorResident && <DraftBlockEditor block={editor} options={draft.edit_options ?? []} current={editorCurrent}
+      years={`${editorResident.recorded_year ?? ''};${editorResident.projected_year ?? ''};${workbook.residents.find((person) => sameSource(person.source, editor.source))?.residency_year ?? ''}`}
+      checking={editing.checking} canApply={!!editing.preview?.draft} issues={editing.preview?.issues ?? []}
+      onSelect={(option) => option ? editing.check({ kind: 'edit', resident: editor.source, start: editor.start,
+        posting: option.posting, institution: option.institution, offering: option.source }, [editor]) : editing.clearPreview()}
+      onApply={() => void editing.apply(editor)} onClose={editing.closeEditor} />}
     {!loading && <ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-marker legend-${kind}`} />{label}</li>)}</ul>}
     {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft} entries={resolution?.entries || []} />, breakdownHost)}
   </>
@@ -329,7 +380,7 @@ export default function App() {
   useEffect(() => {
     if (!restoring && currentSession.current) persistCurrent()
   }, [file, workbook, draftMemory.savedResult, restoring, persistCurrent])
-  const hasDraft = draftState.draft?.status === 'optimal' || draftState.draft?.status === 'feasible'
+  const hasDraft = isUsableDraft(draftState.draft)
   const exportSnapshot = useRef({ file, draft: draftState.draft })
   useLayoutEffect(() => { exportSnapshot.current = { file, draft: draftState.draft } }, [file, draftState.draft])
   const exportController = useRef<AbortController | null>(null)
@@ -505,7 +556,7 @@ export default function App() {
           {workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}
         </div>}
         {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
-          onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring}
+          onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring} exporting={exporting}
           labels={selectedLabels} onLabels={saveLabels}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
           actions={<DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}

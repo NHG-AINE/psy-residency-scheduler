@@ -3,10 +3,10 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftPostingChoices, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
-import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
+import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
 import { monthlyBreakdown } from '../src/lib/monthly-breakdown.ts'
 import type { Resident, Workbook } from '../src/lib/workbook.ts'
@@ -20,6 +20,20 @@ const draft: DraftSchedule = {
   status: 'feasible', cutoff: '2027-06', blockers: [], residents: [{ source: resident.source, name: resident.name, mcr: resident.mcr, carryforward: [],
     months: resident.postings.map((posting, index) => ({ month: posting.month, status: index === 2 ? 'outside_draft_scope' : 'posting', label: 'IMH Inpatient Psychiatry' })) }],
 }
+
+test('editor choices combine recorded years, separate core from elective, and retain offering cells', () => {
+  const offer = (year: string, posting: string, category: DraftEditOption['category'], institution: string, column: string): DraftEditOption => ({
+    residency_year: year, posting, institution, category, label: `${institution} ${posting}`, requirement_id: 'synthetic', source: { sheet: 'Postings', row: 4, column },
+  })
+  const r2Core = offer('R2', 'Addiction Medicine', 'core', 'IMH', 'B')
+  const r2Elective = offer('R2', 'Addiction Medicine', 'elective', 'IMH', 'D')
+  const r3 = offer('R3', 'Continuity Clinic', 'core', 'NUH', 'F')
+  const r4 = offer('R4', 'Forensic Psychiatry', 'core', 'IMH', 'H')
+  const choices = draftPostingChoices([r4, r3, r2Elective, r2Core], 'R2;R3')
+  assert.deepEqual(choices.map(({ label, offers }) => [label, offers.map((option) => option.source)]), [
+    ['Addiction Medicine (core)', [r2Core.source]], ['Addiction Medicine (elective)', [r2Elective.source]], ['Continuity Clinic', [r3.source]],
+  ])
+})
 
 test('overlay changes only solver posting months, preserves evidence and discard restores original cells', () => {
   const other = { ...resident, source: { sheet: 'Timetable', row: 4 } }
@@ -361,7 +375,6 @@ test('draft feedback shows historical warnings and request outcomes with the rel
     await vite.close()
   }
 })
-
 
 test('request totals count distinct requests across the draft while filters combine with resident search', () => {
   const request = { posting_request: 'Example', period: null, source: { sheet: 'Request', row: 2 } }

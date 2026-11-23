@@ -59,6 +59,17 @@ test('queued saves cannot resurrect a removed session and in-flight saves preced
   assert.equal(stored, null)
 })
 
+test('restores edited draft warnings and original undo snapshot alongside workbook bytes', () => {
+  const saved = session()
+  const original = saved.draft!.data
+  saved.draft = { ...saved.draft!, undo: [original], data: { ...original, status: 'edited', edit_warnings: [
+    { severity: 'soft', code: 'posting_balance', message: 'Monthly posting distribution is less even.', affected: [] },
+  ] } }
+  const restored = parseSession(structuredClone(saved))
+  assert.deepEqual(restored?.draft, saved.draft)
+  assert.equal(restored?.draft?.undo?.at(-1)?.status, 'feasible')
+})
+
 test('review signatures ignore equivalent ordering but change with actual decisions', () => {
   const first = { kind: 'alias', context: { label: 'Old label', recorded_year: 'R2', category: 'core' },
     target: { key: 'target', signature: 'catalogue' } } as const
