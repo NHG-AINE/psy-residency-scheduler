@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { draftPostingChoices, monthRanges } from '../lib/draft-schedule'
-import type { DraftChangeIssue, DraftEditOption } from '../lib/draft-schedule'
+import { draftPostingChoices, draftSwapOutcome, monthRanges } from '../lib/draft-schedule'
+import type { DraftChangeIssue, DraftChangeResult, DraftEditOption } from '../lib/draft-schedule'
 import type { DraftBlock } from '../lib/use-draft-block-editing'
 import { sameSource } from '../lib/workbook'
 import type { Source } from '../lib/workbook'
@@ -21,6 +21,59 @@ function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
   return <ul>
     {issues.map((issue, index) => <li key={`${issue.code}-${index}`} className={issue.severity}>{issue.message}</li>)}
   </ul>
+}
+
+export function DraftSwapFeedback({ anchor, checking, preview, onApply, onDismiss }: {
+  anchor: HTMLElement; checking: boolean; preview: DraftChangeResult | null; onApply: () => void; onDismiss: () => void
+}) {
+  const id = useId()
+  const panel = useRef<HTMLDivElement>(null)
+  const dismissButton = useRef<HTMLButtonElement>(null)
+  const issues = preview?.issues ?? []
+  const blocked = !checking && (!preview || draftSwapOutcome(preview) !== 'warning')
+  const title = checking ? 'Checking the swap…' : blocked ? 'Swap blocked' : 'Review swap warning'
+  useLayoutEffect(() => {
+    const popup = panel.current
+    if (!popup || !anchor.isConnected) return
+    popup.showPopover()
+    const position = () => positionPanel(popup, anchor)
+    position()
+    const observer = new ResizeObserver(position)
+    observer.observe(popup)
+    window.addEventListener('resize', position)
+    document.addEventListener('scroll', position, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', position)
+      document.removeEventListener('scroll', position, true)
+      popup.hidePopover()
+    }
+  }, [anchor])
+  useLayoutEffect(() => {
+    if (!checking) dismissButton.current?.focus({ preventScroll: true })
+  }, [checking])
+  useLayoutEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      onDismiss()
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [onDismiss])
+  return <div ref={panel} popover="manual" role="dialog" className={`draft-block-editor draft-swap-feedback${blocked ? ' hard' : ''}`}
+    aria-labelledby={`${id}-title`} aria-describedby={`${id}-details`}>
+    <h3 id={`${id}-title`}>{title}</h3>
+    <div id={`${id}-details`} className="draft-editor-feedback">
+      {checking ? <p>The postings will stay in place while the swap is checked.</p>
+        : issues.length ? <DraftIssueMessages issues={issues} />
+          : <p>Could not apply this swap. Try again.</p>}
+    </div>
+    <footer>
+      <button type="button" ref={dismissButton} className="button button-secondary" onClick={onDismiss}>{blocked ? 'Dismiss' : 'Cancel'}</button>
+      {!checking && !blocked && <button type="button" className="button" onClick={onApply}>Apply swap</button>}
+    </footer>
+  </div>
 }
 
 export default function DraftBlockEditor({ block, options, current, years, checking, canApply, issues, onSelect, onApply, onClose }: {

@@ -51,6 +51,16 @@ export type DraftChange = { resident: Source; start: string } & (
 export type DraftChangeIssue = { severity: 'hard' | 'soft'; code: string; message: string; affected: { source: Source; month: string }[] }
 export type DraftChangeResult = { draft: DraftSchedule | null; issues: DraftChangeIssue[] }
 
+export function draftSwapOutcome(result: DraftChangeResult) {
+  if (!result.draft || result.issues.some((issue) => issue.severity === 'hard')) return 'blocked'
+  return result.issues.length ? 'warning' : 'clean'
+}
+
+export function draftPreviewIssuesForRow(issues: DraftChangeIssue[], resident: Source, from?: Source, destination?: Source) {
+  if (!from || sameSource(resident, from)) return issues
+  return sameSource(resident, destination) ? issues.filter((issue) => issue.code === 'invalid_destination') : []
+}
+
 export function draftPostingChoices(options: DraftEditOption[], years: string) {
   const eligibleYears = new Set(years.toUpperCase().match(/\bR[1-5]\b/g))
   const postings = new Map<string, DraftEditOption[]>()
