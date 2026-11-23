@@ -11,6 +11,9 @@ from tests.test_r2_rules import r2_book
 from tests.test_r3_rules import r3_book
 from tests.test_r4_rules import r4_book
 from tests.test_r5_combined import combined_book, LABEL
+from tests.test_r5_rules import r5_book
+from tests.test_workbook_import import structured_workbook_bytes
+from workbook_import import parse_workbook
 
 
 class DraftEditTests(unittest.TestCase):
@@ -134,6 +137,8 @@ class DraftEditTests(unittest.TestCase):
             with self.subTest(start=start, destination=destination):
                 swap = {"kind": "swap", "resident": original["source"], "start": start, "destination": destination}
                 swapped = apply(draft, swap)
+                inserted = apply(draft, {**swap, "kind": "insert", "side": "after"})
+                self.assertEqual(inserted["residents"][index]["months"], swapped["residents"][index]["months"])
                 edited = swapped["residents"][index]
                 head = [month for month in edited["months"][:7] if month["status"] == "posting"]
                 self.assertEqual([month["label"] for month in head], [label for label in labels for _ in range(2)])
@@ -171,3 +176,62 @@ class DraftEditTests(unittest.TestCase):
         self.assertEqual(updated["carryforward"], [])
         self.assertEqual(updated["requests"][0]["status"], "not_met")
         self.assertTrue(any(i["code"] == "resident_requests" for i in changed["issues"]))
+
+    def test_insert_unequal_r5_blocks_keeps_shared_credit_and_validates_final_order(self):
+        book = r5_book()
+        imported = parse_workbook(structured_workbook_bytes())
+        book["postings"]["electives"].append(next(row for row in imported["postings"]["electives"]
+                                                    if row.get("additional_requirement")))
+        source = book["residents"][0]["source"]
+        epip, child, geriatric = "IMH Child and EPIP", "KKH Child & Adolescent Psychiatry", "IMH Geriatric Psychiatry"
+        book["requests"] = [{"posting_request": label, "period": period, "matched_resident_source": source}
+                            for label, period in ((epip, "Jul - Dec 2027"),
+                                                  (child, "Jan - Mar 2028"), (geriatric, "Apr - Jun 2028"))]
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        original = deepcopy(draft)
+        person, = draft["residents"]
+        self.assertEqual([m["label"] for m in person["months"]], [epip] * 6 + [child] * 3 + [geriatric] * 3)
+        change = {"kind": "insert", "resident": source, "start": "2028-04", "destination": "2027-07", "side": "before"}
+        response = TestClient(app).post("/api/draft/validate-change", json={
+            "workbook": book, "store": STORE.model_dump(), "draft": draft, "change": change})
+        self.assertEqual(response.status_code, 200, response.text)
+        for result, expected in (
+            (response.json(), [geriatric] * 3 + [epip] * 6 + [child] * 3),
+            (validate_draft_change(book, STORE, draft, {**change, "start": "2027-07", "destination": "2028-04", "side": "after"}),
+             [child] * 3 + [geriatric] * 3 + [epip] * 6),
+        ):
+            self.assertIsNotNone(result["draft"], result["issues"])
+            updated, = result["draft"]["residents"]
+            self.assertEqual([month["label"] for month in updated["months"]], expected)
+            self.assertEqual(updated["carryforward"], [])
+            self.assertTrue(any(issue["code"] == "resident_requests" for issue in result["issues"]))
+            self.assertEqual(len({month["block_start"] for month in updated["months"]}), 3)
+        self.assertEqual(draft, original)
+
+    def test_insert_across_leave_preserves_calendar_and_other_residents(self):
+        book = r2_book(2)
+        book["residents"][0]["postings"][1].update(status="loa", value="LOA")
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        person, other = draft["residents"]
+        first, second = (person["months"][i] for i in (0, 4))
+        change = {"kind": "insert", "resident": person["source"], "start": second["block_start"],
+                  "destination": first["block_start"], "side": "before"}
+        result = validate_draft_change(book, STORE, draft, change)
+        self.assertIsNotNone(result["draft"], result["issues"])
+        updated, unchanged = result["draft"]["residents"]
+        self.assertEqual(unchanged, other)
+        self.assertEqual(updated["months"][1], person["months"][1])
+        self.assertEqual([month["label"] for month in updated["months"][:7]],
+                         [second["label"], None, second["label"], second["label"]] + [first["label"]] * 3)
+        self.assertEqual(updated["carryforward"], person["carryforward"])
+
+    def test_insert_rejects_invalid_r1_training_order(self):
+        book = r1_book()
+        draft = draft_schedule(book, STORE, max_seconds=5)
+        person, = draft["residents"]
+        result = validate_draft_change(book, STORE, draft, {
+            "kind": "insert", "resident": person["source"], "start": person["months"][6]["block_start"],
+            "destination": person["months"][0]["block_start"], "side": "before"})
+        self.assertIsNone(result["draft"])
+        self.assertEqual(result["issues"][0]["code"], "hard_constraint")
+        self.assertIn("first six training months", result["issues"][0]["message"])

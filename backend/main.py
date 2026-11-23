@@ -145,9 +145,15 @@ class DraftSwap(DraftBlockChange):
     destination: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
+class DraftInsert(DraftBlockChange):
+    kind: Literal["insert"]
+    destination: str = Field(pattern=r"^\d{4}-\d{2}$")
+    side: Literal["before", "after"]
+
+
 class DraftChangeRequest(RequirementLedgerRequest):
     draft: dict
-    change: Annotated[DraftEdit | DraftSwap, Field(discriminator="kind")]
+    change: Annotated[DraftEdit | DraftSwap | DraftInsert, Field(discriminator="kind")]
 
 
 @app.post("/api/draft/validate-change")

@@ -239,19 +239,45 @@ def validate_draft_change(workbook, store, draft, change):
     first = [m for m in person["months"] if m["status"] == "posting" and m.get("block_start") == start]
     if not first:
         return blocked("not_generated", "Only generated posting blocks can be changed.")
-    prepared = prepare_scheduler_inputs(workbook, store)
     moved = [first]
-    if change["kind"] == "swap":
+    kind = change["kind"]
+    if kind in {"swap", "insert"}:
         second = [m for m in person["months"] if m["status"] == "posting" and m.get("block_start") == end]
         if any(m["month"] == end and m["status"] == "loa" for m in person["months"]):
             return blocked("leave", f"{_month(end)} is recorded as leave. Choose a block outside the leave period.")
         if not second or end == start:
             return blocked("invalid_destination", "Choose another generated posting block in the same resident’s row.")
-        if len(first) != len(second):
-            return blocked("unequal_length", f"Only equal-length blocks can swap. These blocks span {len(first)} and {len(second)} training months.")
-        targets = [second[0]["target"], first[0]["target"]]
-        moved.append(second)
-    else:
+        if kind == "swap":
+            if len(first) != len(second):
+                return blocked("unequal_length", f"Only equal-length blocks can swap. These blocks span {len(first)} and {len(second)} training months.")
+            targets = [second[0]["target"], first[0]["target"]]
+            moved.append(second)
+        else:
+            low = min(start, end)
+            high = max(first[-1]["month"], second[-1]["month"])
+            span = [m for m in person["months"] if low <= m["month"] <= high]
+            if any(m["status"] not in {"posting", "loa"} for m in span):
+                return blocked("outside_draft", "Choose a destination within the same generated training period.")
+            training = [m for m in span if m["status"] == "posting"]
+            order = [(key, list(months)) for key, months in groupby(training, key=lambda m: m["block_start"])]
+            original_order = [key for key, _ in order]
+            order = [item for item in order if item[0] != start]
+            index = next(i for i, (key, _) in enumerate(order) if key == end)
+            order.insert(index + (change["side"] == "after"), (start, first))
+            if [key for key, _ in order] == original_order:
+                return blocked("no_change", "Choose an insertion point that changes the block order.")
+            # Pack the reordered blocks into the same training months, leaving LOA in place.
+            blocks = [(block[0]["target"], len(block)) for _, block in order]
+            moved = []
+            offset = 0
+            for option, length in blocks:
+                block = training[offset:offset + length]
+                for month in block:
+                    month.update(label=option["label"], target=option, block_start=block[0]["month"])
+                moved.append(block)
+                offset += length
+    prepared = prepare_scheduler_inputs(workbook, store)
+    if kind == "edit":
         years = recorded_years(person["projected_year"]) | recorded_years(person["recorded_year"])
         options = [option for option in prepared["catalogue_options"] if option["valid"] and recorded_years(option["residency_year"]) & years
                    and option["posting"] == change["posting"] and option["institution"] == change["institution"]
@@ -261,13 +287,16 @@ def validate_draft_change(workbook, store, draft, change):
         targets = options
         if len(options) > 1:
             return blocked("ambiguous_offering", "The workbook lists more than one matching offering for this posting and institution.")
-    if all(draft_source_key(block[0]["target"]["source"]) == draft_source_key(option["source"]) for block, option in zip(moved, targets)):
-        return blocked("no_change", "Choose a different posting or institution.")
-    for block, option in zip(moved, targets):
-        for month in block:
-            month.update(label=option["label"], target=option)
+    if kind != "insert":
+        if all(draft_source_key(block[0]["target"]["source"]) == draft_source_key(option["source"]) for block, option in zip(moved, targets)):
+            return blocked("no_change", "Choose a different posting or institution.")
+        for block, option in zip(moved, targets):
+            for month in block:
+                month.update(label=option["label"], target=option)
 
-    result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed, edited_source=source, prepared=prepared)
+    # Insertion changes timing only. Keep the edited resident's route and carryforward fixed too.
+    result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed,
+                            edited_source=None if kind == "insert" else source, prepared=prepared)
     if result["status"] == "infeasible":
         return blocked("hard_constraint", _explain_conflict(prepared, person, original, moved))
     if result["status"] != "feasible":
