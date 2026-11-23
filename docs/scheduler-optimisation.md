@@ -1,76 +1,128 @@
 # Scheduler optimisation techniques
 
-- This guide explains how we reduce search work without changing scheduling policy.
-- For hard rules and preference order, read [constraints.md](constraints.md).
-- A faster early stage gives later stages more time; it may not shorten the total run.
+The scheduler uses one time budget to find a valid draft and improve it. Finishing
+an early stage sooner gives the next preference more time. A two-minute run can
+still take two minutes and return a better timetable.
 
-## Consider only valid block starts
+For the scheduling rules and the order of preferences, see [constraints.md](constraints.md).
 
-- Calculate possible starts from the lengths of the remaining blocks, rather than trying every month.
-- Example: four continuous three-month blocks with no LOA can start in July, October, January and April.
-- Partial history and LOA change those starts. They are calculated, not fixed calendar dates.
-- Shared block construction serves R2-R5; R1 uses its own candidate paths.
-- Code: `add_blocks` in [r2_rules.py](../backend/rules/r2_rules.py).
+## Work out which months a block can start
 
-## Keep a valid draft first
+If a resident starts in July and needs four uninterrupted three-month blocks, the
+possible starts are July, October, January and April. The solver can skip August
+because no preceding block could finish after just one month.
 
-- Find a timetable satisfying the hard constraints before optimising preferences.
-- Keep it as a fallback if a later search times out. A valid draft is not necessarily well balanced.
-- Example: a draft may exceed a soft capacity target while still respecting LOA and required posting durations.
-- Code: `_solve_priorities` in [scheduler.py](../backend/scheduler.py).
+These dates come from the resident’s remaining training. A partially completed
+block resumes first, and LOA pauses the count of training months. R2–R5 use this
+calculation. R1 uses its own Medicine, Neurology and Inpatient Psychiatry routes.
 
-## Add preference calculations only when needed
+See `add_blocks` in [r2_rules.py](../backend/rules/r2_rules.py).
 
-- Build the initial model with hard constraints, then add each preference's calculations when its stage starts.
-- Example: capacity optimisation does not need to carry institution-allocation or singleton calculations yet.
-- Earlier proven scores remain protected. Individual assignments can still move.
-- Calculate displayed scores and request outcomes from the chosen assignments, even if their stage was not reached.
-- Code: `build_preferences` inside `draft_schedule` in [scheduler.py](../backend/scheduler.py).
+## Find a valid draft first
 
-## Use lower bounds to prove when a stage is finished
+The scheduler first finds a timetable that meets the hard constraints, including
+LOA and posting duration. That timetable can still exceed a monthly capacity
+target. The capacity stage then tries to reduce the excess.
 
-- A lower bound means: no valid timetable can score below this number. Lower scores are better.
-- Example: best timetable score 10, bound 7 means keep searching; score 7 and bound 7 means optimal.
-- Sometimes a smaller, more permissive model can prove a useful bound faster. Transfer only its certified bound, not its assignments or best-found score.
-- Discard unknown results safely. A bound can be correct but too weak to improve performance.
-- Current custom bounds:
-  - **R1 ratio:** a smaller model preserves the proven route-distribution score and drops unrelated restrictions.
-  - **R2/R4 balance:** the most even integer split gives a minimum pairwise penalty. For 10 residents across four postings, 3/3/2/2 has penalty 4. Generally, with `r = total % posting_types`, the minimum is `r * (posting_types - r)`.
-  - **R5 balance:** a weighted monthly-count model drops cross-month coupling. Combined cores omit the R5 part of this bound; the stronger block projection is disabled for combined or flexible split routes it cannot safely represent.
-  - **Capacity across years:** minimum unavoidable demand minus generous total supplied capacity gives a conservative bound. Example: 78 required posting-months and 72 available posting-months force at least 6 excess posting-months. Unlimited alternatives and uncertain generated R5 demand are omitted conservatively.
-- R3 has no separate posting-balance bound. Institution allocation has no custom reduced-model bound; OR-Tools still calculates its own search bounds.
-- Code: `ratio_relaxation` in [r1_rules.py](../backend/rules/r1_rules.py); `_posting_balance`, `_posting_balance_relaxation`, `_posting_block_relaxation` and `_capacity_overflow_lower_bound` in [scheduler.py](../backend/scheduler.py).
+Once the scheduler has a valid draft, it keeps the best one found so far. If a
+later stage runs out of time, staff can still review that draft.
 
-## Group equivalent choices in the smaller R1 model
+See `_solve_priorities` in [scheduler.py](../backend/scheduler.py).
 
-- Group residents only when their projected Medicine/Neurology options and intake status are identical.
-- Example: count how many of ten equivalent residents choose each pattern, instead of exploring every exchange of names.
-- This grouping belongs to the smaller bound model. The full scheduler still keeps residents and their individual restrictions separate.
-- Code: `ratio_relaxation` in [r1_rules.py](../backend/rules/r1_rules.py).
+## Add preferences as the solver needs them
 
-## Define monthly posting counts once
+Build each preference when its stage starts. For example, the capacity stage
+counts places over max. It has no need yet to calculate how evenly residents
+are spread across institutions or how many are posted alone.
 
-- Define a count once, then reuse it in comparisons instead of repeating long assignment expressions.
-- Example: define Child = 6, Geriatric = 6 and Elective = 12 once, then compare those counts with the existing weights.
-- Keep an equality linking each count to its actual assignments. Count limits must be safe for every valid schedule, including combined R5 core contributions.
-- This changes the representation, not the penalty or valid timetables. It does not remove equal-score alternatives.
-- Implementation: `_posting_count` and the posting-balance builder in [PR #35](https://github.com/NHG-AINE/psy-residency-scheduler/pull/35).
+When a stage proves its best score, the scheduler keeps that score for the rest
+of the run. It can still move individual residents. For example, two residents
+can swap sites if the swap preserves the earlier scores.
 
-## Reuse solutions and search with multiple workers
+The app calculates the scores and request outcomes shown to staff from the
+timetable it returns. A preference can therefore have a displayed score even if
+the solver ran out of time before reaching its stage.
 
-- Give the next stage the previous assignment as a hint. A hint is a starting suggestion, not a locked timetable.
-- Automatic workers let OR-Tools try several search strategies on the shared model.
-- This is not a separate solver for each R-year. Mixed-year residents and shared constraints remain in one model.
-- Parallel search can vary between runs, even with the same workbook and random seed.
-- Code: `_solve_priorities` and `SOLVER_WORKERS` in [scheduler.py](../backend/scheduler.py).
+See `build_preferences` inside `draft_schedule` in [scheduler.py](../backend/scheduler.py).
 
-## Share the budget and measure improvements
+## Prove a stage is optimal
 
-- Initial feasibility, preference searches, smaller-model solves and deferred preference construction share one search budget.
-- Smaller models have capped allowances within that budget; they do not receive extra time.
-- Input preparation, result processing and solver shutdown can make total elapsed time exceed the configured search limit.
-- Advance only after proving the current priority optimal; never trade away an earlier proven score for a later preference.
-- Compare repeated before/after runs using the same workbook, review decisions, search limit and worker settings. Avoid running benchmarks concurrently.
-- Record returned draft scores, proof bounds, stage times and which later stages were reached. A shorter timed-out stage alone is not evidence of improvement.
-- Test that reduced-model bounds never exceed small full-model optima and that equivalent formulations preserve scores.
-- Keep an optimisation only when evidence justifies its complexity. Benchmark timings are observations, not guarantees for future workbooks.
+A stage tracks the score of the best timetable found and a proven lower bound.
+If the timetable scores 10 and the solver has proved that every valid timetable
+scores at least 7, the optimum is somewhere from 7 to 10. If it finds a
+timetable scoring 7, it can move on. It can also move on if it proves that 10 is
+the lowest possible score.
+
+For some stages, a smaller model drops restrictions to make the proof easier. A
+timetable in that smaller model might be impossible to schedule in full. The
+full solver uses only the lower bound the smaller model proves. If the smaller
+search returns no usable bound, the full search continues.
+
+| Stage | How the bound works |
+| --- | --- |
+| R1 Medicine and Neurology ratio | The smaller model keeps the proven R1 route-distribution score and considers the monthly Medicine and Neurology patterns. It can leave out unrelated choices, such as the inpatient destination. |
+| R2 and R4 posting balance | With 10 residents across four posting types, the most even possible split is 3/3/2/2. Four pairs differ by one, so the monthly penalty is at least 4. In general, if `r = total % posting_types`, the minimum from the counts alone is `r × (posting_types − r)`. Other restrictions can raise it. |
+| R5 posting balance | When the monthly R5 totals are fixed and each posting counts towards one requirement, a smaller model can compare weighted counts one month at a time. It leaves R5 out of this bound when routes can change those totals or a posting shares credit across requirements. The full timetable still scores R5 balance. |
+| Stronger posting-balance bound | Where the routes allow it, a second calculation keeps block starts, progression and the proven request score. It simplifies institution choices only when the requests treat them alike. The scheduler skips this calculation for shared-credit or flexible R5 routes, including split electives. |
+| Capacity overflow | For each requirement, compare unavoidable demand with the total places available over the planning year. If residents need at least 78 posting-months and the sites offer 72, at least 6 posting-months must exceed max. If an eligible site has no supplied max, this calculation claims no shortage for that requirement. It also leaves out optional R5 route demand. |
+
+R3 has no separate posting-balance bound. For institution allocation, OR-Tools
+calculates its own bounds during the full search.
+
+See `ratio_relaxation` in [r1_rules.py](../backend/rules/r1_rules.py) and
+`_posting_balance`, `_posting_balance_relaxation`, `_posting_block_relaxation`
+and `_capacity_overflow_lower_bound` in [scheduler.py](../backend/scheduler.py).
+
+## Group equivalent R1 choices
+
+In the smaller R1 model, residents can be grouped when they have the same
+Medicine and Neurology patterns and the same intake status. Suppose ten
+residents have the same two choices. For the ratio calculation, it is enough to
+know that six take the first pattern and four take the second. Swapping two
+names gives the same counts.
+
+The full scheduler still assigns each resident individually, with their own
+history, availability and restrictions.
+
+See `ratio_relaxation` in [r1_rules.py](../backend/rules/r1_rules.py).
+
+## Count monthly postings once
+
+For each month, the solver defines one count per posting type and links it to
+the residents’ assignments. Suppose July has 6 Child, 6 Geriatric and 12 Elective.
+Both the Child–Geriatric comparison and the Child–Elective comparison can use
+the same July Child count.
+
+If a resident’s assignment changes, the linked count changes with it. The
+comparisons use the same weights as before. In R5, the counts also allow a
+posting to contribute to two requirements.
+
+See `_posting_count` and the posting-balance builder in [PR #35](https://github.com/NHG-AINE/psy-residency-scheduler/pull/35).
+
+## Reuse a timetable and share the search work
+
+Each stage receives the best timetable found so far as a starting suggestion.
+The solver can change assignments while preserving scores already proved optimal.
+
+OR-Tools chooses the number of workers automatically. The workers try different
+search strategies on the same timetable, so they can account for mixed-year
+residents and shared constraints. Even with the same workbook and random seed,
+repeated runs can find different drafts before time runs out.
+
+See `_solve_priorities` and `SOLVER_WORKERS` in [scheduler.py](../backend/scheduler.py).
+
+## Measure whether a change helps
+
+- Count the initial search, the time spent building each preference and any
+  smaller-model searches within the selected limit. Workbook preparation,
+  processing the result and solver shutdown can add to the elapsed time staff see.
+- Compare repeated runs with the same workbook, review decisions, time limit and
+  worker settings. Run them one at a time so they do not compete for the same machine.
+- Record the returned score, the proven lower bound, time spent in the stage and
+  the next stage reached. For example, if posting balance took 30 seconds instead
+  of 60, check how much time was left when it started and whether it proved optimality.
+- Check a new bound against small timetables whose optimum is known. The bound
+  must never exceed that optimum. If the change only rewrites how a score is
+  calculated, verify that the same assignments still give the same score.
+- Keep a change when repeated runs show a benefit worth the added code. Record
+  which workbook and settings produced the result.
