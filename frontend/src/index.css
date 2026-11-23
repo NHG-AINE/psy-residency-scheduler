@@ -378,14 +378,17 @@
 .draft-edit-controls summary { width: fit-content; cursor: pointer; }
 .draft-edit-controls p { margin-top: .375rem; max-width: 70ch; }
 .draft-posting-cell, .draft-static-destination .posting-value { position: relative; }
-.draft-block-button { cursor: pointer; }
+.draft-block-button { cursor: grab; }
+.draft-block-button:active:not(:disabled) { cursor: grabbing; }
 .draft-block-button:disabled { cursor: default; }
 .draft-block-button:hover:not(:disabled) { filter: brightness(.975); }
 .draft-block-button:focus-visible, .draft-block-flag:focus-visible, .draft-editor-close:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .draft-posting-cell:has(.request-indicator) .draft-block-button { padding-right: 2.5rem; }
 .draft-posting-cell:has(.draft-block-flag) .draft-block-button, .draft-static-destination .posting-value { padding-left: 1.625rem; }
+.draft-posting-cell.picked .draft-block-button, .draft-posting-cell.aimed .draft-block-button { box-shadow: inset 0 0 0 2px var(--color-focus); }
 .draft-posting-cell.soft .draft-block-button { outline: 2px dashed #79557b; outline-offset: -2px; box-shadow: none; }
 .draft-posting-cell.hard .draft-block-button, .draft-static-destination.hard .posting-value { outline: 2px solid #9f352e; outline-offset: -2px; box-shadow: none; }
+.draft-posting-cell.aimed .draft-block-button[aria-busy="true"] { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .draft-posting-cell.soft .draft-block-button:focus-visible, .draft-posting-cell.hard .draft-block-button:focus-visible { box-shadow: 0 0 0 2px var(--color-focus); }
 .draft-block-flag { position: absolute; inset: 0 auto 0 .125rem; display: grid; place-items: center; width: 1.5rem; color: #704d6b; cursor: help; }
 .hard .draft-block-flag { color: #9f352e; }
@@ -413,6 +416,8 @@
 .draft-editor-feedback .hard { color: #9f352e; }
 .draft-editor-feedback .soft { color: #67436b; }
 .draft-block-editor footer { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.draft-swap-feedback footer { flex-wrap: wrap; gap: .5rem; }
+.draft-swap-feedback.hard h3 { color: #9f352e; }
 @media (max-width: 640px) {
   .draft-block-editor::backdrop { background: #29252430; }
   .draft-editor-close { width: 2.75rem; height: 2.75rem; }

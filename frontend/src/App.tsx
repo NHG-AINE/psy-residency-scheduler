@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { ReactNode } from 'react'
+import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
 import { restoreSession, saveSession } from './lib/workbook-session'
@@ -8,10 +8,10 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
 import RequestOutcomeFilter from './components/RequestOutcomeFilter'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, draftPreviewIssuesForRow, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft } from './lib/draft-schedule'
 import { issuesForCell, useDraftBlockEditing } from './lib/use-draft-block-editing'
-import type { DraftBlock } from './lib/use-draft-block-editing'
-import DraftBlockEditor, { DraftBlockReasons } from './components/DraftBlockEditor'
+import type { DraftBlock, DraftCell } from './lib/use-draft-block-editing'
+import DraftBlockEditor, { DraftBlockReasons, DraftSwapFeedback } from './components/DraftBlockEditor'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
 import DraftActions from './components/DraftActions'
@@ -164,10 +164,63 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const hasEditOptions = !!draft?.edit_options?.length
   const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
   const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState.applyChange)
+  const swapSource = (editing.move ?? editing.released)?.from.source
   const editor = editing.editor
   const editorResident = editor && draft?.residents.find((person) => sameSource(person.source, editor.source))
   const editorCurrent = editorResident?.months.find((month) => month.month === editor?.start)?.target?.source
 
+  function dragOver(event: DragEvent, cell: DraftCell) {
+    const move = editing.moving.current
+    if (!move || move.keyboard) return
+    event.preventDefault()
+    editing.selectDestination(cell)
+    // Allow the release event so a blocked drop can explain itself at the target.
+    event.dataTransfer.dropEffect = sameSource(move.from.source, cell.source) && move.from.start === cell.start ? 'none' : 'move'
+  }
+
+  function dropOnCell(event: DragEvent<HTMLTableCellElement>, cell: DraftCell) {
+    if (!editing.moving.current || editing.moving.current.keyboard) return
+    event.preventDefault()
+    editing.drop(cell, event.currentTarget)
+  }
+
+  function keyboardSwap(event: KeyboardEvent<HTMLButtonElement>, block: DraftBlock, months: NonNullable<typeof draft>['residents'][number]['months']) {
+    const move = editing.moving.current
+    if (event.key === 'Tab' && editing.released?.keyboard && editing.checking) {
+      editing.dismissDrop(false)
+      return
+    }
+    if (editing.released?.keyboard && editing.released.anchor.contains(event.currentTarget) && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault()
+      return
+    }
+    if (!move && event.key === ' ') {
+      event.preventDefault()
+      if (!event.repeat) editing.startMove(block, true)
+      return
+    }
+    if (!move?.keyboard) return
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      if (event.key === 'Escape') event.preventDefault()
+      editing.endKeyboardMove(event.key === 'Escape')
+      return
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (!event.repeat && editing.destination) editing.drop(block, event.currentTarget.closest('td') ?? event.currentTarget, block)
+      return
+    }
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+    event.preventDefault()
+    const buttons = [...(event.currentTarget.closest('tr')?.querySelectorAll<HTMLButtonElement>('[data-draft-start]') ?? [])]
+    const blocks = [...new Set(buttons.map((button) => button.dataset.draftStart))]
+    const next = blocks[blocks.indexOf(block.start) + (event.key === 'ArrowRight' ? 1 : -1)]
+    const button = next && buttons.find((item) => item.dataset.draftStart === next)
+    if (!next || !button) return
+    button.focus({ preventScroll: true })
+    button.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    editing.selectDestination({ source: block.source, start: next, months: months.filter((month) => month.block_start === next).map((month) => month.month) })
+  }
   useLayoutEffect(() => {
     if (loading || !focusSource || focusedSource.current === focusSource) return
     const target = document.getElementById(residentRowId(focusSource))
@@ -214,9 +267,9 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       {actions}
     </div>
     {filters}
-    {draft && !hasEditOptions && <p className="table-note draft-edit-controls">Regenerate this draft to edit its posting blocks.</p>}
+    {draft && !hasEditOptions && <p className="table-note draft-edit-controls">Regenerate this draft to edit or swap its posting blocks.</p>}
     {hasEditOptions && <details className="draft-edit-controls"><summary>Timetable controls</summary>
-      <p>Select a posting to edit it.</p>
+      <p>Select a posting to edit it. Drag a block onto another of the same length in the resident’s row, then confirm any warnings. With the keyboard, press Space to pick up a block, use the arrow keys to choose a destination, and press Enter to swap or Escape to cancel.</p>
     </details>}
     <p className="sr-only" role="status">{editing.announcement}</p>
     {failedAttempt && <div className="draft-feedback" role="status">
@@ -236,7 +289,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
         const rowId = residentRowId(resident.source)
         const draftMonths = draft?.residents.find((item) => sameSource(item.source, resident.source))?.months ?? []
-        const previewIssues = editing.preview?.issues ?? []
+        const previewIssues = draftPreviewIssuesForRow(editing.preview?.issues ?? [], resident.source, swapSource, editing.destination?.source)
         return <tr key={rowId}>
           <th scope="row" id={rowId} tabIndex={-1}>
             <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
@@ -265,27 +318,37 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const cell = { source: resident.source, start: start ?? block[0].month, leave: status === 'loa',
               months: start ? draftMonths.filter((month) => month.block_start === start).map((month) => month.month) : [] }
             const issueMonths = cell.months.length ? cell.months : cellMonths
-            const changedIssues = issuesForCell(previewIssues, resident.source, issueMonths)
+            const aimed = editing.destination && sameSource(resident.source, editing.destination.source) && cell.start === editing.destination.start
+            const changedIssues = editing.released && aimed ? previewIssues : issuesForCell(previewIssues, resident.source, issueMonths)
             const savedIssues = issuesForCell(draft?.edit_warnings ?? [], resident.source, issueMonths)
             const issues = changedIssues.length ? changedIssues : savedIssues
             const issueStyle = issues.some((item) => item.severity === 'hard') ? 'hard' : issues.length ? 'soft' : ''
-            const warning = issues.length > 0 && <DraftBlockReasons issues={issues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} show={false} />
+            const picked = editing.move && sameSource(resident.source, editing.move.from.source) && start === editing.move.from.start
+            const warning = issues.length > 0 && <DraftBlockReasons issues={issues} label={`${name}, ${range(block)}`} descriptionId={`${blockId}-reasons`} show={!editing.released && !!aimed && !!changedIssues.length && cellMonths.includes(cell.start)} />
             const request = indicator && <RequestDetails className={`request-indicator ${indicator.status}`} name={name} rows={[indicator]} hint={`${indicator.status === 'met' ? 'Request met' : 'Request not met'} - click for details`}><svg viewBox="0 0 16 16" aria-hidden="true">{indicator.status === 'met' ? <path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2" /> : <><path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M8 6v4m0 2v.5" stroke="currentColor" strokeWidth="1.5" /></>}</svg></RequestDetails>
             const blockLabel = `${name} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`
             const makeBlock = (anchor: HTMLButtonElement): DraftBlock => ({ ...cell, name, label: value, id: blockId, anchor })
-            if (start) return <td key={block[0].month} colSpan={block.length}>
-              <div className={`draft-posting-cell${issueStyle ? ` ${issueStyle}` : ''}`}>
+            if (start) return <td key={block[0].month} colSpan={block.length}
+              onDragOver={(event) => dragOver(event, cell)} onDrop={(event) => dropOnCell(event, cell)}>
+              <div className={`draft-posting-cell${issueStyle ? ` ${issueStyle}` : ''}${picked ? ' picked' : ''}${aimed ? ' aimed' : ''}`}>
                 <button type="button" id={blockId} className={`posting-value ${category} draft-block-button`} aria-label={blockLabel}
-                  aria-describedby={issues.length ? `${blockId}-reasons` : undefined}
+                  aria-describedby={issues.length ? `${blockId}-reasons` : undefined} aria-busy={editing.released && aimed && editing.checking ? true : undefined}
                   aria-haspopup="dialog" disabled={!canEdit}
-                  data-posting-tooltip={`${hoverName} · ${hoverRange}`} data-draft-start={start}
-                  onClick={(event) => editing.openEditor(makeBlock(event.currentTarget))}>
+                  data-posting-tooltip={`${hoverName} · ${hoverRange}`} data-draft-start={start} draggable={canEdit}
+                  onClick={(event) => editing.openEditor(makeBlock(event.currentTarget))}
+                  onKeyDown={(event) => keyboardSwap(event, makeBlock(event.currentTarget), draftMonths)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', blockId)
+                    editing.startMove(makeBlock(event.currentTarget), false)
+                  }} onDragEnd={editing.finishDrag}>
                   <span className="posting-name">{value}</span>
                 </button>
                 {request}{warning}
               </div>
             </td>
             return <td key={block[0].month} colSpan={block.length}
+              onDragOver={(event) => dragOver(event, cell)} onDrop={(event) => dropOnCell(event, cell)}
               className={issueStyle ? `draft-static-destination ${issueStyle}` : undefined}><div className={`posting-value ${category}`} role="group"
               data-posting-tooltip={`${projection}${hoverName} • ${hoverRange}`}
               aria-label={`${show(resident.name)} - ${range(block)} - ${draftPrefix}${value}${classification}${qualifiers.length ? ` - ${qualifiers.join(', ')}` : ''}`}>
@@ -298,6 +361,8 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })}</tbody>
     </table></TimetableGrid>}
     </div>
+    {editing.released && <DraftSwapFeedback anchor={editing.released.anchor} checking={editing.checking} preview={editing.preview}
+      onApply={editing.confirmDrop} onDismiss={() => editing.dismissDrop()} />}
     {editor && draft && editorResident && <DraftBlockEditor block={editor} options={draft.edit_options ?? []} current={editorCurrent}
       years={`${editorResident.recorded_year ?? ''};${editorResident.projected_year ?? ''};${workbook.residents.find((person) => sameSource(person.source, editor.source))?.residency_year ?? ''}`}
       checking={editing.checking} canApply={!!editing.preview?.draft} issues={editing.preview?.issues ?? []}

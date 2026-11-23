@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftPostingChoices, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -375,6 +375,49 @@ test('draft feedback shows historical warnings and request outcomes with the rel
     await vite.close()
   }
 })
+
+test('swap preview stays on the source row after leaving an ineligible destination', () => {
+  const from = resident.source
+  const other = { sheet: 'Timetable', row: 4 }
+  const affected = [{ source: from, month: '2027-07' }, { source: other, month: '2027-07' }]
+  const invalid = { severity: 'hard' as const, code: 'invalid_destination', message: 'Choose a block in the source row.', affected }
+  const capacity = { severity: 'soft' as const, code: 'capacity_overflow', message: 'The swap would exceed capacity.', affected }
+
+  assert.deepEqual(draftPreviewIssuesForRow([invalid], other, from, other), [invalid])
+  assert.deepEqual(draftPreviewIssuesForRow([invalid], other, from, from), [])
+  assert.deepEqual(draftPreviewIssuesForRow([capacity], other, from, from), [])
+  assert.deepEqual(draftPreviewIssuesForRow([capacity], from, from, from), [capacity])
+  assert.deepEqual(draftPreviewIssuesForRow([capacity], other), [capacity])
+})
+
+test('released swaps wait, require confirmation for warnings, and show blocking reasons', async () => {
+  const edited: DraftSchedule = { ...draft, status: 'edited' }
+  const soft = { severity: 'soft' as const, code: 'capacity', message: 'The swap would exceed capacity.', affected: [] }
+  const hard = { severity: 'hard' as const, code: 'timing', message: 'The posting must come first.', affected: [] }
+  const warning = { draft: edited, issues: [soft] }
+  const blocked = { draft: edited, issues: [soft, hard] }
+  assert.equal(draftSwapOutcome({ draft: edited, issues: [] }), 'clean')
+  assert.equal(draftSwapOutcome(warning), 'warning')
+  assert.equal(draftSwapOutcome(blocked), 'blocked')
+  assert.equal(draftSwapOutcome({ draft: null, issues: [] }), 'blocked')
+
+  const vite = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' })
+  try {
+    const { DraftSwapFeedback } = await vite.ssrLoadModule('/src/components/DraftBlockEditor.tsx')
+    const props = { anchor: {} as HTMLElement, onApply: () => {}, onDismiss: () => {} }
+    const checking = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: true, preview: null }))
+    assert.match(checking, /Checking the swap.*Cancel/)
+    assert.doesNotMatch(checking, /Apply swap/)
+    const confirmation = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: warning }))
+    assert.match(confirmation, /role="dialog".*aria-describedby=.*exceed capacity.*Cancel.*Apply swap/)
+    const rejection = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: blocked }))
+    assert.match(rejection, /Swap blocked.*posting must come first.*Dismiss/)
+    assert.doesNotMatch(rejection, /Apply swap/)
+  } finally {
+    await vite.close()
+  }
+})
+
 
 test('request totals count distinct requests across the draft while filters combine with resident search', () => {
   const request = { posting_request: 'Example', period: null, source: { sheet: 'Request', row: 2 } }
