@@ -5,8 +5,8 @@ import DraftReview from './DraftReview'
 import DraftSearchLimit from './DraftSearchLimit'
 import DraftTimer from './DraftTimer'
 
-export default function DraftActions({ state, workbook, yearLabel, exporting, onExport, onUndo, onDiscard, onFind }: {
-  state: DraftState; workbook: Workbook; yearLabel: string; exporting: boolean
+export default function DraftActions({ state, workbook, yearLabel, exporting, checkingUndo, onExport, onUndo, onDiscard, onFind }: {
+  state: DraftState; workbook: Workbook; yearLabel: string; exporting: boolean; checkingUndo: boolean
   onUndo: () => void; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
 }) {
   const actions = useRef<HTMLDivElement>(null)
@@ -14,6 +14,7 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, on
   const menu = useRef<HTMLDivElement>(null)
   const menuId = useId()
   const focusAction = useRef(false)
+  const unavailable = exporting || state.pending || checkingUndo
   useLayoutEffect(() => {
     if (!focusAction.current) return
     if (document.activeElement === document.body || actions.current?.contains(document.activeElement)) {
@@ -36,14 +37,14 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, on
         {state.cancelling ? 'Cancelling…' : 'Cancel generation'}
       </button>
     </> : state.draft ? <>
-      {!!state.draft.edit_options?.length && <button type="button" className="button button-secondary" disabled={exporting || state.pending || !state.canUndo}
+      {!!state.draft.edit_options?.length && <button type="button" className="button button-secondary" disabled={unavailable || !state.canUndo}
         data-draft-undo onClick={onUndo}>Undo last change</button>}
       <DraftReview key={workbook.target_year} draft={state.draft} workbook={workbook} yearLabel={yearLabel} onFind={onFind} />
-      <button ref={primary} type="button" className="button" disabled={exporting || state.pending} onClick={onExport}>
+      <button ref={primary} type="button" className="button" disabled={unavailable} onClick={onExport}>
         {exporting ? 'Exporting…' : 'Export Excel'}
       </button>
       <button type="button" className="button button-secondary year-arrow draft-overflow" aria-label="Draft actions" title="Draft actions"
-        disabled={exporting || state.pending} popoverTarget={menuId} onClick={(event) => {
+        disabled={unavailable} popoverTarget={menuId} onClick={(event) => {
           const panel = menu.current
           if (!panel) return
           const { right, top, bottom } = event.currentTarget.getBoundingClientRect()
