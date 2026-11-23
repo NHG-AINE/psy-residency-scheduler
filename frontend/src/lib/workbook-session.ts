@@ -1,6 +1,6 @@
 import type { Workbook } from './workbook.ts'
 import { isWorkbook, sameSource, workbookError } from './workbook.ts'
-import { restoreGeneratedDraft } from './draft-edit-history.ts'
+import { restoreDraftEditHistory } from './draft-edit-history.ts'
 import type { DraftChange, DraftSchedule } from './draft-schedule.ts'
 
 export type SavedDraft = { year: number; data: DraftSchedule; elapsedSeconds: number; reviewSignature: string;
@@ -68,7 +68,7 @@ export function parseSession(value: unknown): WorkbookSession | null {
     }
   }
   return { ...saved, file: new File([saved.file], saved.fileName, { type: saved.file.type, lastModified: saved.lastModified }),
-    draft: draft ? restoreGeneratedDraft(draft) : null }
+    draft: draft ? restoreDraftEditHistory(draft) : null }
 }
 
 async function accessSession(value?: WorkbookSession | null): Promise<unknown> {
