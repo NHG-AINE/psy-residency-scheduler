@@ -4,7 +4,7 @@ import { draftBaseline, draftUndoPreview, prepareDraftEdit, undoDraftEdit } from
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
 import type { DraftChange, DraftSchedule } from '../src/lib/draft-schedule.ts'
-import { filterRequestResidents, requestTotals, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { filterRequestResidents, requestTotals, settleDraftAttempt, validateDraftChange } from '../src/lib/draft-schedule.ts'
 import type { Resident } from '../src/lib/workbook.ts'
 import { reviewSignature } from '../src/lib/history-review.ts'
 import type { ReviewStore } from '../src/lib/history-review.ts'
@@ -85,6 +85,36 @@ const withoutReplay = () => { throw new Error('Unexpected replay') }
 const postingEdit = (start: string, option: number) => ({
   kind: 'edit', resident, start, posting: 'Posting', institution: 'Site', offering: { sheet: 'Postings', row: 2, column: String(option) },
 }) as const
+
+test('after reopening an older edited draft, only a missing-baseline response sends original Undo placements', async (context) => {
+  const { saved, planned } = draftHistoryFixture()
+  const generated = saved.draft!
+  generated.data.residents[0].route = 'SGH'
+  const changed = await prepareDraftEdit(generated, swapA, planned([2, 1, 3, 4]), withoutReplay)
+  const reopened = parseSession(structuredClone({ ...saved, draft: changed }))!.draft!
+  const validated = planned([2, 1, 4, 3])
+  const baselineRequired = { detail: { code: 'draft_warning_baseline_required', message: 'Restore the original placements.' } }
+  const payloads: { baseline_residents?: unknown }[] = []
+  const result = { draft: validated, issues: [] }
+  const fetch = context.mock.method(globalThis, 'fetch', async (_url, request: RequestInit) => {
+    payloads.push(JSON.parse(String(request.body)))
+    return payloads.length === 2 ? Response.json(baselineRequired, { status: 422 }) : Response.json(result)
+  })
+  const store = { version: 1 as const, decisions: [] }
+  const signal = new AbortController().signal
+  const original = draftBaseline(reopened)
+  assert.deepEqual(await validateDraftChange(saved.workbook, store, reopened.data, swapB, signal, original), result)
+  assert.equal(fetch.mock.callCount(), 1)
+  assert.equal(payloads[0].baseline_residents, undefined)
+  assert.deepEqual(await validateDraftChange(saved.workbook, store, reopened.data, swapB, signal, original), result)
+  assert.equal(fetch.mock.callCount(), 3)
+  assert.equal(payloads[1].baseline_residents, undefined)
+  assert.deepEqual(payloads[2].baseline_residents, generated.data.residents.map(({ source, route, months, carryforward }) => ({
+    source, route, months, carryforward,
+  })))
+  const edited = await prepareDraftEdit(reopened, swapB, validated, withoutReplay)
+  assert.deepEqual(undoDraftEdit(edited), reopened)
+})
 
 test('request filter keeps the same draft through edits and Undo, even when Not met reaches zero', async () => {
   const { saved, planned } = draftHistoryFixture()

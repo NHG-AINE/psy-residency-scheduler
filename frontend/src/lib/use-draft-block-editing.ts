@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { prepareDraftEdit } from './draft-edit-history'
+import { draftBaseline, prepareDraftEdit } from './draft-edit-history'
 import { draftDropEdges, draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
@@ -131,10 +131,11 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     void (async () => {
       let result: DraftChangeResult
       try {
-        result = await validateDraftChange(workbook, store, draft, change, signal)
+        const original = draftBaseline(previous)
+        result = await validateDraftChange(workbook, store, draft, change, signal, original)
         if (!signal.aborted && active.current === operation && result.draft && draftSwapOutcome(result) !== 'blocked') {
           const next = await prepareDraftEdit(previous, change, result.draft,
-            (base, step) => validateDraftChange(workbook, store, base, step, signal))
+            (base, step) => validateDraftChange(workbook, store, base, step, signal, original))
           operation.prepared = { previous, next, issues: result.issues }
         }
       } catch (error) {

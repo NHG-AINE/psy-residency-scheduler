@@ -58,9 +58,73 @@ def _month_targets(person):
     return [m["target"]["source"] if m.get("target") else None for m in person["months"]]
 
 
+class DraftWarningBaselineRequired(ValueError):
+    pass
+
+
+def _warning_diagnostics(draft):
+    return {key: draft[key] for key in ("preference_scores", "capacity_overflows", "singletons", "soft_results")}
+
+
+def _has_warning_diagnostics(draft, scores, months):
+    try:
+        soft = draft["soft_results"]
+        ratios = soft["monthly_ratios"]
+        return (scores <= draft["preference_scores"].keys()
+                and set(r1_rules.ROUTES) <= soft["route_counts"].keys()
+                and {(row["month"], row["route"]) for row in ratios}
+                == {(month, route) for month in months for route in r1_rules.PAIRED_ROUTES}
+                and all("deviation" in row for row in ratios)
+                and isinstance(soft["site_allocations"], list)
+                and all({"requirement_id", "posting"} <= row.keys() and row["targets"].keys() <= row["counts"].keys()
+                        for row in soft["site_allocations"])
+                and isinstance(draft["capacity_overflows"], list)
+                and all({"month", "requirement_id", "institution", "label", "assigned"} <= row.keys()
+                        for row in draft["capacity_overflows"])
+                and isinstance(draft["singletons"], list)
+                and all({"month", "requirement_id", "institution", "label", "resident_source"} <= row.keys()
+                        for row in draft["singletons"]))
+    except (AttributeError, KeyError, TypeError):
+        return False
+
+
+def _recover_warning_diagnostics(workbook, store, prepared, residents, reason):
+    try:
+        fixed = {draft_source_key(person["source"]): person for person in residents}
+        if len(fixed) != len(residents):
+            raise ValueError(reason)
+        recovered = draft_schedule(workbook, store, max_seconds=10, fixed=fixed, prepared=prepared)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(reason) from exc
+    if recovered["status"] != "feasible":
+        raise ValueError(reason)
+    return _warning_diagnostics(recovered)
+
+
+def _matches_original_baseline(baseline, residents):
+    try:
+        return {draft_source_key(row["source"]): (row["route"], row["months"]) for row in baseline["residents"]} == {
+            draft_source_key(row["source"]): (row["route"], _month_targets(row)) for row in residents
+        }
+    except (KeyError, TypeError):
+        return False
+
+
+def _check_warning_sources(prepared, residents, people):
+    offerings = {draft_source_key(option["source"]) for option in prepared["catalogue_options"] if option["valid"]}
+    for person in residents:
+        for month in person["months"]:
+            target = month.get("target") or {}
+            source = target.get("source")
+            if month["status"] == "posting" and (not isinstance(source, dict) or draft_source_key(source) not in offerings):
+                name = people[draft_source_key(person["source"])].get("name") or "this resident"
+                raise ValueError(f"Warnings could not be recovered for {name} in {_month(month['month'])}. "
+                                 "The saved posting could not be matched to the workbook’s Postings tab.")
+
+
 def _comparison(draft):
     # Only keep the information needed to clear resolved warnings after subsequent edits.
-    return {**{key: draft[key] for key in ("preference_scores", "capacity_overflows", "singletons", "soft_results")},
+    return {**_warning_diagnostics(draft),
             "residents": [{
                 "source": person["source"], "route": person["route"], "cluster_coverage": person["cluster_coverage"],
                 "months": _month_targets(person),
@@ -151,8 +215,9 @@ def _soft_issues(before, after):
         target = after["soft_targets"]["routes"][route]
         if abs(n - target) > abs(previous["route_counts"][route] - target):
             warn("incoming_route_distribution", changed, f"The {route} route would have {_amount(n, 'resident')}. The target for this intake is {target}.")
-    for old, row in zip(previous["monthly_ratios"], current["monthly_ratios"]):
-        if row["deviation"] > old["deviation"]:
+    previous_ratios = {(row["month"], row["route"]): row["deviation"] for row in previous["monthly_ratios"]}
+    for row in current["monthly_ratios"]:
+        if row["deviation"] > previous_ratios[(row["month"], row["route"])]:
             anchors = [a for a in changed if a["month"] == row["month"]]
             warn("monthly_medicine_neurology_ratio", anchors, f"In {_month(row['month'])}, the {row['route']} route would have {row['medicine']} in Medicine and {row['neurology']} in Neurology. The usual split is 2 to 1.")
     def peer_key(row):
@@ -233,10 +298,10 @@ def _explain_conflict(prepared, person, original, moved):
     return "This placement cannot fit the resident’s remaining training with the other blocks in place. Check their posting history, block length and training order."
 
 
-def validate_draft_change(workbook, store, draft, change):
+def validate_draft_change(workbook, store, draft, change, baseline_residents=None):
     if draft.get("status") not in {"feasible", "optimal", "edited"} or draft["cutoff"] != f"{workbook['target_year']}-06":
         raise ValueError("Generate a draft for this planning year before editing postings.")
-    if not draft.get("edit_options") or "preference_scores" not in draft:
+    if not draft.get("edit_options"):
         raise ValueError("Generate a new draft to edit its posting blocks.")
     fixed = {draft_source_key(person["source"]): person for person in deepcopy(draft["residents"])}
     if len(fixed) != len(draft["residents"]):
@@ -295,6 +360,19 @@ def validate_draft_change(workbook, store, draft, change):
                 moved.append(block)
                 offset += length
     prepared = prepare_scheduler_inputs(workbook, store)
+    warning_scores = {"posting_balance", *r1_rules.SOFT_PRIORITIES, *draft.get("soft_priority", [])}
+    warning_months = [month["month"] for month in prepared["planning_months"]]
+    baseline = draft.get("edit_baseline")
+    recover_current = not _has_warning_diagnostics(draft, warning_scores, warning_months)
+    recover_baseline = baseline is not None and not _has_warning_diagnostics(baseline, warning_scores, warning_months)
+    if recover_baseline and baseline_residents is None:
+        raise DraftWarningBaselineRequired("The original placements are needed to recover this draft’s warning data. Reopen it with its Undo history.")
+    if recover_baseline and not _matches_original_baseline(baseline, baseline_residents):
+        raise ValueError("The original placements do not match the saved draft’s warning baseline.")
+    if recover_current:
+        _check_warning_sources(prepared, draft["residents"], fixed)
+    if recover_baseline:
+        _check_warning_sources(prepared, baseline_residents, fixed)
     if kind == "edit":
         years = recorded_years(person["projected_year"]) | recorded_years(person["recorded_year"])
         options = [option for option in prepared["catalogue_options"] if option["valid"] and recorded_years(option["residency_year"]) & years
@@ -319,9 +397,16 @@ def validate_draft_change(workbook, store, draft, change):
         return blocked("hard_constraint", _explain_conflict(prepared, person, original, moved))
     if result["status"] != "feasible":
         raise ValueError("The change could not be validated. Check the workbook and try again.")
+    if recover_current:
+        reason = "Warnings could not be recovered from this draft’s saved placements. Generate a new draft to make changes."
+        draft = {**draft, **_recover_warning_diagnostics(workbook, store, prepared, draft["residents"], reason)}
+    if recover_baseline:
+        reason = "Warnings could not be recovered from this draft’s original placements. Generate a new draft to make changes."
+        baseline = {**baseline, **_recover_warning_diagnostics(workbook, store, prepared, baseline_residents, reason)}
     comparison = _comparison(draft)
     issues = _soft_issues(comparison, result)
-    baseline = draft.get("edit_baseline", comparison)
+    if baseline is None:
+        baseline = comparison
     edit_warnings = issues if baseline is comparison else _soft_issues(baseline, result)
     # Restoring the generated placements can bring back preferences the original draft missed.
     if issues and not edit_warnings and [
