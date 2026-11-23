@@ -6,12 +6,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from history_review import ReviewStore, catalogue_entries
+from history_review import ReviewStore, catalogue_entries, evaluate_review
 from main import app
 from request_preferences import resolve_requests
 from rules.r5_rules import elective_durations, supported_option
 from scheduler_inputs import prepare_scheduler_inputs
-from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, review_import, match_posting, posting_catalogue
+from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year, review_import, match_posting, posting_catalogue
 
 
 def workbook_bytes(edit=None):
@@ -268,6 +268,52 @@ class WorkbookImportTests(unittest.TestCase):
                                            files={"file": ("future.xlsx", future_workbook_bytes())})
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertEqual(response.json()["target_year"], expected)
+
+    def test_prepare_year_rebuilds_selected_workbook_and_applies_timetable_reviews(self):
+        def edit(w):
+            for year, col, header_row in ((2026, 2, 3), (2027, 4, 2)):
+                sheet = w[f"Jul {year} - Jun {year + 1}"]
+                sheet.cell(header_row, 22, "Residency Intake")
+                sheet.cell(header_row + 2, col, "Resident 4")
+                sheet.cell(header_row + 2, col + 2, "R1")
+                sheet.cell(header_row + 2, 22, year)
+
+        content = workbook_bytes(edit)
+        latest = parse_workbook(content)
+        earlier = parse_workbook(content, 2026)
+        store = ReviewStore(version=1, decisions=[])
+        initial_review = evaluate_review(earlier, store, "timetable")
+        entry = initial_review["entries"][0]
+        candidate = initial_review["catalogue"][0]
+        store = ReviewStore.model_validate({"version": 1, "decisions": [{
+            "kind": "resident", "context": entry["context"],
+            "target": {"key": candidate["key"], "signature": candidate["signature"]},
+            "requirement_year": "R2",
+        }]})
+        expected_labels = evaluate_review(earlier, store, "timetable")
+        self.assertEqual(expected_labels["entries"][0]["review"]["status"], "reviewed")
+        self.assertEqual(earlier["residents"][1]["slot_id"], "intake-2026-slot-04")
+        self.assertNotEqual(latest["requests"][0]["matched_resident_source"], earlier["requests"][0]["matched_resident_source"])
+
+        raw_context = {key: latest[key] for key in ("annual_sheets", "requests", "postings")}
+        stale = raw_context["annual_sheets"][0]["residents"][0]
+        stale["slot_id"] = "intake-2027-slot-04"
+        stale["is_intake_placeholder"] = True
+        stale["postings"][0]["catalogue_match"] = {"stale": True}
+        original = deepcopy(raw_context)
+        self.assertEqual(prepare_year(**raw_context, target_year=2026), earlier)
+        self.assertEqual(raw_context, original)
+
+        with TestClient(app) as client:
+            body = {**raw_context, "target_year": 2026, "store": store.model_dump()}
+            result = client.post("/api/prepare-year", json=body)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json(), {"workbook": earlier, "labels": expected_labels})
+            missing = client.post("/api/prepare-year", json={**body, "target_year": 2025})
+            self.assertEqual(missing.status_code, 422)
+            self.assertIn("Available years", missing.json()["detail"])
+            malformed = client.post("/api/prepare-year", json={**body, "annual_sheets": [{"year": 2026}]})
+            self.assertEqual(malformed.status_code, 422)
 
     def test_history_matches_mcr_preserves_blanks_and_excludes_future(self):
         def edit(w):
