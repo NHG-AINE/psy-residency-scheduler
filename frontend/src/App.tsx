@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
@@ -24,7 +24,7 @@ import TimetableGrid from './components/TimetableGrid'
 import { importWorkbook, monthLabel, sameSource, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
-import { evaluateHistory, readReviewStore, STORAGE_KEY } from './lib/history-review'
+import { emptyStore, evaluateHistory, readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './lib/history-review'
 import type { HistoryReview } from './lib/history-review'
 import type { PostingBlock } from './lib/posting-blocks'
 
@@ -104,37 +104,58 @@ function residentRowId(source: Source) {
   return `timetable-resident-${encodeURIComponent(JSON.stringify(source.kind ? [source.kind, source.slot_id] : [source.sheet, source.row]))}`
 }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, filters, actions, exportError, focusSource }: {
+type TimetableLabels = { signature: string; data: HistoryReview }
+
+function subscribeToReviews(changed: () => void) {
+  const storageChanged = (event: StorageEvent) => { if (event.key === STORAGE_KEY || event.key === null) changed() }
+  window.addEventListener('storage', storageChanged)
+  window.addEventListener(REVIEW_CHANGED, changed)
+  return () => {
+    window.removeEventListener('storage', storageChanged)
+    window.removeEventListener(REVIEW_CHANGED, changed)
+  }
+}
+
+function reviewSnapshot() {
+  try { return window.localStorage.getItem(STORAGE_KEY) } catch { return undefined }
+}
+
+function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
+  if (raw === undefined) return { store: emptyStore(), signature: '', error: 'Browser storage is unavailable.' }
+  const saved = readReviewStore({ getItem: () => raw })
+  return { ...saved, signature: reviewSignature(saved.store) }
+}
+
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, filters, actions, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
   importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined
   filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
+  labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
 }) {
   const { draft, error: draftError, failedAttempt } = draftState
   const timetable = useRef<HTMLDivElement>(null)
   const focusedSource = useRef<Source | null>(null)
   const beforeGeneration = useRef<{ draft: DraftSchedule | null } | null>(null)
   const [attempt, setAttempt] = useState(0)
-  const [loaded, setLoaded] = useState<{ workbook: Workbook; attempt: number; data: HistoryReview } | null>(null)
-  const [failure, setFailure] = useState<{ workbook: Workbook; attempt: number; message: string } | null>(null)
+  const rawReviews = useSyncExternalStore(subscribeToReviews, reviewSnapshot)
+  const savedReviews = useMemo(() => readTimetableReviews(rawReviews), [rawReviews])
+  const [failure, setFailure] = useState<{ workbook: Workbook; review: typeof savedReviews; attempt: number; message: string } | null>(null)
+  const resolution = !importLoading && !savedReviews.error && labels?.signature === savedReviews.signature ? labels.data : undefined
   useEffect(() => {
-    if (importLoading) return
+    if (importLoading || savedReviews.error || resolution) return
     const controller = new AbortController()
-    const changed = (event: StorageEvent) => { if (event.key === STORAGE_KEY || event.key === null) setAttempt((value) => value + 1) }
-    window.addEventListener('storage', changed)
-    void (async () => {
-      try {
-        const saved = readReviewStore(window.localStorage)
-        if (saved.error) throw new Error(saved.error)
-        const data = await evaluateHistory(workbook, saved.store, controller.signal, 'timetable')
-        if (!controller.signal.aborted) setLoaded({ workbook, attempt, data })
-      } catch (problem) {
-        if (!controller.signal.aborted) setFailure({ workbook, attempt, message: problem instanceof Error ? problem.message : 'Catalogue labels could not be loaded.' })
-      }
-    })()
-    return () => { controller.abort(); window.removeEventListener('storage', changed) }
-  }, [workbook, attempt, importLoading])
-  const resolution = !importLoading && loaded?.workbook === workbook && loaded.attempt === attempt ? loaded.data : null
-  const error = !importLoading && failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
+    void evaluateHistory(workbook, savedReviews.store, controller.signal, 'timetable').then((data) => {
+      if (controller.signal.aborted) return
+      const raw = reviewSnapshot()
+      const latest = raw === rawReviews ? savedReviews : readTimetableReviews(raw)
+      if (latest.error || latest.signature !== savedReviews.signature) return
+      onLabels(workbook, { signature: savedReviews.signature, data })
+    }).catch((problem: unknown) => {
+      if (!controller.signal.aborted) setFailure({ workbook, review: savedReviews, attempt, message: problem instanceof Error ? problem.message : 'Catalogue labels could not be loaded.' })
+    })
+    return () => controller.abort()
+  }, [workbook, onLabels, rawReviews, savedReviews, attempt, importLoading, resolution])
+  const error = !importLoading && !resolution ? savedReviews.error || (failure?.workbook === workbook && failure.review === savedReviews && failure.attempt === attempt ? failure.message : '') : ''
   const loading = importLoading || (!resolution && !error)
   useLayoutEffect(() => {
     if (loading || !focusSource || focusedSource.current === focusSource) return
@@ -250,6 +271,14 @@ export default function App() {
   const [exportError, setExportError] = useState<{ file: File; draft: DraftSchedule; message: string } | null>(null)
   const [storageError, setStorageError] = useState('')
   const currentSession = useRef<{ file: File; workbook: Workbook } | null>(null)
+  const workbookYears = useRef(new Map<number, Workbook>())
+  const [timetableLabels, setTimetableLabels] = useState(() => new Map<Workbook, TimetableLabels>())
+  const saveLabels = useCallback((result: Workbook, labels: TimetableLabels) => {
+    if (workbookYears.current.get(result.target_year) === result) {
+      setTimetableLabels((current) => new Map(current).set(result, labels))
+    }
+  }, [])
+  const activeImport = useRef<AbortController | null>(null)
   const [loadingHeight, setLoadingHeight] = useState<number>()
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
@@ -274,6 +303,7 @@ export default function App() {
     void restoreSession().then((saved) => {
       if (cancelled || !saved) return
       currentSession.current = { file: saved.file, workbook: saved.workbook }
+      workbookYears.current.set(saved.workbook.target_year, saved.workbook)
       revealAfterUpload.current = saved.workbook.residents.length > 0
       setFile(saved.file); setWorkbook(saved.workbook); setYear(saved.workbook.target_year)
       if (saved.draft) restoreDraft(saved.draft)
@@ -282,6 +312,7 @@ export default function App() {
     }).finally(() => { if (!cancelled) setRestoring(false) })
     return () => { cancelled = true }
   }, [restoreDraft])
+  useEffect(() => () => { activeImport.current?.abort() }, [])
   useEffect(() => {
     if (!restoring && currentSession.current) persistCurrent()
   }, [file, workbook, draftMemory.savedResult, restoring, persistCurrent])
@@ -332,21 +363,35 @@ export default function App() {
     return scrollToPosition(window.scrollY + card.getBoundingClientRect().top - 16)
   }, [])
 
+  function selectWorkbook(nextFile: File, result: Workbook) {
+    currentSession.current = { file: nextFile, workbook: result }
+    workbookYears.current.set(result.target_year, result)
+    setWorkbook(result); setFile(nextFile); setYear(result.target_year)
+  }
   async function load(nextFile: File, nextYear?: number, reveal = false) {
+    if (activeImport.current) return
+    const controller = new AbortController()
+    activeImport.current = controller
     setLoadingHeight(review.current?.getBoundingClientRect().height)
     setBusy(true); setError(''); setStatus(''); setFocusSource(null)
     try {
-      const result = await importWorkbook(nextFile, nextYear)
+      const result = await importWorkbook(nextFile, nextYear, controller.signal)
+      if (controller.signal.aborted) return
       revealAfterUpload.current = reveal
-      if (reveal) { draftMemory.discard(); setView('Timetable'); setQuery('') }
-      currentSession.current = { file: nextFile, workbook: result }
-      setWorkbook(result); setFile(nextFile); setYear(result.target_year)
-      setStatus('')
+      if (reveal) {
+        workbookYears.current.clear(); setTimetableLabels(new Map())
+        draftMemory.discard(); setView('Timetable'); setQuery('')
+      }
+      selectWorkbook(nextFile, result)
     } catch (problem: unknown) {
+      if (controller.signal.aborted) return
       setYear(workbook?.target_year ?? year)
       setError(problem instanceof Error ? problem.message : 'Workbook import failed. Please try again.')
       setStatus(file ? 'The previous import is still available.' : '')
-    } finally { setBusy(false) }
+    } finally {
+      activeImport.current = null
+      if (!controller.signal.aborted) setBusy(false)
+    }
   }
   function choose(files: File[]) {
     if (busy || restoring || !files.length) return
@@ -355,7 +400,22 @@ export default function App() {
     void load(files[0], undefined, true)
   }
   function selectYear(nextYear: number) {
-    if (file && !busy && !restoring) { setYear(nextYear); void load(file, nextYear) }
+    if (!file || activeImport.current || busy || restoring) return
+    const cached = currentSession.current?.file === file ? workbookYears.current.get(nextYear) : undefined
+    if (cached) {
+      setError(''); setStatus(''); setFocusSource(null)
+      selectWorkbook(file, cached)
+    } else {
+      setYear(nextYear); void load(file, nextYear)
+    }
+  }
+  function removeWorkbook() {
+    currentSession.current = null
+    workbookYears.current.clear(); setTimetableLabels(new Map())
+    discardSavedDraft()
+    setFile(null); setWorkbook(null); setYear(undefined); setError(''); setQuery('')
+    setStatus('Import removed. Choose or drop another workbook.')
+    browse.current?.focus()
   }
   const years = [...new Set(workbook?.available_years.map((item) => item.year) || [])].sort((a, b) => b - a)
   const issueCount = workbook ? (workbook.issues?.length || 0) + workbook.warnings.length : 0
@@ -368,7 +428,7 @@ export default function App() {
         <div className="panel-heading"><h2 id="import-title">Workbook import</h2><span className="badge">Local browser storage</span></div>
         <div className={`workbook-chooser ${dragging ? 'is-dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true) }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false) }} onDrop={(event) => { event.preventDefault(); setDragging(false); choose(Array.from(event.dataTransfer.files)) }}>
           <div className="upload-copy">{file ? <><h3 className="filename">{file.name}</h3><p>{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · Imported for {workbook?.target_year}–{workbook && workbook.target_year + 1}</p></> : <><h3>Start with your programme workbook</h3><p>Choose or drop one .xlsx workbook, up to 10 MB.</p></>}<p className="session-note">Your latest successful import and completed draft are kept in this browser. Remove clears the import and draft. Historical review decisions are saved separately.</p></div>
-          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy || restoring} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy || restoring} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{restoring ? 'Restoring workbook...' : busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={() => { currentSession.current = null; discardSavedDraft(); setFile(null); setWorkbook(null); setYear(undefined); setError(''); setQuery(''); setStatus('Import removed. Choose or drop another workbook.'); browse.current?.focus(); }}>Remove</button>}</div>
+          <div className="upload-actions"><input ref={input} type="file" accept=".xlsx" hidden disabled={busy || restoring} aria-label="Programme workbook" onChange={(event) => { choose(Array.from(event.target.files || [])); event.target.value = '' }} /><button ref={browse} className="button" type="button" disabled={busy || restoring} aria-describedby={error ? 'import-error' : undefined} onClick={() => input.current?.click()}>{restoring ? 'Restoring workbook...' : busy ? 'Reading workbook…' : file ? 'Replace workbook' : 'Choose workbook'}</button>{file && <button className="button button-secondary" type="button" disabled={busy} onClick={removeWorkbook}>Remove</button>}</div>
         </div>
         <div className="import-feedback"><p role="status" aria-live="polite">{restoring ? 'Restoring saved workbook...' : draftMemory.notice || status}</p>{storageError && <p role="status" className="error-message">{storageError}</p>}{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
@@ -381,6 +441,7 @@ export default function App() {
         </div>}
         {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
           onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring}
+          labels={timetableLabels.get(workbook)} onLabels={saveLabels}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
           actions={<DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
           filters={<div className="search-toolbar timetable-filters">
