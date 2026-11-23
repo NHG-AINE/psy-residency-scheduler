@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapLayout, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftDropEdges, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapLayout, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -455,6 +455,22 @@ test('insertion previews reflow unequal blocks around fixed leave and identify a
   assert.equal(draftInsertion(months, third, first, 'before'), null)
 })
 
+test('drag narrows the adjacent no-op edge for equal training lengths, including across leave', () => {
+  const dates = ['2027-07', '2027-08', '2027-09', '2027-10', '2027-11', '2027-12', '2028-01', '2028-02', '2028-03']
+  const july = dates[0], november = dates[4], january = dates[6], march = dates[8]
+  const starts = [july, undefined, july, undefined, november, november, january, january, march]
+  const months: DraftSchedule['residents'][number]['months'] = dates.map((month, index) => ({
+    month, status: starts[index] ? 'posting' : 'loa', block_start: starts[index], label: starts[index] ? 'Posting' : null,
+  }))
+  assert.deepEqual(draftDropEdges(months, july, november), [0.1, 0.3])
+  assert.deepEqual(draftDropEdges(months, november, july), [0.3, 0.1])
+  assert.deepEqual(draftDropEdges(months, november, january), [0.1, 0.3])
+  assert.deepEqual(draftDropEdges(months, july, january), [0.3, 0.3])
+  assert.deepEqual(draftDropEdges(months, january, march), [0.3, 0.3])
+  assert.deepEqual(draftDropEdges(months, july, july), [0.3, 0.3])
+  months[3].status = 'outside_draft_scope'
+  assert.deepEqual(draftDropEdges(months, july, november), [0.3, 0.3])
+})
 
 test('request totals count distinct requests across the draft while filters combine with resident search', () => {
   const request = { posting_request: 'Example', period: null, source: { sheet: 'Request', row: 2 } }
