@@ -965,6 +965,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         choice = next(choice for j, choice in enumerate(candidates[i]) if solver.boolean_value(variables[i][j]))
         choice = deepcopy(choice)
         chosen = [p for p in placements[i] if solver.value(p["variable"])]
+        planned_months = fixed[draft_source_key(person["source"])]["months"] if fixed is not None else None
         block_starts = {month: person["availability"][run[0]]["month"] for _, run in _r1_blocks(choice["schedule"]) for month in run}
         for placement in chosen:
             for month in placement["months"]:
@@ -990,7 +991,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                            "label": option["label"] if option else None,
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
             if option:
-                months[-1]["block_start"] = block_starts[month]
+                # A validated swap can bring two generated R1 Medicine blocks together.
+                months[-1]["block_start"] = planned_months[month]["block_start"] if planned_months is not None else block_starts[month]
         outcomes = request_outcomes[i]
         for outcome in outcomes:
             if outcome['status'] in {'evaluable', 'not_met'} and 'duplicate_of' not in outcome:

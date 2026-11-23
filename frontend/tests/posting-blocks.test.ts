@@ -38,6 +38,14 @@ test('status boundaries prevent grouping equal raw labels', () => {
   assert.equal(groupPostings(postings).length, 4)
 })
 
+test('adjacent generated blocks with the same label retain their own editing boundaries', () => {
+  const postings = ['07', '08', '09', '10'].map((month, index) => ({
+    ...posting(`2027-${month}`, 'IMH Elective', String(index)), draft: true as const,
+    draftBlockStart: index < 2 ? '2027-07' : '2027-09',
+  }))
+  assert.deepEqual(groupPostings(postings), [postings.slice(0, 2), postings.slice(2)])
+})
+
 
 function resolved(postings: Resident['postings'], status = 'automatic_match', label = 'SITE Department'): HistoryEntry {
   return {

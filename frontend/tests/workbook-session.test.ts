@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
+import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { reviewSignature } from '../src/lib/history-review.ts'
 import type { ReviewStore } from '../src/lib/history-review.ts'
 
@@ -68,6 +69,38 @@ test('restores edited draft warnings and original undo snapshot alongside workbo
   const restored = parseSession(structuredClone(saved))
   assert.deepEqual(restored?.draft, saved.draft)
   assert.equal(restored?.draft?.undo?.at(-1)?.status, 'feasible')
+})
+
+test('recovers R1 Medicine boundaries from undo history after a saved swap and later edit', () => {
+  const saved = session()
+  const [july, aug, sep, oct, nov, dec, jan] = ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01']
+  type DraftMonth = DraftSchedule['residents'][number]['months'][number]
+  const medical = (month: string, block_start: string, neurology = false): DraftMonth => ({
+    month, block_start, status: 'posting', label: neurology ? 'SGH Neurology' : 'SGH General Medicine',
+    target: { category: 'core', requirement_id: neurology ? 'r1.neurology' : 'r1.general_medicine' },
+  })
+  const leave: DraftMonth = { month: oct, status: 'loa', label: null }
+  const split = { source: { sheet: 'Latest', row: 2 }, name: 'Split Medicine', mcr: null, carryforward: [],
+    months: [medical(july, july), medical(aug, july), medical(sep, sep, true), leave,
+      medical(nov, sep, true), medical(dec, dec), medical(jan, dec)] }
+  const merged = [medical(july, july, true), medical(aug, july, true), medical(sep, sep), leave,
+    medical(nov, sep), medical(dec, sep), medical(jan, sep)]
+  const continuous = { ...split, source: { sheet: 'Latest', row: 3 }, months: merged }
+  const original = { ...saved.draft!.data, residents: [split, continuous] }
+  const swapped = { ...original, status: 'edited' as const, residents: [{ ...split, months: merged }, continuous] }
+  const later = { ...swapped, residents: [swapped.residents[0], { ...continuous, name: 'Other resident' }] }
+  saved.draft = { ...saved.draft!, undo: [original, swapped], data: later }
+
+  const restored = parseSession(structuredClone(saved))!.draft!
+  const repaired = [july, july, sep, undefined, sep, dec, dec]
+  assert.deepEqual(restored.data.residents[0].months.map((month) => month.block_start), repaired)
+  assert.deepEqual(restored.undo?.[1].residents[0].months.map((month) => month.block_start), repaired)
+  assert.deepEqual(restored.data.residents[1], later.residents[1])
+  assert.deepEqual(restored.undo?.[0], original)
+  assert.deepEqual(parseSession(structuredClone({ ...saved, draft: restored }))?.draft, restored)
+  assert.deepEqual(parseSession({ ...saved, draft: { ...saved.draft, undo: [] } })?.draft?.data, later)
+  const malformed = { ...swapped, residents: [null, { ...split, months: [null] }] }
+  assert.deepEqual(parseSession({ ...saved, draft: { ...saved.draft, undo: [original, malformed] } })?.draft?.data, later)
 })
 
 test('review signatures ignore equivalent ordering but change with actual decisions', () => {
