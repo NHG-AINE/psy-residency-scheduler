@@ -217,7 +217,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const loading = importLoading || (!resolution && !error)
   const hasEditOptions = !!draft?.edit_options?.length
   const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
-  const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState.applyChange)
+  const editing = useDraftBlockEditing(workbook, savedReviews.store, draft, !canEdit, draftState)
   const moveSource = (editing.move ?? editing.released)?.from.source
   const editor = editing.editor
   const editorResident = editor && draft?.residents.find((person) => sameSource(person.source, editor.source))

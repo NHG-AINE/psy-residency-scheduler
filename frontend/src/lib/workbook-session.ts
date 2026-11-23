@@ -1,8 +1,10 @@
 import type { Workbook } from './workbook.ts'
 import { isWorkbook, sameSource, workbookError } from './workbook.ts'
-import type { DraftSchedule } from './draft-schedule.ts'
+import { restoreGeneratedDraft } from './draft-edit-history.ts'
+import type { DraftChange, DraftSchedule } from './draft-schedule.ts'
 
-export type SavedDraft = { year: number; data: DraftSchedule; elapsedSeconds: number; reviewSignature: string; undo?: DraftSchedule[] }
+export type SavedDraft = { year: number; data: DraftSchedule; elapsedSeconds: number; reviewSignature: string;
+  undo?: DraftSchedule[]; undoChanges?: (DraftChange | null)[] }
 export type WorkbookSession = { version: 1; file: File; fileName: string; lastModified: number; workbook: Workbook; draft: SavedDraft | null }
 
 function restoreSplitMedicine(draft: DraftSchedule, previous: DraftSchedule | undefined): DraftSchedule {
@@ -53,12 +55,20 @@ export function parseSession(value: unknown): WorkbookSession | null {
     throw new Error('The saved draft could not be read. Choose the workbook again.')
   }
   let draft = saved.draft || null
-  if (draft?.undo?.length) {
+  if (draft?.undo?.length && draft.undoChanges === undefined) {
     const undo: DraftSchedule[] = []
     for (const snapshot of draft.undo) undo.push(restoreSplitMedicine(snapshot, undo.at(-1)))
     draft = { ...draft, data: restoreSplitMedicine(draft.data, undo.at(-1)), undo }
   }
-  return { ...saved, file: new File([saved.file], saved.fileName, { type: saved.file.type, lastModified: saved.lastModified }), draft }
+  if (draft && draft.undoChanges !== undefined) {
+    const changes = draft.undoChanges
+    if (!Array.isArray(changes) || changes.length !== (draft.undo?.length ?? 0) || changes.some((change) =>
+      change !== null && (!change?.resident || typeof change.start !== 'string' || !['edit', 'swap', 'insert'].includes(change.kind)))) {
+      draft = { ...draft, undoChanges: (draft.undo ?? []).map(() => null) }
+    }
+  }
+  return { ...saved, file: new File([saved.file], saved.fileName, { type: saved.file.type, lastModified: saved.lastModified }),
+    draft: draft ? restoreGeneratedDraft(draft) : null }
 }
 
 async function accessSession(value?: WorkbookSession | null): Promise<unknown> {

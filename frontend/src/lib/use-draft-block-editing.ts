@@ -1,9 +1,12 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { prepareDraftEdit } from './draft-edit-history'
 import { draftInsertion, draftSwapOutcome, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
+import type { DraftState } from './use-draft-schedule'
 import { sameSource } from './workbook'
 import type { Source, Workbook } from './workbook'
+import type { SavedDraft } from './workbook-session'
 
 export type DraftBlock = { source: Source; name: string; label: string; start: string; months: string[]; id: string; anchor: HTMLButtonElement }
 export type DraftCell = Pick<DraftBlock, 'source' | 'start' | 'months'> & { leave?: boolean; label: string }
@@ -35,7 +38,7 @@ export function issuesForCell(issues: DraftChangeIssue[], source: Source, months
 }
 
 export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, draft: DraftSchedule | null, disabled: boolean,
-  applyChange: (previous: DraftSchedule, next: DraftSchedule) => boolean) {
+  { getSavedResult, applyChange }: Pick<DraftState, 'getSavedResult' | 'applyChange'>) {
   const [editor, setEditor] = useState<DraftBlock | null>(null)
   const [move, setMove] = useState<{ from: DraftBlock; keyboard: boolean } | null>(null)
   const moving = useRef(move)
@@ -46,7 +49,7 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   const [checking, setChecking] = useState(false)
   const [announcement, announce] = useState('')
   const [context, setContext] = useState({ workbook, store, draft, disabled })
-  const active = useRef<{ controller: AbortController; checked?: DraftChangeResult } | null>(null)
+  const active = useRef<{ controller: AbortController; prepared?: { previous: SavedDraft; next: SavedDraft; issues: DraftChangeIssue[] } } | null>(null)
   if (context.workbook !== workbook || context.store !== store || context.draft !== draft || context.disabled !== disabled) {
     if (move || released) announce('')
     setContext({ workbook, store, draft, disabled })
@@ -92,7 +95,8 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function check(change: DraftChange, affected: DraftCell[], release?: ReleasedMove) {
     clearPreview()
-    if (!draft || disabled) return
+    const previous = getSavedResult()
+    if (!draft || previous?.data !== draft || disabled) return
     const operation: NonNullable<typeof active.current> = { controller: new AbortController() }
     active.current = operation
     setChecking(true)
@@ -103,6 +107,11 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
       let result: DraftChangeResult
       try {
         result = await validateDraftChange(workbook, store, draft, change, signal)
+        if (!signal.aborted && active.current === operation && result.draft && draftSwapOutcome(result) !== 'blocked') {
+          const next = await prepareDraftEdit(previous, change, result.draft,
+            (base, step) => validateDraftChange(workbook, store, base, step, signal))
+          operation.prepared = { previous, next, issues: result.issues }
+        }
       } catch (error) {
         result = { draft: null, issues: [{ severity: 'hard', code: 'validation_error',
           message: error instanceof Error && !['AbortError', 'TimeoutError', 'TypeError'].includes(error.name)
@@ -110,7 +119,6 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
           affected: affected.map(({ start, source }) => ({ month: start, source })) }] }
       }
       if (signal.aborted || active.current !== operation) return
-      operation.checked = result
       const outcome = draftSwapOutcome(result)
       if (release && outcome === 'clean' && apply(release.focus)) return
       setPreview(result); setChecking(false)
@@ -132,12 +140,10 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   }
 
   function apply(block: DraftBlock) {
-    const operation = active.current
-    const checked = operation?.checked
-    if (!draft || !checked?.draft || checked.issues.some((issue) => issue.severity === 'hard')) return false
-    if (!applyChange(draft, checked.draft)) return false
+    const prepared = active.current?.prepared
+    if (!prepared || !applyChange(prepared.previous, prepared.next)) return false
     cancelMove(); setEditor(null)
-    announce(`${block.name}’s draft updated.${checked.issues.length ? ` ${checked.issues.map((issue) => issue.message).join(' ')}` : ''}`)
+    announce(`${block.name}’s draft updated.${prepared.issues.length ? ` ${prepared.issues.map((issue) => issue.message).join(' ')}` : ''}`)
     requestAnimationFrame(() => focusBlock(block))
     return true
   }

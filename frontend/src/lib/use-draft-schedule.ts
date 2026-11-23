@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { undoDraftEdit } from './draft-edit-history'
 import { canGenerateDraft, cancelDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
-import type { DraftResult, DraftSchedule } from './draft-schedule'
+import type { DraftResult } from './draft-schedule'
 import type { SavedDraft } from './workbook-session'
 import { readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './history-review'
 import type { Workbook } from './workbook'
@@ -71,17 +72,16 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
     } catch { setNotice('Review decisions could not be checked. The saved workbook was restored without its draft.') }
   }, [updateResult])
   const getSavedResult = useCallback(() => resultRef.current.saved, [])
-  const applyChange = useCallback((previous: DraftSchedule, data: DraftSchedule) => {
-    const saved = resultRef.current.saved
-    if (!saved || saved.data !== previous || active.current || data.status !== 'edited') return false
-    updateResult({ saved: { ...saved, data, undo: [...(saved.undo ?? []), previous] }, failure: null })
+  const applyChange = useCallback((previous: SavedDraft, saved: SavedDraft) => {
+    if (resultRef.current.saved !== previous || active.current) return false
+    updateResult({ saved, failure: null })
     return true
   }, [updateResult])
   const undoChange = useCallback(() => {
-    const saved = resultRef.current.saved
-    const previous = saved?.undo?.at(-1)
-    if (!saved || !previous || active.current) return false
-    updateResult({ saved: { ...saved, data: previous, undo: saved.undo?.slice(0, -1) }, failure: null })
+    if (active.current) return false
+    const saved = undoDraftEdit(resultRef.current.saved)
+    if (!saved) return false
+    updateResult({ saved, failure: null })
     return true
   }, [updateResult])
   const canGenerate = canGenerateDraft(workbook, selectedYear, importing)
