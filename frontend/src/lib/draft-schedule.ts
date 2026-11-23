@@ -39,7 +39,7 @@ export type DraftSchedule = {
   residents: { source: Source; name: string | null; mcr: string | null; route?: string; projected_year?: string; recorded_year?: string
     requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; block_start?: string; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string; institution?: string } | null }[]
-    carryforward: { requirement_id: string; institution: string; months: number }[] }[]
+    carryforward: { requirement_id: string; institution: string; months: number; label?: string }[] }[]
   soft_priority?: string[]
   wall_time_seconds?: number
   optimisation_stages?: { priority: string; status: string; wall_time_seconds: number }[]

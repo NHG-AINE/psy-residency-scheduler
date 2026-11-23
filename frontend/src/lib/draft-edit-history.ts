@@ -1,0 +1,144 @@
+import { draftSwapOutcome } from './draft-schedule.ts'
+import type { DraftChange, DraftChangeResult, DraftSchedule } from './draft-schedule.ts'
+import { sameSource } from './workbook.ts'
+import type { Source } from './workbook.ts'
+import type { SavedDraft } from './workbook-session.ts'
+
+type Month = DraftSchedule['residents'][number]['months'][number]
+type Swap = Extract<DraftChange, { kind: 'swap' }>
+
+function residentMonths(draft: DraftSchedule, resident: Source) {
+  const months = draft.residents.find((person) => person?.source && sameSource(person.source, resident))?.months
+  return Array.isArray(months) ? months : []
+}
+
+function touchedMonths(draft: DraftSchedule, change: DraftChange) {
+  const months = residentMonths(draft, change.resident)
+  const starts = change.kind === 'edit' ? [change.start] : [change.start, change.destination]
+  const selected = months.filter((month) => month?.block_start && starts.includes(month.block_start))
+  if (change.kind !== 'insert' || selected.length === 0) return selected
+  // An insertion can move every intervening block, even between adjacent postings with the same label.
+  return months.filter((month) => month?.month >= selected[0].month && month.month <= selected.at(-1)!.month)
+}
+
+function assignment(month: Month | undefined) {
+  if (!month) return null
+  const target = month.target
+  const source = target?.source
+  return JSON.stringify([month.month, month.status, month.block_start, month.label, target?.requirement_id,
+    target?.institution, target?.category, target?.residency_year, source?.sheet, source?.row, source?.column, source?.kind, source?.slot_id])
+}
+
+function matchesAssignments(actual: DraftSchedule, expected: DraftSchedule, reversal?: { resident: Source; months: Map<string, Month> }) {
+  return actual.residents.length === expected.residents.length && expected.residents.every((person, index) => {
+    const other = actual.residents[index]
+    if (!person?.source || !other?.source || !sameSource(other.source, person.source)
+      || !Array.isArray(person.months) || !Array.isArray(other.months) || person.months.length !== other.months.length) return false
+    const restored = reversal && sameSource(person.source, reversal.resident) ? reversal.months : undefined
+    return person.months.every((month, monthIndex) => assignment(restored?.get(month?.month) ?? month) === assignment(other.months[monthIndex]))
+  })
+}
+
+function matchesPlan(actual: DraftSchedule, expected: DraftSchedule) {
+  return matchesAssignments(actual, expected) && actual.residents.every(({ route, carryforward }, index) => {
+    const original = expected.residents[index]
+    const remaining = (rows: typeof carryforward) => rows?.map(({ requirement_id, institution, months, label }) =>
+      JSON.stringify([requirement_id, institution, months, label])).sort().join('\n')
+    return route === original.route && remaining(carryforward) === remaining(original.carryforward)
+  })
+}
+
+export function restoreGeneratedDraft(saved: SavedDraft): SavedDraft {
+  const original = saved.undo?.[0]
+  if (!original || !['feasible', 'optimal'].includes(original.status) || !matchesPlan(saved.data, original)) return saved
+  return { ...saved, data: original, undo: [], undoChanges: [] }
+}
+
+function asSwap(draft: DraftSchedule, change: DraftChange): Swap | null {
+  if (change.kind !== 'insert') return change.kind === 'swap' ? change : null
+  const span = touchedMonths(draft, change).filter((month) => month.status === 'posting')
+  const first = span.filter((month) => month.block_start === change.start)
+  const second = span.filter((month) => month.block_start === change.destination)
+  if (!first.length || first.length !== second.length || first.length + second.length !== span.length) return null
+  return { kind: 'swap', resident: change.resident, start: change.start, destination: change.destination }
+}
+
+function inferSwap(before: DraftSchedule, after: DraftSchedule): Swap | null {
+  for (const person of before.residents) {
+    if (!person?.source || !Array.isArray(person.months)) continue
+    const updated = residentMonths(after, person.source)
+    const starts = new Set(person.months.filter((month, i) => assignment(month) !== assignment(updated[i])).map((month) => month?.block_start))
+    if (!starts.size) continue
+    const [start, destination] = starts
+    if (starts.size !== 2 || !start || !destination) return null
+    const first = person.months.filter((month) => month?.block_start === start)
+    const second = person.months.filter((month) => month?.block_start === destination)
+    if (!first.length || first.length !== second.length) return null
+    const months = new Map<string, Month>()
+    for (const [block, incoming] of [[first, second[0]], [second, first[0]]] as const) {
+      for (const month of block) months.set(month.month, { ...month, label: incoming.label, target: incoming.target })
+    }
+    if (!matchesAssignments(after, before, { resident: person.source, months })) return null
+    return { kind: 'swap', resident: person.source, start, destination }
+  }
+  return null
+}
+
+export async function prepareDraftEdit(saved: SavedDraft, change: DraftChange, validated: DraftSchedule,
+  replay: (draft: DraftSchedule, change: DraftChange) => Promise<DraftChangeResult>): Promise<SavedDraft> {
+  const undo = saved.undo ?? []
+  const recorded = saved.undoChanges ?? undo.map(() => null)
+  const chronological = { ...saved, data: validated, undo: [...undo, saved.data], undoChanges: [...recorded, change] }
+  if (change.kind === 'edit') return chronological
+  const original = restoreGeneratedDraft(chronological)
+  if (original !== chronological) return original
+  const swap = asSwap(saved.data, change)
+  if (!swap) return chronological
+
+  const changes = recorded.map((step, index) => step ?? inferSwap(undo[index], undo[index + 1] ?? saved.data))
+  const current = touchedMonths(saved.data, swap)
+  const dates = new Set(current.map((month) => month.month))
+  for (let index = undo.length - 1; index >= 0; index--) {
+    const previous = changes[index]
+    if (!previous) break
+    if (!sameSource(previous.resident, change.resident)) continue
+
+    const before = undo[index]
+    if (!touchedMonths(before, previous).some((month) => dates.has(month.month))) continue
+    const priorSwap = asSwap(before, previous)
+    if (!priorSwap || ![swap.start, swap.destination].includes(priorSwap.start)
+      || ![swap.start, swap.destination].includes(priorSwap.destination)) break
+    const touched = touchedMonths(before, priorSwap)
+    if (touched.length !== current.length || touched.some((month) => !dates.has(month.month))) break
+    const historicalAfter = undo[index + 1] ?? saved.data
+    const prior = residentMonths(historicalAfter, change.resident).filter((month) => dates.has(month?.month))
+    if (prior.length !== current.length || prior.some((month, i) => assignment(month) !== assignment(current[i]))) break
+
+    const reversal = { resident: change.resident, months: new Map(touched.map((month) => [month.month, month])) }
+    if (!matchesAssignments(validated, saved.data, reversal)) break
+
+    let data = before
+    const rebased = undo.slice(0, index)
+    try {
+      for (let later = index + 1; later < undo.length; later++) {
+        const operation = changes[later]
+        if (!operation) return chronological
+        const result = await replay(data, operation)
+        if (draftSwapOutcome(result) === 'blocked' || !result.draft
+          || !matchesAssignments(result.draft, undo[later + 1] ?? saved.data, reversal)) return chronological
+        rebased.push(data)
+        data = result.draft
+      }
+    } catch {
+      return chronological
+    }
+    if (!matchesPlan(data, validated)) return chronological
+    return { ...saved, data, undo: rebased, undoChanges: changes.filter((_, i) => i !== index) }
+  }
+  return chronological
+}
+
+export function undoDraftEdit(saved: SavedDraft | null): SavedDraft | null {
+  const previous = saved?.undo?.at(-1)
+  return saved && previous ? { ...saved, data: previous, undo: saved.undo?.slice(0, -1), undoChanges: saved.undoChanges?.slice(0, -1) } : null
+}
