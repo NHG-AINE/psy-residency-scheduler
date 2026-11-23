@@ -31,6 +31,7 @@ export type DraftSchedule = {
   capacity_coverage_notes?: { code: string; source: Source }[]
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal' | 'edited'
   edit_options?: DraftEditOption[]
+  edit_baseline?: unknown
   edit_warnings?: DraftChangeIssue[]
   cutoff: string
   blockers: { code: string; source?: Source; sources?: Source[]; month?: string; name?: string; clusters?: string[] }[]
