@@ -4,6 +4,7 @@ import { reasonLabel, resolvedCatalogueTarget } from './history-review.ts'
 import { postingHistoryEntry } from './posting-blocks.ts'
 import type { HistoryEntry } from './history-review.ts'
 import type { ReviewStore } from './history-review.ts'
+import type { SavedDraft } from './workbook-session.ts'
 
 export type RequestOutcome = {
   request: { posting_request: string | null; period: string | null; source: Source }
@@ -38,6 +39,14 @@ export type DraftSchedule = {
   wall_time_seconds?: number
   optimisation_stages?: { priority: string; status: string; wall_time_seconds: number }[]
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
+}
+
+export type DraftResult = { saved: SavedDraft | null; failure: DraftSchedule | null }
+
+export function settleDraftAttempt(current: DraftResult, attempt: SavedDraft, operation: { cancelled: boolean; invalidated: boolean }): DraftResult {
+  if (operation.cancelled || operation.invalidated) return current
+  if (attempt.data.status === 'optimal' || attempt.data.status === 'feasible') return { saved: attempt, failure: null }
+  return { saved: current.saved, failure: attempt.data }
 }
 
 export function requestSummary(resident: Resident, draft: DraftSchedule | null) {

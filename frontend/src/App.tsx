@@ -109,9 +109,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined
   filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
 }) {
-  const { draft: result, error: draftError } = draftState
-  const draft = result?.status === 'optimal' || result?.status === 'feasible' ? result : null
-  const failedAttempt = draft ? null : result
+  const { draft, error: draftError, failedAttempt } = draftState
   const timetable = useRef<HTMLDivElement>(null)
   const focusedSource = useRef<Source | null>(null)
   const beforeGeneration = useRef<{ draft: DraftSchedule | null } | null>(null)
@@ -384,7 +382,7 @@ export default function App() {
         {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
           onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
-          actions={<DraftActions state={{ ...draftState, draft: hasDraft ? draftState.draft : null }} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
+          actions={<DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
           filters={<div className="search-toolbar timetable-filters">
             <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR" value={query} disabled={busy} onChange={setQuery} />
             <RequestOutcomeFilter draft={draftState.draft} selected={requestFilter} onChange={selectRequestFilter} disabled={busy} />
