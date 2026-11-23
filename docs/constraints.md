@@ -33,6 +33,11 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   leaves 3 elective months. Completing 6 months in each core fills all 12 months.
   Recognised extended core history counts towards these totals.
 
+  For manual edits, require at least 3 months of Child credit and 3 months of
+  Geriatric credit across the 12 months. An all-core plan can split Child and
+  Geriatric 9+3, 6+6 or 3+9. A 12+0 split in either direction leaves one core
+  requirement unmet. Reserve the 9+3 and 3+9 splits for manual edits.
+
 - **Count R5 core and elective credit.** The six-month Child and Geriatric
   Psychiatry core posting gives 3 months of Child credit and 3 months of
   Geriatric credit. On the standard combined route, the remaining 6 months

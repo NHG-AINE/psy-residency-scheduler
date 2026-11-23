@@ -82,6 +82,13 @@ core from 3 to 6 months leaves 3 elective months. A resident who takes 6 months
 of each core completes all 12 months with those two postings. Recognised extended
 core postings from previous years count towards the same totals.
 
+When editing a draft, a planner may allocate all 12 months to core postings.
+The resident needs at least 3 months of credit in each core. For example,
+6 months of SKH Geriatric Psychiatry and 3 months of CGH Geriatric Psychiatry
+give 9 months of Geriatric credit. Another 3 months of Child & Adolescent
+Psychiatry complete the year. The same rule allows 9 months of Child and
+3 months of Geriatric. These 9-month totals are for manual edits only.
+
 Residents with 6 elective months to complete normally take one continuous
 six-month block. If an eligible request allows a three-month placement, they
 can take two continuous three-month blocks instead. This includes a request
