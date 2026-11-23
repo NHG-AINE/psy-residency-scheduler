@@ -2,7 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRe
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
-import { draftUndoPreview, undoDraftEdit } from './lib/draft-edit-history'
+import { draftBaseline, draftUndoPreview, undoDraftEdit } from './lib/draft-edit-history'
 import { restoreSession, saveSession } from './lib/workbook-session'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
@@ -219,12 +219,11 @@ function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
   return { ...saved, signature: reviewSignature(saved.store) }
 }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, onExport, onDiscard, onFind, onUndoApplied, exportError, focusSource, labels, onLabels }: {
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, onExport, onDiscard, onFind, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
   importLoading: boolean; exporting: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
   onReady: (target: HTMLElement, workbook: Workbook, labelsReady: boolean) => (() => void) | undefined
   filters: ReactNode; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
-  onUndoApplied: (draft: DraftSchedule) => void
   exportError: string | undefined; focusSource: Source | null
   labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
 }) {
@@ -289,7 +288,6 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     })
     const restore = (mounted = true) => {
       if (!draftState.applyChange(saved, restored)) return
-      onUndoApplied(restored.data)
       if (!mounted) return
       const filtered = preview && workbook.residents.some((resident) => sameSource(resident.source, preview.resident))
         && !residents.some((resident) => sameSource(resident.source, preview.resident))
@@ -676,12 +674,13 @@ export default function App() {
     }
   }
   const [requestSelection, setRequestSelection] = useState<{ draft: DraftSchedule; status: RequestStatus | null } | null>(null)
-  const requestFilter = hasDraft && requestSelection?.draft === draftState.draft ? requestSelection.status : null
+  const requestBaseline = draftBaseline(draftState.savedResult)
+  const requestFilter = hasDraft && requestSelection?.draft === requestBaseline ? requestSelection.status : null
 
   const matchingResidents = workbook?.residents.filter((resident) => matchesResident(query, resident.name, resident.mcr)) || []
   const timetableResidents = filterRequestResidents(matchingResidents, draftState.draft, requestFilter)
   function selectRequestFilter(status: RequestStatus | null) {
-    if (draftState.draft) setRequestSelection({ draft: draftState.draft, status })
+    if (requestBaseline) setRequestSelection({ draft: requestBaseline, status })
   }
   function findInTimetable(source: Source) {
     const resident = workbook?.residents.find((person) => sameSource(person.source, source))
@@ -831,7 +830,6 @@ export default function App() {
           labels={selectedLabels} onLabels={saveLabels}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
           onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable}
-          onUndoApplied={(draft) => setRequestSelection((selection) => selection?.draft === draftState.draft ? { ...selection, draft } : selection)}
           filters={<div className="search-toolbar timetable-filters">
             <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR" value={query} disabled={busy} onChange={setQuery} />
             <RequestOutcomeFilter draft={draftState.draft} selected={requestFilter} onChange={selectRequestFilter} disabled={busy} />

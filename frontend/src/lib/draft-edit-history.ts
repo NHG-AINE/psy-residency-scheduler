@@ -116,9 +116,13 @@ function matchesPlan(actual: DraftSchedule, expected: DraftSchedule) {
   })
 }
 
+export function draftBaseline(saved: SavedDraft | null): DraftSchedule | null {
+  return saved?.undo?.[0] ?? saved?.data ?? null
+}
+
 export function restoreGeneratedDraft(saved: SavedDraft): SavedDraft {
-  const original = saved.undo?.[0]
-  if (!original || !['feasible', 'optimal'].includes(original.status) || !matchesPlan(saved.data, original)) return saved
+  const original = draftBaseline(saved)
+  if (!saved.undo?.length || !original || !['feasible', 'optimal'].includes(original.status) || !matchesPlan(saved.data, original)) return saved
   return { ...saved, data: original, undo: [], undoChanges: [] }
 }
 

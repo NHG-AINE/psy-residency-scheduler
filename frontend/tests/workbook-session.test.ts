@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftUndoPreview, prepareDraftEdit, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
+import { draftBaseline, draftUndoPreview, prepareDraftEdit, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
 import type { DraftChange, DraftSchedule } from '../src/lib/draft-schedule.ts'
+import { filterRequestResidents, requestTotals, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import type { Resident } from '../src/lib/workbook.ts'
 import { reviewSignature } from '../src/lib/history-review.ts'
 import type { ReviewStore } from '../src/lib/history-review.ts'
 
@@ -83,6 +85,34 @@ const withoutReplay = () => { throw new Error('Unexpected replay') }
 const postingEdit = (start: string, option: number) => ({
   kind: 'edit', resident, start, posting: 'Posting', institution: 'Site', offering: { sheet: 'Postings', row: 2, column: String(option) },
 }) as const
+
+test('request filter keeps the same draft through edits and Undo, even when Not met reaches zero', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const original = saved.draft!
+  const row = { source: resident } as Resident
+  const request = { posting_request: 'Requested posting', period: null, source: { sheet: 'Requests', row: 2 } }
+  original.data.residents[0].requests = [{ status: 'not_met', request }]
+  const baseline = draftBaseline(original)
+  for (const [action, order] of [[swapA, [2, 1, 3, 4]], [edgeA, [2, 1, 3, 4]],
+    [postingEdit(july, 5), [5, 2, 3, 4]]] as const) {
+    const data = planned([...order])
+    data.residents[0].requests = [{ status: 'met', request }]
+    const edited = await prepareDraftEdit(original, action, data, withoutReplay)
+    assert.equal(draftBaseline(edited), baseline)
+    assert.equal(requestTotals(edited.data).not_met, 0)
+    assert.deepEqual(filterRequestResidents([row], edited.data, 'not_met'), [])
+
+    const undone = undoDraftEdit(edited)!
+    assert.equal(draftBaseline(undone), baseline)
+    assert.equal(requestTotals(undone.data).not_met, 1)
+    assert.deepEqual(filterRequestResidents([row], undone.data, 'not_met'), [row])
+  }
+
+  const regenerated = settleDraftAttempt({ saved: original, failure: null }, structuredClone(original),
+    { cancelled: false, invalidated: false })
+  assert.notEqual(draftBaseline(regenerated.saved), baseline)
+  assert.equal(draftBaseline(null), null)
+})
 
 function draftHistoryFixture(other?: { sheet: string; row: number }) {
   const saved = session()
