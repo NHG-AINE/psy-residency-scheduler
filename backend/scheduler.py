@@ -12,7 +12,7 @@ if __package__:
     from .cluster_coverage import CLUSTERS, cluster_coverage
     from .rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from .history_review import evaluate_review
-    from .requirement_ledger import programme_requirements_completed
+    from .requirement_ledger import programme_requirements_completed, source_key
     from .scheduler_inputs import prepare_scheduler_inputs
     from .workbook_import import normalized_label, recorded_years
 else:
@@ -20,7 +20,7 @@ else:
     from cluster_coverage import CLUSTERS, cluster_coverage
     from rules import r1_rules, r2_rules, r3_rules, r4_rules, r5_rules
     from history_review import evaluate_review
-    from requirement_ledger import programme_requirements_completed
+    from requirement_ledger import programme_requirements_completed, source_key
     from scheduler_inputs import prepare_scheduler_inputs
     from workbook_import import normalized_label, recorded_years
 
@@ -410,7 +410,78 @@ def _schedule_through(person, r1_remaining):
     return through
 
 
-def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None):
+def _r1_blocks(schedule):
+    blocks = []
+    for month, option in enumerate(schedule):
+        if option is None:
+            continue  # LOA pauses a posting.
+        key = source_key(option["source"])
+        if blocks and blocks[-1][0] == key:
+            blocks[-1][1].append(month)
+        else:
+            blocks.append((key, [month]))
+    return blocks
+
+
+def draft_source_key(source):
+    return (source["kind"], source["slot_id"]) if source.get("kind") == "intake_placeholder" else source_key(source)
+
+
+def _add_fixed_draft(model, selected, candidates, variables, placements, fixed, edited_source):
+    """Constrain every generated block and keep other residents' future choices fixed."""
+    for i, person in enumerate(selected):
+        key = draft_source_key(person["source"])
+        planned = fixed.get(key)
+        if planned is None or [m["month"] for m in planned["months"]] != [m["month"] for m in person["availability"]]:
+            raise ValueError("The draft no longer matches the planning roster. Generate a new draft.")
+        by_start = defaultdict(list)
+        expected_r1 = {}
+        for month, item in enumerate(planned["months"]):
+            if item["status"] != "posting":
+                continue
+            target = item["target"]
+            option_key = source_key(target["source"])
+            if target["requirement_id"].startswith("r1."):
+                expected_r1[month] = option_key
+            else:
+                by_start[item["block_start"]].append((option_key, month))
+        expected = {(items[0][0], tuple(month for _, month in items)) for items in by_start.values()}
+        if any(len({key for key, _ in items}) != 1 for items in by_start.values()):
+            raise ValueError("A generated block must have the same posting and institution throughout.")
+        available = defaultdict(list)
+        future = defaultdict(list)
+        for choice, variable in zip(candidates[i], variables[i]):
+            assigned_r1 = {month: source_key(option["source"]) for month, option in enumerate(choice["schedule"]) if option}
+            if assigned_r1 != expected_r1 or (key != edited_source and choice["route"] != planned["route"]):
+                model.add(variable == 0)
+                continue
+            for (requirement, site), remaining in choice["carryforward"].items():
+                future[(requirement, site, None)].append(remaining * variable)
+        for placement in placements[i]:
+            option = placement["option"]
+            variable = placement["variable"]
+            if placement["months"]:
+                block = (source_key(option["source"]), tuple(placement["months"]))
+                if block not in expected:
+                    model.add(variable == 0)
+                    continue
+                available[block].append(variable)
+            if placement["remaining"]:
+                future[(option["requirement_id"], option["institution"], option["label"])].append(placement["remaining"] * variable)
+        if expected - available.keys():
+            return False
+        for block in expected:
+            model.add_exactly_one(available[block])
+        if key != edited_source:
+            carryforward = Counter()
+            for item in planned["carryforward"]:
+                carryforward[(item["requirement_id"], item["institution"], item.get("label"))] += item["months"]
+            for option in future.keys() | carryforward.keys():
+                model.add(sum(future[option]) == carryforward[option])
+    return True
+
+
+def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, edited_source=None, prepared=None):
     """Schedule remaining R1 through R5 work in progression order.
 
     All years share capacity,
@@ -421,7 +492,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         raise ValueError("max_seconds must be a finite nonnegative number")
     if cancel and cancel.is_set():
         raise DraftCancelled()
-    prepared = prepare_scheduler_inputs(workbook, reviewstore)
+    if prepared is None:
+        prepared = prepare_scheduler_inputs(workbook, reviewstore)
     if cancel and cancel.is_set():
         raise DraftCancelled()
     years = {"r1", "r2", "r3", "r4", "r5"}
@@ -701,6 +773,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         # Numeric mode uses only original choices, so an early fallback never
         # reads auxiliary variables introduced by a later preference stage.
         objectives, preferences, singletons = {}, {}, {}
+        site_allocations = []
         overflows, balance = [], []
         allocation, r3_allocation, r4_allocation, r5_allocation = [], [], [], []
         inpatient_deviations, cluster_penalties, r3_cluster_penalties = [], [], []
@@ -759,6 +832,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             if "IMH" not in eligible_sites:
                 inpatient_deviations.extend(_institution_balance(
                     model, [sum(value(v) for v in inpatient_counts[site]) for site in eligible_sites], len(selected), "r1"))
+            if model is None and eligible_sites:
+                site_allocations.append({"requirement_id": "r1.inpatient_psychiatry", "posting": "Inpatient Psychiatry",
+                    "counts": {s: sum(value(v) for v in inpatient_counts[s]) for s in eligible_sites}, "targets": inpatient_targets})
             allocation_groups = defaultdict(list)
             for ps in placements:
                 for placement in ps:
@@ -792,6 +868,9 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                     counts = {site: sum(value(p["variable"]) for p in ps if p["option"]["institution"] == site) for site in eligible}
                     allocation_total = sum(value(p["variable"]) for p in ps)
                 penalties = r5_allocation if group[0].startswith("r5.") else r4_allocation if group[0].startswith("r4.") else r3_allocation if group[0].startswith("r3.") else allocation
+                if model is None:
+                    site_allocations.append({"requirement_id": group[0], "posting": ps[0]["option"]["posting"],
+                        "counts": counts, "targets": _allocation_targets(allocation_total, eligible)})
                 penalties.extend(_allocation_penalties(model, counts, allocation_total, len(selected) * (2 if group[0] == "r5.elective" else 1), group))
             objectives["inpatient_allocation"] = sum(inpatient_deviations) + sum(allocation) + sum(r3_allocation) + sum(r4_allocation) + sum(r5_allocation)
         for name, visits_by_cluster, penalties in (("r3_missing_clusters", r3_cluster_visits, r3_cluster_penalties),
@@ -818,7 +897,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                     model.add(count != 1).only_enforce_if(flag.Not())
                 singletons[key] = flag
             objectives["singleton_months"] = sum(singletons.values())
-        return {"objectives": objectives, "preferences": preferences, "singletons": singletons,
+        return {"objectives": objectives, "preferences": preferences, "singletons": singletons, "site_allocations": site_allocations,
                 "capacity_bound": capacity_bound, "inpatient_deviations": inpatient_deviations,
                 "cluster_penalties": cluster_penalties, "r3_cluster_penalties": r3_cluster_penalties,
                 "balance": balance, "allocation": allocation, "r3_allocation": r3_allocation,
@@ -837,19 +916,33 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         scored[solver] = diagnostics
         return tuple(diagnostics["objectives"][name] for name in priorities)
     result["soft_priority"] = [name for name, _ in objectives]
-    solver, status, stages, elapsed = _solve_priorities(
-        model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel,
-        r1_ratio_data=(candidates, active_intake, prepared["planning_months"])
-        if any(o and o["requirement_id"] in {r1_rules.R1["General Medicine"]["id"], r1_rules.R1["Neurology"]["id"]}
-               for choices in candidates for choice in choices for o in choice["schedule"]) else None,
-        posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
-                              [] if shared_r5 or variable_r5_totals else r5_monthly_totals,
-                              {} if shared_r5 or variable_r5_totals else weights) if weights else None,
-        # These projections assume one block per requirement and separate core
-        # counts. Split electives and combined cores need route-aware projections; retain the safe
-        # R2/R4 count bound rather than claiming an invalid lower bound.
-        posting_block_data=None if shared_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
-        initial_feasibility=True, score_values=score_values)
+    if fixed is not None:
+        if set(fixed) != {draft_source_key(person["source"]) for person in selected}:
+            raise ValueError("The draft no longer matches the planning roster. Generate a new draft.")
+        if not _add_fixed_draft(model, selected, candidates, variables, placements, fixed, edited_source):
+            return {**result, "status": "infeasible", "blockers": [{"code": "fixed_block_unavailable"}]}
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = max_seconds
+        solver.parameters.num_workers = 1
+        outcome = solver.solve(model)
+        status, stages, elapsed = solver.status_name(outcome).lower(), [], solver.wall_time
+        if outcome in (cp_model.FEASIBLE, cp_model.OPTIMAL):
+            status = "feasible"
+            score_values(solver)
+        else:
+            solver = None
+    else:
+        solver, status, stages, elapsed = _solve_priorities(
+            model, objectives, [v for choices in variables for v in choices] + [p["variable"] for ps in placements for p in ps], max_seconds, cancel,
+            r1_ratio_data=(candidates, active_intake, prepared["planning_months"])
+            if any(o and o["requirement_id"] in {r1_rules.R1["General Medicine"]["id"], r1_rules.R1["Neurology"]["id"]}
+                   for choices in candidates for choice in choices for o in choice["schedule"]) else None,
+            posting_balance_data=([(len(r2_ids), r2_monthly_totals), (len(r4_ids), r4_monthly_totals)],
+                                  [] if shared_r5 or variable_r5_totals else r5_monthly_totals,
+                                  {} if shared_r5 or variable_r5_totals else weights) if weights else None,
+            # Split electives and combined cores need route-aware projections.
+            posting_block_data=None if shared_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
+            initial_feasibility=True, score_values=score_values)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": r1_rules._targets(sum(active_intake)),
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
@@ -864,15 +957,20 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     diagnostics = scored[solver]
     preferences = diagnostics["preferences"]
     singletons = diagnostics["singletons"]
+    result["preference_scores"] = {name: diagnostics["objectives"][name] for name in priorities}
+    result["edit_options"] = [{key: option[key] for key in ("posting", "institution", "residency_year", "label", "source", "category", "requirement_id")}
+                              for option in prepared["catalogue_options"] if option["valid"]]
     result["capacity_overflow_lower_bound"] = diagnostics["capacity_bound"]
     for i, person in enumerate(selected):
         choice = next(choice for j, choice in enumerate(candidates[i]) if solver.boolean_value(variables[i][j]))
         choice = deepcopy(choice)
         chosen = [p for p in placements[i] if solver.value(p["variable"])]
+        block_starts = {month: person["availability"][run[0]]["month"] for _, run in _r1_blocks(choice["schedule"]) for month in run}
         for placement in chosen:
             for month in placement["months"]:
                 assert choice["schedule"][month] is None
                 choice["schedule"][month] = placement["option"]
+                block_starts[month] = person["availability"][placement["months"][0]]["month"]
         completion_month = None
         if person["schedule_through"] >= 5 and not choice["carryforward"] and not any(p["remaining"] for p in chosen):
             projected = [
@@ -891,6 +989,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             months.append({"month": availability["month"], "status": status,
                            "label": option["label"] if option else None,
                            "target": deepcopy({key: option[key] for key in ("requirement_id", "institution", "source", "category", "residency_year", "label")}) if option else None})
+            if option:
+                months[-1]["block_start"] = block_starts[month]
         outcomes = request_outcomes[i]
         for outcome in outcomes:
             if outcome['status'] in {'evaluable', 'not_met'} and 'duplicate_of' not in outcome:
@@ -898,7 +998,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                     outcome['status'] = 'met' if any(placement_fulfils_request(p, outcome) for p in chosen) else 'not_met'
                     if outcome['status'] == 'not_met':
                         outcome['reason_code'], outcome['reason'] = unmet_request_reason(
-                            person, outcome, placements[i], options, stages)
+                            person, outcome, placements[i], options, stages, edited=fixed is not None)
                 matching = [p for p in chosen if p['option']['requirement_id'] == outcome['requirement_id'] and p['months']]
                 if not matching and outcome['requirement_id'] in {*r5_rules.COMBINED['credits'], r5_rules.COMBINED['id']}:
                     alternatives = (set(r5_rules.COMBINED['credits']) if outcome['requirement_id'] == r5_rules.COMBINED['id']
@@ -983,6 +1083,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     for person in result["residents"]:
         person["requests"] = grouped_request_outcomes(person["requests"])
     result["soft_results"] = {
+        "site_allocations": diagnostics["site_allocations"],
         "capacity_overflow": diagnostics["objectives"]["capacity_overflow"],
         **r1_rules.preference_results(solver, preferences, prepared["planning_months"]),
         "inpatient_counts": {site: sum(solver.value(v) for v in values) for site, values in inpatient_counts.items()},
