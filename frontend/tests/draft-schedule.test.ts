@@ -3,7 +3,8 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftResidentYear, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { groupPostings, postingCategory, postingDisplay } from '../src/lib/posting-blocks.ts'
@@ -402,4 +403,37 @@ test('capacity review groups exact postings and only merges consecutive months w
     { start: '2028-04', end: '2028-04', assigned: 8, max: 6 },
   ])
   assert.equal(rows[0].month, '2028-01')
+})
+
+test('failed regeneration leaves the saved draft and its timing available until a successful replacement', () => {
+  const original: SavedDraft = { year: 2027, elapsedSeconds: 121, reviewSignature: '[]', data: {
+    status: 'feasible', cutoff: '2027-06', residents: [], blockers: [],
+    optimisation_stages: [{ priority: 'initial_feasibility', status: 'feasible', wall_time_seconds: 4 }],
+  } }
+  const state = { saved: original, failure: null }
+  const active = { cancelled: false, invalidated: false }
+  const blockers = [{ code: 'unresolved_history', source: { sheet: 'Annual timetable', row: 12 } }]
+
+  for (const status of ['blocked', 'infeasible', 'unknown', 'model_invalid'] as const) {
+    const failed = { ...original, elapsedSeconds: 5, data: { ...original.data, status, blockers } }
+    const afterFailure = settleDraftAttempt(state, failed, active)
+    assert.equal(afterFailure.saved, original)
+    assert.deepEqual(afterFailure.failure?.blockers, blockers)
+    assert.equal(afterFailure.failure?.status, status)
+    for (const replacementStatus of ['feasible', 'optimal'] as const) {
+      const replacement = { ...original, elapsedSeconds: 269, data: { ...original.data, status: replacementStatus } }
+      assert.deepEqual(settleDraftAttempt(afterFailure, replacement, active), { saved: replacement, failure: null })
+    }
+  }
+})
+
+test('a late successful solve cannot replace a retained draft after cancel or restore an invalidated draft', () => {
+  const original: SavedDraft = { year: 2027, elapsedSeconds: 120, reviewSignature: '[]', data: {
+    status: 'feasible', cutoff: '2027-06', residents: [], blockers: [],
+  } }
+  const replacement = { ...original, elapsedSeconds: 250, data: { ...original.data, status: 'optimal' as const } }
+  const retained = { saved: original, failure: null }
+  const discarded = { saved: null, failure: null }
+  assert.equal(settleDraftAttempt(retained, replacement, { cancelled: true, invalidated: false }), retained)
+  assert.equal(settleDraftAttempt(discarded, replacement, { cancelled: false, invalidated: true }), discarded)
 })

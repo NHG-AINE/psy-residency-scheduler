@@ -53,6 +53,7 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, on
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="13" cy="8" r="1.2" /></svg>
       </button>
       <div className="draft-menu" id={menuId} ref={menu} popover="auto">
+        <button type="button" onClick={() => { menu.current?.hidePopover(); generate() }}>Regenerate draft</button>
         <button type="button" onClick={() => { menu.current?.hidePopover(); focusAction.current = true; onDiscard() }}>Discard draft</button>
       </div>
     </> : <>
