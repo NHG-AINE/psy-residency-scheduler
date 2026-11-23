@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decisionKey, emptyStore, evaluateHistory, historyStatusLabel, matchesHistoryFilter, mergeReviewStores, parseReviewStore, readReviewStore, STORAGE_KEY, writeReviewStore } from '../src/lib/history-review.ts'
+import { decisionKey, emptyStore, evaluateHistory, historyStatusLabel, matchesHistoryFilter, mergeReviewStores, parseReviewStore, prepareYear, readReviewStore, STORAGE_KEY, writeReviewStore } from '../src/lib/history-review.ts'
 import type { ReviewDecision, ReviewStore, HistoryEntry } from '../src/lib/history-review.ts'
 import type { Workbook } from '../src/lib/workbook.ts'
 
@@ -95,6 +95,30 @@ test('review API sends structured decisions and surfaces malformed or unavailabl
   await assert.rejects(evaluateHistory(workbook, store()), /Import the workbook again/)
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network') })
   await assert.rejects(evaluateHistory(workbook, store()), /Could not reach/)
+})
+
+test('year preparation sends parsed evidence and decisions and rejects a different year', async (t) => {
+  const source = { sheet: 'Jul earlier', row: 4, column: 'G' }
+  const posting = { month: '2026-07', value: 'Original label', status: 'posting', source }
+  const annual = { year: 2026, sheet: source.sheet, months: [], residents: [{ source, postings: [posting] }] }
+  const prepared = { target_year: 2026, target_sheet: source.sheet, residents: [], available_years: [],
+    months: [], histories: [], requests: [], warnings: [], postings: { core: [], rows: [] } }
+  const workbook = { ...prepared, target_year: 2027, annual_sheets: [{ ...annual, residents: [{
+    ...annual.residents[0], match_status: 'matched', matched_resident_source: source, slot_id: 'stale',
+    postings: [{ ...posting, catalogue_match: { status: 'matched' } }],
+  }] }] } as unknown as Workbook
+  const labels = { entries: [], catalogue: [], decisions: [] }
+  t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
+    assert.equal(url, '/api/prepare-year')
+    assert.equal(init.method, 'POST')
+    assert.ok(init.signal instanceof AbortSignal)
+    assert.deepEqual(JSON.parse(String(init.body)), { target_year: 2026,
+      annual_sheets: [annual], requests: [], postings: prepared.postings, store: store() })
+    return Response.json({ workbook: prepared, labels })
+  })
+  assert.deepEqual(await prepareYear(workbook, 2026, store(), new AbortController().signal), { workbook: prepared, labels })
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ workbook, labels }))
+  await assert.rejects(prepareYear(workbook, 2026, store(), new AbortController().signal), /unexpected planning year data/)
 })
 
 

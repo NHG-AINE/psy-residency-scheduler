@@ -24,7 +24,7 @@ import TimetableGrid from './components/TimetableGrid'
 import { importWorkbook, monthLabel, sameSource, sourceLabel, workbookError } from './lib/workbook'
 import type { Resident, Source, Workbook } from './lib/workbook'
 import { groupPostings, postingCategory, postingDisplay } from './lib/posting-blocks'
-import { emptyStore, evaluateHistory, readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './lib/history-review'
+import { emptyStore, evaluateHistory, prepareYear, readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './lib/history-review'
 import type { HistoryReview } from './lib/history-review'
 import type { PostingBlock } from './lib/posting-blocks'
 
@@ -128,7 +128,8 @@ function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
 
 function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, filters, actions, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
-  importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined
+  importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
+  onReady: (target: HTMLElement, workbook: Workbook, labelsReady: boolean) => (() => void) | undefined
   filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
   labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
 }) {
@@ -181,11 +182,11 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     // Let the final timetable and breakdown paint before starting the scroll.
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
-        if (timetable.current) stop = onReady(timetable.current)
+        if (timetable.current) stop = onReady(timetable.current, workbook, !!resolution)
       })
     })
     return () => { cancelAnimationFrame(frame); stop?.() }
-  }, [loading, breakdownHost, onReady, workbook])
+  }, [loading, breakdownHost, onReady, workbook, resolution])
   const availableYears = [...years].sort((a, b) => a - b)
   const yearIndex = availableYears.indexOf(year)
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
@@ -272,11 +273,22 @@ export default function App() {
   const [storageError, setStorageError] = useState('')
   const currentSession = useRef<{ file: File; workbook: Workbook } | null>(null)
   const workbookYears = useRef(new Map<number, Workbook>())
-  const [timetableLabels, setTimetableLabels] = useState(() => new Map<Workbook, TimetableLabels>())
+  const yearRequests = useRef(new Map<number, { controller: AbortController; result: Promise<Workbook> }>())
+  const warmAfterPaint = useRef(false)
+  const timetableLabels = useRef(new Map<Workbook, TimetableLabels>())
+  const [selectedLabels, setSelectedLabels] = useState<TimetableLabels>()
   const saveLabels = useCallback((result: Workbook, labels: TimetableLabels) => {
-    if (workbookYears.current.get(result.target_year) === result) {
-      setTimetableLabels((current) => new Map(current).set(result, labels))
+    if (currentSession.current?.workbook === result) {
+      timetableLabels.current.set(result, labels)
+      setSelectedLabels(labels)
     }
+  }, [])
+  const clearYearCache = useCallback(() => {
+    for (const { controller } of yearRequests.current.values()) controller.abort()
+    yearRequests.current.clear()
+    workbookYears.current.clear()
+    timetableLabels.current.clear()
+    warmAfterPaint.current = false
   }, [])
   const activeImport = useRef<AbortController | null>(null)
   const [loadingHeight, setLoadingHeight] = useState<number>()
@@ -304,6 +316,7 @@ export default function App() {
       if (cancelled || !saved) return
       currentSession.current = { file: saved.file, workbook: saved.workbook }
       workbookYears.current.set(saved.workbook.target_year, saved.workbook)
+      warmAfterPaint.current = true
       revealAfterUpload.current = saved.workbook.residents.length > 0
       setFile(saved.file); setWorkbook(saved.workbook); setYear(saved.workbook.target_year)
       if (saved.draft) restoreDraft(saved.draft)
@@ -312,7 +325,7 @@ export default function App() {
     }).finally(() => { if (!cancelled) setRestoring(false) })
     return () => { cancelled = true }
   }, [restoreDraft])
-  useEffect(() => () => { activeImport.current?.abort() }, [])
+  useEffect(() => () => { activeImport.current?.abort(); clearYearCache() }, [clearYearCache])
   useEffect(() => {
     if (!restoring && currentSession.current) persistCurrent()
   }, [file, workbook, draftMemory.savedResult, restoring, persistCurrent])
@@ -356,16 +369,62 @@ export default function App() {
     setFocusSource({ ...source })
   }
 
-  const revealTimetable = useCallback((target: HTMLElement) => {
-    if (!revealAfterUpload.current) return
-    revealAfterUpload.current = false
-    const card = review.current || target
-    return scrollToPosition(window.scrollY + card.getBoundingClientRect().top - 16)
+  const prepareCachedYear = useCallback((session: { file: File; workbook: Workbook }, nextYear: number) => {
+    const cached = workbookYears.current.get(nextYear)
+    if (cached) return Promise.resolve(cached)
+    const pending = yearRequests.current.get(nextYear)
+    if (pending) return pending.result
+    const controller = new AbortController()
+    const raw = reviewSnapshot()
+    const reviews = readTimetableReviews(raw)
+    const result = prepareYear(session.workbook, nextYear, reviews.store, controller.signal).then(({ workbook, labels }) => {
+      controller.signal.throwIfAborted()
+      workbookYears.current.set(nextYear, workbook)
+      if (!reviews.error && reviewSnapshot() === raw) {
+        timetableLabels.current.set(workbook, { signature: reviews.signature, data: labels })
+      }
+      return workbook
+    }).finally(() => {
+      if (yearRequests.current.get(nextYear)?.controller === controller) yearRequests.current.delete(nextYear)
+    })
+    yearRequests.current.set(nextYear, { controller, result })
+    return result
   }, [])
+
+  const revealTimetable = useCallback((target: HTMLElement, result: Workbook, labelsReady: boolean) => {
+    const session = currentSession.current
+    let cancelWarm: (() => void) | undefined
+    if (labelsReady && warmAfterPaint.current && !activeImport.current && session?.workbook === result) {
+      const warm = () => {
+        if (!warmAfterPaint.current || activeImport.current || currentSession.current !== session) return
+        warmAfterPaint.current = false
+        const previous = result.available_years.reduce((year, item) =>
+          item.year < result.target_year && (year === undefined || item.year > year) ? item.year : year, undefined as number | undefined)
+        if (previous !== undefined && result.annual_sheets?.length) {
+          void prepareCachedYear(session, previous).catch(() => {})
+        }
+      }
+      if (typeof window.requestIdleCallback === 'function') {
+        const idle = window.requestIdleCallback(warm, { timeout: 150 })
+        cancelWarm = () => window.cancelIdleCallback(idle)
+      } else {
+        const timer = window.setTimeout(warm, 50)
+        cancelWarm = () => window.clearTimeout(timer)
+      }
+    }
+    let cancelScroll: (() => void) | undefined
+    if (revealAfterUpload.current) {
+      revealAfterUpload.current = false
+      const card = review.current || target
+      cancelScroll = scrollToPosition(window.scrollY + card.getBoundingClientRect().top - 16)
+    }
+    return () => { cancelWarm?.(); cancelScroll?.() }
+  }, [prepareCachedYear])
 
   function selectWorkbook(nextFile: File, result: Workbook) {
     currentSession.current = { file: nextFile, workbook: result }
     workbookYears.current.set(result.target_year, result)
+    setSelectedLabels(timetableLabels.current.get(result))
     setWorkbook(result); setFile(nextFile); setYear(result.target_year)
   }
   async function load(nextFile: File, nextYear?: number, reveal = false) {
@@ -375,11 +434,15 @@ export default function App() {
     setLoadingHeight(review.current?.getBoundingClientRect().height)
     setBusy(true); setError(''); setStatus(''); setFocusSource(null)
     try {
-      const result = await importWorkbook(nextFile, nextYear, controller.signal)
+      const session = currentSession.current
+      const result = nextYear !== undefined && session?.file === nextFile && session.workbook.annual_sheets?.length
+        ? await prepareCachedYear(session, nextYear)
+        : await importWorkbook(nextFile, nextYear, controller.signal)
       if (controller.signal.aborted) return
       revealAfterUpload.current = reveal
       if (reveal) {
-        workbookYears.current.clear(); setTimetableLabels(new Map())
+        clearYearCache()
+        warmAfterPaint.current = true
         draftMemory.discard(); setView('Timetable'); setQuery('')
       }
       selectWorkbook(nextFile, result)
@@ -389,7 +452,7 @@ export default function App() {
       setError(problem instanceof Error ? problem.message : 'Workbook import failed. Please try again.')
       setStatus(file ? 'The previous import is still available.' : '')
     } finally {
-      activeImport.current = null
+      if (activeImport.current === controller) activeImport.current = null
       if (!controller.signal.aborted) setBusy(false)
     }
   }
@@ -401,6 +464,7 @@ export default function App() {
   }
   function selectYear(nextYear: number) {
     if (!file || activeImport.current || busy || restoring) return
+    warmAfterPaint.current = false
     const cached = currentSession.current?.file === file ? workbookYears.current.get(nextYear) : undefined
     if (cached) {
       setError(''); setStatus(''); setFocusSource(null)
@@ -411,7 +475,8 @@ export default function App() {
   }
   function removeWorkbook() {
     currentSession.current = null
-    workbookYears.current.clear(); setTimetableLabels(new Map())
+    clearYearCache()
+    setSelectedLabels(undefined)
     discardSavedDraft()
     setFile(null); setWorkbook(null); setYear(undefined); setError(''); setQuery('')
     setStatus('Import removed. Choose or drop another workbook.')
@@ -441,7 +506,7 @@ export default function App() {
         </div>}
         {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
           onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring}
-          labels={timetableLabels.get(workbook)} onLabels={saveLabels}
+          labels={selectedLabels} onLabels={saveLabels}
           focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
           actions={<DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
           filters={<div className="search-toolbar timetable-filters">
