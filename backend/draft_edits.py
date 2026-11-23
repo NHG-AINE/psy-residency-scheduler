@@ -298,9 +298,9 @@ def validate_draft_change(workbook, store, draft, change):
             for month in block:
                 month.update(label=option["label"], target=option)
 
-    # Insertion changes timing only. Keep the edited resident's route and carryforward fixed too.
+    # Reordering changes timing only. Keep the resident's route and carryforward fixed too.
     result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed,
-                            edited_source=None if kind == "insert" else source, prepared=prepared)
+                            edited_source=source if kind == "edit" else None, prepared=prepared)
     if result["status"] == "infeasible":
         return blocked("hard_constraint", _explain_conflict(prepared, person, original, moved))
     if result["status"] != "feasible":
