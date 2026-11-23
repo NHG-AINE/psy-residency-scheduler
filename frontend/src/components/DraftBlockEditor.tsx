@@ -4,6 +4,7 @@ import type { DraftChangeIssue, DraftChangeResult, DraftEditOption } from '../li
 import type { DraftBlock } from '../lib/use-draft-block-editing'
 import { sameSource } from '../lib/workbook'
 import type { Source } from '../lib/workbook'
+import { PostingStatus } from './TimetableGrid'
 
 function positionPanel(panel: HTMLElement, anchor: HTMLElement, centered = false) {
   const { clientWidth: width, clientHeight: height } = document.documentElement
@@ -156,50 +157,13 @@ export function DraftBlockFlagIcon() {
   return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 15 14H1Z" /><path d="M8 6v4m0 2v.5" /></svg>
 }
 
-export function DraftBlockReasons({ issues, label, descriptionId, suppressed }: {
-  issues: DraftChangeIssue[]; label: string; descriptionId: string; suppressed: boolean
+export function DraftBlockReasons({ issues, label, descriptionId }: {
+  issues: DraftChangeIssue[]; label: string; descriptionId: string
 }) {
-  const anchor = useRef<HTMLButtonElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
   const blocked = issues.some((issue) => issue.severity === 'hard')
   const title = blocked ? 'Change blocked' : issues.length > 1 ? 'Draft warnings' : 'Draft warning'
-  const keepOpen = useRef(false)
-  function open() {
-    const popup = panel.current
-    if (suppressed || !popup || !anchor.current) return
-    if (!popup.matches(':popover-open')) popup.showPopover()
-    positionPanel(popup, anchor.current)
-  }
-  function close() { panel.current?.hidePopover(); keepOpen.current = false }
-  const summary = issues.map((issue) => issue.message).join(' ')
-  useLayoutEffect(() => { close() }, [summary, suppressed])
-  useLayoutEffect(() => {
-    const dismiss = (event: Event) => {
-      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
-      if (event.type === 'pointerdown' && anchor.current?.contains(event.target as Node)) return
-      close()
-    }
-    document.addEventListener('scroll', dismiss, true)
-    document.addEventListener('keydown', dismiss)
-    document.addEventListener('pointerdown', dismiss)
-    window.addEventListener('resize', dismiss)
-    return () => {
-      document.removeEventListener('scroll', dismiss, true)
-      document.removeEventListener('keydown', dismiss)
-      document.removeEventListener('pointerdown', dismiss)
-      window.removeEventListener('resize', dismiss)
-    }
-  }, [])
-  return <>
-    <button type="button" ref={anchor} className={`draft-block-flag${blocked ? ' hard' : ''}`} aria-label={`${title} for ${label}`} aria-describedby={descriptionId} disabled={suppressed}
-      onFocus={open} onBlur={close} onPointerEnter={open} onPointerLeave={() => { if (!keepOpen.current && document.activeElement !== anchor.current) close() }}
-      onClick={() => { if (keepOpen.current) close(); else { keepOpen.current = true; open() } }}>
-      <DraftBlockFlagIcon />
-    </button>
-    <span id={descriptionId} className="sr-only">{title}. {summary}</span>
-    <div ref={panel} popover="manual" className={`draft-block-reason ${blocked ? 'hard' : 'soft'}`} aria-hidden="true">
-      <strong>{title}</strong>
-      <DraftIssueMessages issues={issues} />
-    </div>
-  </>
+  return <PostingStatus className={`draft-block-flag${blocked ? ' hard' : ''}`} label={`${title} for ${label}`}
+    descriptionId={descriptionId} details={<><strong>{title}</strong><DraftIssueMessages issues={issues} /></>}>
+    <DraftBlockFlagIcon />
+  </PostingStatus>
 }
