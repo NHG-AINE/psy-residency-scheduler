@@ -354,8 +354,8 @@ class RequestSchedulerTests(unittest.TestCase):
             pairs += [("TTSH Forensic Psychiatry", period) for period in periods]
             book["requests"] = [{"posting_request": label, "period": period, "matched_resident_source": source}
                                 for label, period in pairs]
-            def selected_routes(*args):
-                return [route for route in original(*args)
+            def selected_routes(*args, **kwargs):
+                return [route for route in original(*args, **kwargs)
                         if sum(r["requirement_id"] == "r5.elective" for r, _, _ in route) == (2 if split else 1)]
             with patch.object(r5_rules, "prepare_routes", side_effect=selected_routes):
                 result = draft_schedule(book, STORE, max_seconds=10)

@@ -10,7 +10,7 @@ from tests.test_r1_solver import STORE, r1_book
 from tests.test_r2_rules import r2_book
 from tests.test_r3_rules import r3_book
 from tests.test_r4_rules import r4_book
-from tests.test_r5_combined import combined_book, LABEL
+from tests.test_r5_combined import add_history, combined_book, CHILD, GERI, LABEL
 from tests.test_r5_rules import r5_book
 from tests.test_workbook_import import structured_workbook_bytes
 from workbook_import import parse_workbook
@@ -21,6 +21,83 @@ class DraftEditTests(unittest.TestCase):
         return validate_draft_change(book, STORE, draft, {
             "kind": "edit", "resident": draft["residents"][0]["source"], "start": start,
             "posting": option["posting"], "institution": option["institution"], "offering": option["source"]})
+
+    def test_manual_r5_core_splits_and_subsequent_moves(self):
+        for longer, shorter, extended_site in ((GERI, CHILD, "SKH"), (CHILD, GERI, "IMH")):
+            with self.subTest(longer=longer):
+                book = r5_book()
+                book["postings"]["core"].append({"residency_year": "R5", "posting": "SKH Geriatric Psychiatry",
+                    "duration_months": "3", "source": {"sheet": "Postings", "row": 900}})
+                roster = book["residents"][0]
+                # Force the original three-month Geriatric and Child blocks so
+                # the edit replaces the elective with a distinct core offering.
+                book["requests"] = [
+                    {"matched_resident_source": roster["source"], "posting_request": label, "period": period}
+                    for label, period in [("CGH Geriatric Psychiatry", "Jul - Sep 2027"),
+                                          ("NUH Child & Adolescent Psychiatry", "Oct - Dec 2027")]
+                ]
+                original = draft_schedule(book, STORE)
+                person, = original["residents"]
+                self.assertEqual([m["label"] for m in person["months"][::3]], ["CGH Geriatric Psychiatry",
+                    "NUH Child & Adolescent Psychiatry", "IMH Forensic Psychiatry", "IMH Forensic Psychiatry"])
+                extended = next(o for o in original["edit_options"] if o["requirement_id"] == longer
+                                and o["institution"] == extended_site)
+                edited = self.edit(book, original, "2028-01", extended)
+                self.assertIsNotNone(edited["draft"], edited["issues"])
+                saved = json.loads(json.dumps(edited["draft"]))
+                assignments = [m["target"]["requirement_id"] for m in saved["residents"][0]["months"]]
+                self.assertEqual((assignments.count(longer), assignments.count(shorter)), (9, 3))
+                self.assertEqual(saved["residents"][0]["carryforward"], [])
+                swap = {"resident": person["source"], "start": "2027-07", "destination": "2027-10", "kind": "swap"}
+                swapped = validate_draft_change(book, STORE, saved, swap)
+                self.assertIsNotNone(swapped["draft"], swapped["issues"])
+                inserted = validate_draft_change(book, STORE, swapped["draft"], {
+                    **swap, "start": "2028-01", "kind": "insert", "side": "before"})
+                self.assertIsNotNone(inserted["draft"], inserted["issues"])
+                last = inserted["draft"]["residents"][0]["months"][-1]
+                alternate = next(o for o in original["edit_options"] if o["requirement_id"] == last["target"]["requirement_id"]
+                                 and o["institution"] != last["target"]["institution"])
+                reedited = self.edit(book, inserted["draft"], last["block_start"], alternate)
+                self.assertIsNotNone(reedited["draft"], reedited["issues"])
+
+                short_month = next(m for m in saved["residents"][0]["months"] if m["target"]["requirement_id"] == shorter)
+                blocked = self.edit(book, saved, short_month["block_start"], extended)
+                self.assertIsNone(blocked["draft"])
+                self.assertEqual(blocked["issues"][0]["code"], "hard_constraint")
+
+    def test_manual_r5_uses_combined_history_and_keeps_the_selected_carryforward(self):
+        book = combined_book()
+        add_history(book, [(f"2027-{month:02d}", LABEL) for month in range(1, 7)])
+        for month in book["residents"][0]["postings"][4:]:
+            month.update(status="loa", value="LOA")
+        incoming = deepcopy(r1_book()["residents"][0])
+        incoming.update(name="Incoming", mcr="SYN002", source={"sheet": book["target_sheet"], "row": 99})
+        book["residents"].append(incoming)
+        original = draft_schedule(book, STORE, max_seconds=5)
+        geri = next(o for o in original["edit_options"] if o["requirement_id"] == GERI and o["institution"] == "CGH")
+        result = self.edit(book, original, "2027-07", geri)
+        self.assertIsNotNone(result["draft"], result["issues"])
+        saved = json.loads(json.dumps(result["draft"]))
+        edited, other = saved["residents"]
+        self.assertEqual(edited["carryforward"], [{
+            "requirement_id": GERI, "institution": "CGH", "label": "CGH Geriatric Psychiatry", "months": 2}])
+        inpatient = other["months"][6]
+        alternate = next(o for o in saved["edit_options"] if o["requirement_id"] == inpatient["target"]["requirement_id"]
+                         and o["institution"] != inpatient["target"]["institution"])
+        changed = validate_draft_change(book, STORE, saved, {
+            "kind": "edit", "resident": other["source"], "start": inpatient["block_start"],
+            "posting": alternate["posting"], "institution": alternate["institution"], "offering": alternate["source"]})
+        self.assertIsNotNone(changed["draft"], changed["issues"])
+        self.assertEqual(changed["draft"]["residents"][0], edited)
+
+    def test_completed_nine_plus_three_history_leaves_no_elective_requirement(self):
+        book = r5_book()
+        labels = ["IMH Geriatric Psychiatry"] * 6 + ["CGH Geriatric Psychiatry"] * 3 + ["NUH Child & Adolescent Psychiatry"] * 3
+        add_history(book, [(f"{2026 + (i + 6) // 12}-{(i + 6) % 12 + 1:02d}", label) for i, label in enumerate(labels)])
+        edited = draft_schedule(book, STORE, max_seconds=5)
+        person, = edited["residents"]
+        self.assertEqual({m["status"] for m in person["months"]}, {"requirements_completed"})
+        self.assertEqual(person["carryforward"], [])
 
     def test_capacity_edit_keeps_other_residents_fixed_and_clears_resolved_warnings(self):
         book = r2_book(2)

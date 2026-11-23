@@ -1,5 +1,6 @@
 """R5 core routes and six-month or paired three-month elective blocks."""
 import re
+from collections import Counter
 from itertools import product
 from .r2_rules import add_blocks
 
@@ -110,6 +111,18 @@ def _templates(runs, options, requests, allow_split):
                     yield [(COMBINED["id"], 6, None)] + elective_slots + variant
 
 
+def _manual_core_templates():
+    # A core can be completed as a three- or six-month block. Separate blocks
+    # remain distinct even when they count towards the same requirement.
+    partitions = {0: [()], 3: [(3,)], 6: [(6,), (3, 3)],
+                  9: [(6, 3), (3, 6), (3, 3, 3)]}
+    for child, geriatric in ((3, 9), (6, 6), (9, 3)):
+        for combined in ([], [(COMBINED["id"], 6, None)]):
+            shared = 3 if combined else 0
+            for lengths in product(partitions[child - shared], partitions[geriatric - shared]):
+                yield combined + [(key, length, None) for key, blocks in zip(R5_CORES, lengths) for length in blocks]
+
+
 def _continues(run, months, planning_start, earlier_months):
     if earlier_months:
         return False
@@ -165,7 +178,7 @@ def _fit_history(template, runs, options, months, planning_start, earlier_months
     return matched
 
 
-def prepare_routes(person, options, planning_start, earlier_months, blockers, allow_split=False, requests=()):
+def prepare_routes(person, options, planning_start, earlier_months, blockers, allow_split=False, requests=(), *, fixed=None):
     requirements = {r["requirement_id"]: r for r in person["requirements"]}
     runs = r5_runs(person["months"])
     _, _, pending = r5_credit_progress(runs)
@@ -173,10 +186,28 @@ def prepare_routes(person, options, planning_start, earlier_months, blockers, al
         return [[]]
 
     routes, missing = [], None
-    for template in _templates(runs, options, requests, allow_split):
+    templates = _templates(runs, options, requests, allow_split)
+    fixed_blocks, manual = Counter(), set()
+    if fixed is not None:
+        fixed_blocks = Counter((month["block_start"], month["target"]["requirement_id"])
+                               for month in fixed["months"] if month["status"] == "posting"
+                               and month["target"]["residency_year"] == "R5")
+    if fixed_blocks and all(key != R5_ELECTIVE for _, key in fixed_blocks):
+        generated = list(templates)
+        manual = {tuple(template) for template in _manual_core_templates()} - {tuple(template) for template in generated}
+        templates = [*generated, *sorted(manual)]
+    for template in templates:
         matched = _fit_history(template, runs, options, person["months"], planning_start, earlier_months)
         if matched is None:
             continue
+        if manual and tuple(template) in manual:
+            remaining = Counter((key, duration - matched.get(index, {}).get("count", 0))
+                                for index, (key, duration, _) in enumerate(template))
+            last, last_length = next(reversed(fixed_blocks.items()))
+            # Only the final visible block can continue beyond the horizon.
+            blocks = Counter((key, count) for (_, key), count in list(fixed_blocks.items())[:-1])
+            if blocks - remaining or not any(key == last[1] and length >= last_length for key, length in (remaining - blocks)):
+                continue
         route = []
         for index, (key, duration, credit) in enumerate(template):
             run = matched.get(index)

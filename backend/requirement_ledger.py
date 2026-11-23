@@ -287,7 +287,11 @@ def _summaries(months):
         active["expected_months"] += 1
         active["end"] = month["month"]
     r5_counts, extended, _ = r5_credit_progress(r5_runs(months))
-    targets = {core: 6 if core in extended else 3 for core in R5_CORES}
+    targets = {core: 9 if r5_counts[core] >= 9 else 6 if core in extended else 3 for core in R5_CORES}
+    # Cap the two core targets at a combined twelve months, even when the
+    # workbook contains extra recognised training in both requirements.
+    if sum(targets.values()) > R5_TRAINING_MONTHS:
+        targets = {core: min(6, target) for core, target in targets.items()}
     targets[R5_ELECTIVE] = R5_TRAINING_MONTHS - sum(targets.values())
     result = []
     for year, requirements in PROGRAMME_REQUIREMENTS.items():
