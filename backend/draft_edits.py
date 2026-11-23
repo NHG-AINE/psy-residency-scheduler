@@ -7,12 +7,14 @@ from itertools import groupby
 if __package__:
     from .cluster_coverage import CLUSTERS
     from .rules import r1_rules, r4_rules, r5_rules
+    from .requirement_ledger import R5_CORES, R5_TRAINING_MONTHS, r5_credit_progress, r5_runs
     from .scheduler_inputs import prepare_scheduler_inputs
     from .scheduler import draft_schedule, draft_source_key
     from .workbook_import import recorded_years
 else:
     from cluster_coverage import CLUSTERS
     from rules import r1_rules, r4_rules, r5_rules
+    from requirement_ledger import R5_CORES, R5_TRAINING_MONTHS, r5_credit_progress, r5_runs
     from scheduler_inputs import prepare_scheduler_inputs
     from scheduler import draft_schedule, draft_source_key
     from workbook_import import recorded_years
@@ -215,6 +217,18 @@ def _explain_conflict(prepared, person, original, moved):
             missing = req["remaining_months"] - counts[req["requirement_id"]]
             return f"This would leave {_amount(missing, 'month')} of {req['requirement_year']} {req['posting']} unfinished."
     if "R5" in years:
+        projected = []
+        for month in person["months"]:
+            option = options.get(draft_source_key(month["target"]["source"])) if month["status"] == "posting" else None
+            projected.append({**option, "month": month["month"], "status": "expected", "target": option} if option else month)
+        runs = r5_runs(progress["months"] + projected)
+        if sum(run["count"] for run in runs) == R5_TRAINING_MONTHS:
+            credits, _, _ = r5_credit_progress(runs)
+            missing = [f"{_amount(3 - credits[key], 'month')} of R5 {requirements[key]['posting']}"
+                       for key in R5_CORES if credits[key] < 3]
+            if missing:
+                name = person["name"] or "This resident"
+                return f"{name} would still need {' and '.join(missing)}."
         return "These dates leave no valid R5 plan with the other blocks in place. Check the remaining Child, Geriatric and elective months, including any credit earned by a six-month block."
     return "This placement cannot fit the resident’s remaining training with the other blocks in place. Check their posting history, block length and training order."
 
