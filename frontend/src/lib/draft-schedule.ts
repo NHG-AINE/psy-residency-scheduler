@@ -46,14 +46,38 @@ export type DraftSchedule = {
   soft_results?: { distribution_deviation: number; ratio_deviation: number }
 }
 
+export type DraftInsertionSide = 'before' | 'after'
 export type DraftChange = { resident: Source; start: string } & (
-  { kind: 'edit'; posting: string; institution: string; offering: Source } | { kind: 'swap'; destination: string })
+  { kind: 'edit'; posting: string; institution: string; offering: Source } | { kind: 'swap'; destination: string } |
+  { kind: 'insert'; destination: string; side: DraftInsertionSide })
 export type DraftChangeIssue = { severity: 'hard' | 'soft'; code: string; message: string; affected: { source: Source; month: string }[] }
 export type DraftChangeResult = { draft: DraftSchedule | null; issues: DraftChangeIssue[] }
 
 export function draftSwapOutcome(result: DraftChangeResult) {
   if (!result.draft || result.issues.some((issue) => issue.severity === 'hard')) return 'blocked'
   return result.issues.length ? 'warning' : 'clean'
+}
+
+export function draftInsertion(months: DraftSchedule['residents'][number]['months'], start: string,
+  destination: string, side: DraftInsertionSide) {
+  const blocks = months.map((month) => month.status === 'posting' ? month.block_start : undefined)
+  const from = blocks.indexOf(start)
+  const target = blocks.indexOf(destination)
+  if (from < 0 || target < 0 || from === target) return null
+  const first = Math.min(from, target)
+  const last = Math.max(blocks.lastIndexOf(start), blocks.lastIndexOf(destination))
+  const span = months.slice(first, last + 1)
+  if (span.some((month) => month.status !== 'posting' && month.status !== 'loa')) return null
+  const training = blocks.slice(first, last + 1).flatMap((block) => block ? [block] : [])
+  const order = [...new Set(training)].filter((block) => block !== start)
+  order.splice(order.indexOf(destination) + Number(side === 'after'), 0, start)
+  const reordered = order.flatMap((block) => training.filter((key) => key === block))
+  const changed = reordered.some((block, index) => block !== training[index])
+  let index = 0
+  for (let month = first; month <= last; month++) {
+    if (blocks[month]) blocks[month] = reordered[index++]
+  }
+  return { blocks, changed }
 }
 
 export function draftPreviewIssuesForRow(issues: DraftChangeIssue[], resident: Source, from?: Source, destination?: Source) {

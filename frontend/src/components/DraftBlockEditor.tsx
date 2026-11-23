@@ -25,15 +25,17 @@ function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
   </ul>
 }
 
-export function DraftSwapFeedback({ anchor, checking, preview, onApply, onDismiss }: {
-  anchor: HTMLElement; checking: boolean; preview: DraftChangeResult | null; onApply: () => void; onDismiss: () => void
+export function DraftMoveFeedback({ anchor, kind, checking, preview, onApply, onDismiss }: {
+  anchor: HTMLElement; kind: 'swap' | 'insert'; checking: boolean; preview: DraftChangeResult | null; onApply: () => void; onDismiss: () => void
 }) {
   const id = useId()
   const panel = useRef<HTMLDivElement>(null)
   const dismissButton = useRef<HTMLButtonElement>(null)
   const issues = preview?.issues ?? []
   const blocked = !checking && (!preview || draftSwapOutcome(preview) !== 'warning')
-  const title = checking ? 'Checking the swap…' : blocked ? 'Swap blocked' : issues.length > 1 ? 'Review swap warnings' : 'Review swap warning'
+  const action = kind === 'swap' ? 'swap' : 'move'
+  const title = checking ? `Checking the ${action}…`
+    : blocked ? (kind === 'swap' ? 'Swap blocked' : 'Move blocked') : `Review ${action} warning${issues.length > 1 ? 's' : ''}`
   useLayoutEffect(() => {
     const popup = panel.current
     if (!popup || !anchor.isConnected) return
@@ -67,13 +69,11 @@ export function DraftSwapFeedback({ anchor, checking, preview, onApply, onDismis
     aria-labelledby={`${id}-title`} aria-describedby={`${id}-details`}>
     <h3 id={`${id}-title`}>{title}</h3>
     <div id={`${id}-details`} className="draft-editor-feedback">
-      {checking ? <p>The postings will stay in place while the swap is checked.</p>
-        : issues.length ? <DraftIssueMessages issues={issues} />
-          : <p>Could not apply this swap. Try again.</p>}
+      {checking ? null : issues.length ? <DraftIssueMessages issues={issues} /> : <p>Could not apply this {action}. Try again.</p>}
     </div>
     <footer>
       <button type="button" ref={dismissButton} className="button button-secondary" onClick={onDismiss}>{blocked ? 'Dismiss' : 'Cancel'}</button>
-      {!checking && !blocked && <button type="button" className="button" onClick={onApply}>Apply swap</button>}
+      {!checking && !blocked && <button type="button" className="button" onClick={onApply}>Apply {action}</button>}
     </footer>
   </div>
 }
@@ -151,7 +151,13 @@ export default function DraftBlockEditor({ block, options, current, years, check
   </dialog>
 }
 
-export function DraftBlockReasons({ issues, label, descriptionId, show }: { issues: DraftChangeIssue[]; label: string; descriptionId: string; show: boolean }) {
+export function DraftBlockFlagIcon() {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 15 14H1Z" /><path d="M8 6v4m0 2v.5" /></svg>
+}
+
+export function DraftBlockReasons({ issues, label, descriptionId, suppressed }: {
+  issues: DraftChangeIssue[]; label: string; descriptionId: string; suppressed: boolean
+}) {
   const anchor = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const blocked = issues.some((issue) => issue.severity === 'hard')
@@ -159,13 +165,13 @@ export function DraftBlockReasons({ issues, label, descriptionId, show }: { issu
   const keepOpen = useRef(false)
   function open() {
     const popup = panel.current
-    if (!popup || !anchor.current) return
+    if (suppressed || !popup || !anchor.current) return
     if (!popup.matches(':popover-open')) popup.showPopover()
     positionPanel(popup, anchor.current)
   }
   function close() { panel.current?.hidePopover(); keepOpen.current = false }
   const summary = issues.map((issue) => issue.message).join(' ')
-  useLayoutEffect(() => { if (show) open(); else close() }, [show, summary])
+  useLayoutEffect(() => { close() }, [summary, suppressed])
   useLayoutEffect(() => {
     const dismiss = (event: Event) => {
       if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
@@ -184,10 +190,10 @@ export function DraftBlockReasons({ issues, label, descriptionId, show }: { issu
     }
   }, [])
   return <>
-    <button type="button" ref={anchor} className="draft-block-flag" aria-label={`${title} for ${label}`} aria-describedby={descriptionId}
-      onFocus={open} onBlur={close} onPointerEnter={open} onPointerLeave={() => { if (!show && !keepOpen.current && document.activeElement !== anchor.current) close() }}
+    <button type="button" ref={anchor} className={`draft-block-flag${blocked ? ' hard' : ''}`} aria-label={`${title} for ${label}`} aria-describedby={descriptionId} disabled={suppressed}
+      onFocus={open} onBlur={close} onPointerEnter={open} onPointerLeave={() => { if (!keepOpen.current && document.activeElement !== anchor.current) close() }}
       onClick={() => { if (keepOpen.current) close(); else { keepOpen.current = true; open() } }}>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 15 14H1Z" /><path d="M8 6v4m0 2v.5" /></svg>
+      <DraftBlockFlagIcon />
     </button>
     <span id={descriptionId} className="sr-only">{title}. {summary}</span>
     <div ref={panel} popover="manual" className={`draft-block-reason ${blocked ? 'hard' : 'soft'}`} aria-hidden="true">

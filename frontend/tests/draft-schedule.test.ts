@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -403,21 +403,41 @@ test('released swaps wait, require confirmation for warnings, and show blocking 
 
   const vite = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' })
   try {
-    const { DraftSwapFeedback } = await vite.ssrLoadModule('/src/components/DraftBlockEditor.tsx')
-    const props = { anchor: {} as HTMLElement, onApply: () => {}, onDismiss: () => {} }
-    const checking = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: true, preview: null }))
+    const { DraftMoveFeedback } = await vite.ssrLoadModule('/src/components/DraftBlockEditor.tsx')
+    const props = { anchor: {} as HTMLElement, kind: 'swap', onApply: () => {}, onDismiss: () => {} }
+    const checking = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: true, preview: null }))
     assert.match(checking, /Checking the swap.*Cancel/)
     assert.doesNotMatch(checking, /Apply swap/)
-    const confirmation = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: warning }))
+    const confirmation = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: warning }))
     assert.match(confirmation, /role="dialog".*aria-describedby=.*exceed capacity.*Cancel.*Apply swap/)
     assert.match(confirmation, /<p[^>]*>The swap would exceed capacity\.<\/p>/)
-    const rejection = renderToStaticMarkup(createElement(DraftSwapFeedback, { ...props, checking: false, preview: blocked }))
+    const rejection = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: blocked }))
     assert.match(rejection, /Swap blocked.*posting must come first.*Dismiss/)
     assert.match(rejection, /<ul[^>]*><li[^>]*>The swap would exceed capacity\.<\/li><li[^>]*>The posting must come first\.<\/li><\/ul>/)
     assert.doesNotMatch(rejection, /Apply swap/)
+    const insertion = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, kind: 'insert', checking: false, preview: warning }))
+    assert.match(insertion, /Review move warning.*Cancel.*Apply move/)
   } finally {
     await vite.close()
   }
+})
+
+test('insertion previews reflow unequal blocks around fixed leave and identify adjacent no-ops', () => {
+  const first = '2027-07', second = '2027-11', third = '2027-12'
+  const blocks = [first, first, undefined, first, second, third, third]
+  const months: DraftSchedule['residents'][number]['months'] = blocks.map((block_start, index) => ({
+    month: index === 6 ? '2028-01' : `2027-${String(7 + index).padStart(2, '0')}`, status: block_start ? 'posting' : 'loa',
+    label: block_start ? 'Same posting label' : null, block_start,
+  }))
+  assert.deepEqual(draftInsertion(months, third, first, 'before'), {
+    changed: true, blocks: [third, third, undefined, first, first, first, second],
+  })
+  assert.deepEqual(draftInsertion(months, first, third, 'after'), {
+    changed: true, blocks: [second, third, undefined, third, first, first, first],
+  })
+  assert.deepEqual(draftInsertion(months, first, second, 'before'), { changed: false, blocks })
+  months[2].status = 'outside_draft_scope'
+  assert.equal(draftInsertion(months, third, first, 'before'), null)
 })
 
 

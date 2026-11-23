@@ -1,20 +1,31 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { draftSwapOutcome, validateDraftChange } from './draft-schedule'
-import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftSchedule } from './draft-schedule'
+import { draftInsertion, draftSwapOutcome, validateDraftChange } from './draft-schedule'
+import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
 import { sameSource } from './workbook'
 import type { Source, Workbook } from './workbook'
 
 export type DraftBlock = { source: Source; name: string; label: string; start: string; months: string[]; id: string; anchor: HTMLButtonElement }
-export type DraftCell = Pick<DraftBlock, 'source' | 'start' | 'months'> & { leave?: boolean }
-type ReleasedSwap = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean }
+export type DraftCell = Pick<DraftBlock, 'source' | 'start' | 'months'> & { leave?: boolean; label: string }
+export type DraftDestination = DraftCell & { side?: DraftInsertionSide }
+type ReleasedMove = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean; kind: 'insert' | 'swap' }
 
 function sameBlock(a: DraftCell | null | undefined, b: DraftCell | null | undefined) {
   return !!a && !!b && sameSource(a.source, b.source) && a.start === b.start
 }
 
+export function draftDestinationError(from: DraftBlock, next: DraftDestination) {
+  if (!sameSource(from.source, next.source)) return `Choose a block in ${from.name}’s row.`
+  if (next.leave) return 'This period is recorded leave. A posting cannot be assigned during leave.'
+  if (!next.months.length) return 'Choose another generated posting block.'
+  if (!next.side && from.months.length !== next.months.length) {
+    return `Only equal-length blocks can swap. These blocks span ${from.months.length} and ${next.months.length} training months.`
+  }
+  return ''
+}
+
 export function focusBlock(block: DraftBlock) {
-  const candidate = block.anchor.isConnected ? block.anchor : document.getElementById(block.id)
+  const candidate = block.anchor.isConnected && block.anchor.id === block.id ? block.anchor : document.getElementById(block.id)
   const target = candidate instanceof HTMLButtonElement && !candidate.disabled ? candidate : document.getElementById('resident-search')
   target?.focus({ preventScroll: true })
 }
@@ -28,15 +39,14 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
   const [editor, setEditor] = useState<DraftBlock | null>(null)
   const [move, setMove] = useState<{ from: DraftBlock; keyboard: boolean } | null>(null)
   const moving = useRef(move)
-  const target = useRef<DraftCell | null>(null)
-  const [destination, setDestination] = useState<DraftCell | null>(null)
-  const [released, setReleased] = useState<ReleasedSwap | null>(null)
+  const target = useRef<DraftDestination | null>(null)
+  const [destination, setDestination] = useState<DraftDestination | null>(null)
+  const [released, setReleased] = useState<ReleasedMove | null>(null)
   const [preview, setPreview] = useState<DraftChangeResult | null>(null)
   const [checking, setChecking] = useState(false)
   const [announcement, announce] = useState('')
   const [context, setContext] = useState({ workbook, store, draft, disabled })
-  const active = useRef<{ controller: AbortController; checked?: DraftChangeResult; released?: ReleasedSwap } | null>(null)
-  const cache = useRef(new Map<string, DraftChangeResult>())
+  const active = useRef<{ controller: AbortController; checked?: DraftChangeResult } | null>(null)
   if (context.workbook !== workbook || context.store !== store || context.draft !== draft || context.disabled !== disabled) {
     if (move || released) announce('')
     setContext({ workbook, store, draft, disabled })
@@ -55,7 +65,6 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   useLayoutEffect(() => {
     active.current = null; moving.current = null; target.current = null
-    cache.current.clear()
     return () => active.current?.controller.abort()
   }, [workbook, store, draft, disabled])
 
@@ -74,31 +83,23 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     cancelMove()
     const next = { from, keyboard }
     moving.current = next; setMove(next)
-    if (keyboard) announce(`Picked up ${from.label}. Use the arrow keys to choose a block, Enter to swap, or Escape to cancel.`)
+    if (keyboard) announce(`Picked up ${from.label}. Use the arrow keys to choose a swap, Shift and an arrow key to insert, Enter to apply, or Escape to cancel.`)
   }
 
   function cancelMove() {
     stopMove(); clearPreview()
   }
 
-  function check(change: DraftChange, affected: DraftCell[], debounce = 0) {
+  function check(change: DraftChange, affected: DraftCell[], release?: ReleasedMove) {
     clearPreview()
     if (!draft || disabled) return
-    const key = JSON.stringify(change)
-    const cached = cache.current.get(key)
-    const operation: NonNullable<typeof active.current> = { controller: new AbortController(), checked: cached }
+    const operation: NonNullable<typeof active.current> = { controller: new AbortController() }
     active.current = operation
-    if (cached) {
-      setPreview(cached)
-      if (change.kind === 'swap') announce(cached.issues.map((issue) => issue.message).join(' ') || 'Swap available.')
-      return
-    }
     setChecking(true)
-    if (change.kind === 'swap') announce('Checking the swap.')
+    const action = change.kind === 'insert' ? 'move' : 'swap'
+    if (release) announce(`Checking the ${action}.`)
     const { signal } = operation.controller
     void (async () => {
-      if (debounce) await new Promise((resolve) => window.setTimeout(resolve, debounce))
-      if (signal.aborted) return
       let result: DraftChangeResult
       try {
         result = await validateDraftChange(workbook, store, draft, change, signal)
@@ -110,40 +111,24 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
       }
       if (signal.aborted || active.current !== operation) return
       operation.checked = result
-      if (!result.issues.some((issue) => issue.code === 'validation_error')) {
-        const oldest = cache.current.keys().next().value
-        if (cache.current.size === 12 && oldest !== undefined) cache.current.delete(oldest)
-        cache.current.set(key, result)
-      }
       const outcome = draftSwapOutcome(result)
-      if (operation.released && outcome === 'clean' && apply(operation.released.focus)) return
+      if (release && outcome === 'clean' && apply(release.focus)) return
       setPreview(result); setChecking(false)
-      if (change.kind === 'swap') {
-        const reason = result.issues.map((issue) => issue.message).join(' ')
-        announce(operation.released && outcome === 'warning' ? 'Review the swap warning before applying.'
-          : reason || (outcome === 'clean' && !operation.released ? 'Swap available.' : 'Could not apply this swap. Try again.'))
+      if (release) {
+        announce(outcome === 'warning' ? `Review the ${action} warning before applying.`
+          : result.issues.map((issue) => issue.message).join(' ') || `Could not apply this ${action}. Try again.`)
       }
     })()
   }
 
-  function selectDestination(next: DraftCell) {
+  function selectDestination(next: DraftDestination | null) {
     const held = moving.current
-    if (!held || sameBlock(target.current, next)) return
+    if (!held || (target.current === next || (sameBlock(target.current, next) && target.current?.side === next?.side))) return
     target.current = next; setDestination(next)
-    const { from, keyboard } = held
-    if (sameBlock(from, next)) { clearPreview(); announce('Original position.'); return }
-    const message = !sameSource(from.source, next.source) ? `Choose a block in ${from.name}’s row.`
-      : next.leave ? 'This period is recorded leave. A posting cannot be assigned during leave.'
-        : !next.months.length ? 'Only generated posting blocks can be swapped.'
-        : from.months.length !== next.months.length ? `Only equal-length blocks can swap. These blocks span ${from.months.length} and ${next.months.length} training months.` : ''
-    if (message) {
-      clearPreview()
-      setPreview({ draft: null, issues: [{ severity: 'hard', code: 'invalid_destination', message,
-        affected: [from, next].map(({ source, start }) => ({ source, month: start })) }] })
-      announce(message)
-      return
+    if (held.keyboard && next) {
+      announce(sameBlock(held.from, next) ? 'Original position.'
+        : draftDestinationError(held.from, next) || (next.side ? `Insert ${held.from.label} ${next.side} ${next.label}.` : `Swap with ${next.label}.`))
     }
-    check({ kind: 'swap', resident: from.source, start: from.start, destination: next.start }, [from, next], keyboard ? 0 : 120)
   }
 
   function apply(block: DraftBlock) {
@@ -162,23 +147,37 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     cancelMove()
   }
 
-  function drop(next: DraftCell, anchor: HTMLElement, focusAfterSwap?: DraftBlock) {
+  function drop(next: DraftDestination, anchor: HTMLElement) {
     const held = moving.current
     if (!held) return
     const { from, keyboard } = held
     if (sameBlock(from, next)) { cancelMove(); return }
-    selectDestination(next)
-    const operation = active.current
-    const focus = focusAfterSwap ?? from
-    if (operation?.checked && draftSwapOutcome(operation.checked) === 'clean' && apply(focus)) return
-    const swap = { from, focus, anchor, keyboard }
-    if (operation) operation.released = swap
-    moving.current = null; setMove(null); setReleased(swap)
+    const kind = next.side ? 'insert' : 'swap'
+    const row = draft?.residents.find((person) => sameSource(person.source, from.source))
+    const insertion = next.side && row && sameSource(from.source, next.source)
+      ? draftInsertion(row.months, from.start, next.start, next.side) : null
+    if (insertion && !insertion.changed) { cancelMove(); announce('Original position.'); return }
+    const movedIndex = insertion?.blocks.indexOf(from.start) ?? -1
+    const focusMonth = row?.months[movedIndex]?.month ?? next.start
+    const focus = { ...from, id: `${from.id.slice(0, -7)}${focusMonth}` }
+    const release = { from, focus, anchor, keyboard, kind } as const
+    target.current = next; setDestination(next)
+    moving.current = null; setMove(null); setReleased(release)
+    const message = draftDestinationError(from, next)
+    if (message) {
+      clearPreview()
+      setPreview({ draft: null, issues: [{ severity: 'hard', code: 'invalid_destination', message,
+        affected: [from, next].map(({ source, start }) => ({ source, month: start })) }] })
+      announce(message)
+      return
+    }
+    const change = { resident: from.source, start: from.start, destination: next.start }
+    check(next.side ? { ...change, kind: 'insert', side: next.side } : { ...change, kind: 'swap' }, [from, next], release)
   }
 
   function dismissDrop(restoreFocus = true) {
     if (!released) return
-    cancelMove(); announce(checking ? 'Swap cancelled.' : '')
+    cancelMove(); announce(checking ? 'Move cancelled.' : '')
     if (restoreFocus) focusBlock(released.from)
   }
 
@@ -188,7 +187,7 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function endKeyboardMove(restoreFocus: boolean) {
     const from = moving.current?.from
-    cancelMove(); announce('Swap cancelled.')
+    cancelMove(); announce('Move cancelled.')
     if (restoreFocus && from) focusBlock(from)
   }
 
