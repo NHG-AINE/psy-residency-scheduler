@@ -14,39 +14,61 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
 - **Complete the required postings before progressing.** Unfinished posting
   requirements carry forward, even across academic years. July does not
   automatically advance a resident's R-year.
-- **Complete each posting block at the same institution.** Schedule each
-  block continuously at one posting and institution for its required duration;
-  LOA pauses the block. If a block is partially completed in recognised history, schedule
-  its remaining months at the same posting and institution. Flag conflicting
-  or unclear partial history for review rather than choosing automatically.
-  Preserve recognised Continuity Clinic credit when later historical postings
-  or gaps interrupt it; schedule the remainder at the same clinic and institution.
-  Multiple disconnected clinic runs still require review rather than being added together.
-  Separate completed blocks, including remediation, may be at different
-  institutions. Apply each posting's specific duration and timing rules,
-  including any permitted division into separate blocks.
-- **Recognise the R5 combined core alternative.** Six months of Child and
-  Geriatric Psychiatry fulfil both three-month R5 core requirements. Track partial
-  history as progress on the six-month combined block, not an assumed split
-  between its components. Schedule it as one continuous posting.
-  Continue a partial combined block at the same institution; LOA pauses it.
-  Do not also schedule the separate core requirements once the combined route
-  completes them. The six-month R5 elective remains required.
-- **Complete six months of R5 electives in valid blocks.** Use one continuous
-  six-month block by default. Allow two continuous three-month blocks when an
-  evaluable resident request calls for a three-month elective, subject to mandatory
-  workbook duration notes. One such request permits choosing the other eligible
-  three-month block. Each three-month block may use a different eligible
-  posting and institution. A completed three-month block permits a new choice;
-  an unfinished block resumes at its original posting and institution even if
-  the original request is absent, with LOA
-  pausing the block and any remainder carrying forward. Do not create a fresh
-  four-month plus two-month split.
+- **Keep each continuous block at the same posting and institution.** LOA
+  pauses the block. When recognised history shows a partially completed block,
+  schedule the remaining months at the original posting and institution. Flag
+  unclear or conflicting history for review.
+
+  For R3 Continuity Clinic, a later posting or gap does not erase credit already
+  earned. Resume the remaining months at the same clinic and institution. If the
+  history shows multiple disconnected clinic runs, flag them for review before
+  adding their months together.
+
+  Separate completed blocks, including remediation, may take place at different
+  institutions. Follow the duration, timing and permitted splits for each posting.
+
+- **Complete 12 months of R5 training.** The default route is 3 months of Child
+  & Adolescent Psychiatry, 3 months of Geriatric Psychiatry and 6 months of
+  electives. A resident may request 6 months in either core. Extending one core
+  leaves 3 elective months. Completing 6 months in each core fills all 12 months.
+  Recognised extended core history counts towards these totals.
+
+- **Count R5 core and elective credit.** The six-month Child and Geriatric
+  Psychiatry core posting gives 3 months of Child credit and 3 months of
+  Geriatric credit. On the standard combined route, the remaining 6 months
+  are electives.
+
+  For an R5 elective that also earns core credit, use the requirement and credit
+  specified in the Postings tab. For example, 6 months of IMH Child and EPIP
+  give 3 months of Child credit and 3 months of elective credit.
+
+  For both kinds of six-month posting, record a partial block as progress.
+  Award the component credits when the resident completes all 6 training months
+  at the same posting and institution. LOA pauses the block.
+
+- **Schedule R5 electives in valid blocks.** When a resident has 6 elective
+  months to complete, schedule one continuous six-month block by default. If
+  an eligible request allows a three-month placement, the scheduler may use two
+  continuous three-month blocks. A blank request period qualifies when the
+  posting allows a three-month block.
+
+  One qualifying request is enough. The other block may use any eligible
+  three-month elective, at the same or a different institution. Follow each
+  posting's allowed block lengths and mandatory duration notes. A new allocation
+  cannot use a four-month plus two-month split.
+
+  After one recognised three-month block is complete, the resident may choose
+  a different eligible posting for the next block. An unfinished block resumes
+  at its original posting and institution, even if the original request is
+  unavailable.
+
 - **Use posting history to determine what remains.** The R-year label alone
   does not show which requirements have been fulfilled. Count relevant postings
   across yearly tabs, including a posting that continues across June and July.
-- **Respect mandatory posting remarks.** The schedule must satisfy compulsory
-  requirements stated in the Remarks column of the Postings tab.
+- **Follow the mandatory timing and duration rules the scheduler recognises in
+  the Postings tab.** An unsupported remark does not become a scheduling rule
+  automatically.
+
 - **Keep R1 Medicine and Neurology postings within their paired institutions.**
   Pair TTSH General Medicine with NNI Neurology, and SGH General Medicine with
   SGH Neurology. Do not mix these pairings for a resident. The four months of
@@ -60,23 +82,29 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   with remaining R5 planning. See [cross-cluster.md](cross-cluster.md) for the
   institution mapping and examples.
 - **Do R4 Inpatient Psychiatry outside IMH after completing it at IMH in R1.**
-  If a resident completed R1 Inpatient Psychiatry at IMH, their R4 Inpatient
-  Psychiatry must be at TTSH, CGH, SGH or NUH. Determine the R1 posting from
-  recognised historical evidence.
+  Schedule R4 Inpatient Psychiatry at another eligible institution in the
+  Postings tab. Count recognised R1 history and any R1 inpatient months
+  included in the planned route when checking this rule.
 
 ## Soft constraints
 
-- **Minimise posting capacity overflow first.** Max in the Postings tab is a soft
-  monthly target for the exact posting requirement and institution. Minimise the
-  total `max(0, assigned - Max)` across posting-months before every other
-  preference. Blank Max adds no limit or penalty; zero remains a soft target.
-  Count known occupied places for skipped or excluded residents, and original
-  timetable cells retained outside generated training, alongside the solved cohort. Report unresolved occupied evidence for review without inventing
-  counts. Show each overflowing posting-month and all assigned residents for staff
-  review; exceeding Max does not invalidate a draft.
+- **Minimise months over capacity first.** For each posting and institution,
+  compare the number assigned each month with its `Max` in the Postings tab.
+  Seven assigned against a max of six adds one to the penalty for that month.
+  Add the excess across all posting-months. A blank max has no limit. A max
+  of zero counts every assignment as excess.
 
-- **Try to fulfil resident requests.** Requests are preferences, not mandatory
-  assignments. They must not override hard constraints.
+  Include known occupied places for skipped or excluded residents and original
+  timetable cells retained outside generated training. Flag unresolved evidence
+  for review. The draft may exceed max. Show staff the affected posting, month
+  and assigned residents.
+
+- **Give each resident equal weight when scoring requests.** Score the fraction
+  of their eligible request groups fulfilled. Either option fulfils a group of
+  two alternatives. Duplicate requests count once, and requests pending
+  clarification stay out of the score. All assignments must still meet the hard
+  constraints.
+
 - **Aim for the usual R1 intake distribution.** For an intake of 24 residents,
   target 12 in the TTSH/NNI route, 9 in the SGH route and 3 in the NUH combined
   route. For an intake of 23, retain 12 in TTSH/NNI and 9 in SGH, reducing NUH
@@ -93,48 +121,41 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   no suitable later posting remains; completion by the end of R4 is mandatory.
   Repeat clusters remain allowed while completion is still feasible. See
   [cross-cluster.md](cross-cluster.md) for the urgency and review rules.
-- **Aim to post at least two residents together in the same month.** Prefer
-  groups of two or more in the same posting at the same institution; groups
-  need not have an even number. A lone resident
-  is allowed when the preference cannot be met, including an odd-number
-  allocation, but the system should highlight that singleton assignment.
-  Peer grouping is the lowest-priority preference across all R-years.
-- **Balance residents across posting requirements over time.** Each month,
-  aim to spread residents as evenly as practical across the posting requirements
-  they are eligible for and still need. Adjust for different posting durations,
-  LOA, capacity and remaining requirements. This is a preference, not a fixed
-  quota; residents must still complete their required postings. Balance posting
-  types separately from the distribution of residents across institutions.
-  Balance R2, R4 and R5 posting requirements separately each month; for R5,
-  account for the remaining months of each requirement when setting the spread. Posting
-  balance takes priority over institution allocation, which takes priority over
-  peer grouping, across all R-years.
-- **Spread placements across institutions using allocation targets.**
-  When a posting is offered at IMH and other eligible institutions, give IMH
-  two allocation shares and each other institution one share. For N residents
-  needing that posting and K eligible institutions including IMH, target
-  `floor(N / (K + 1))` residents at each non-IMH institution and assign the
-  remainder, `N - (K - 1) * floor(N / (K + 1))`, to IMH.
-  For five institutions, 24 residents gives IMH 8 and four at each other site;
-  22 residents gives IMH 10 and three at each other site.
-  These are soft draft targets, not mandatory quotas or a fixed percentage.
-  Allow deviations for capacity targets, cross-cluster requirements, LOA
-  and resident requests. Small cohorts need not populate every institution. Apply the formula to the residents needing the posting, not
-  automatically to the full intake, and choose assignments together rather
-  than filling IMH first. When IMH is not an eligible option, aim for an even distribution across
-  the eligible institutions offering the same posting. This is a soft preference,
-  not an equal quota; higher-priority capacity targets and hard constraints take precedence.
+- **Prefer posting peers together.** Where possible, place at least two
+  residents in the same posting at the same institution in the same month.
+  A group of three meets the preference. Highlight a resident posted alone
+  for review. Peer grouping ranks last.
+
+- **Balance posting types within R2, R4 and R5 separately each month.** Aim for
+  an even spread in R2 and R4. In R5, weight the spread by the remaining
+  training months for each requirement. LOA, eligibility, capacity and
+  higher-priority requests can affect the result.
+
+- **Spread placements across institutions.** For each posting, count the
+  residents who need it. If IMH is eligible, give it two shares and each other
+  eligible institution one. Round each other institution's target down to a
+  whole resident and give the remainder to IMH. With five institutions,
+  24 residents gives an 8/4/4/4/4 target and 22 gives 10/3/3/3/3.
+
+  For `N` residents and `K` eligible institutions including IMH, each non-IMH
+  target is `floor(N / (K + 1))`. The IMH target is
+  `N - (K - 1) * floor(N / (K + 1))`.
+
+  If IMH is outside the eligible set, aim for an even spread. These targets
+  may give way to hard constraints and higher-priority preferences. A small
+  cohort can leave some institutions empty.
 
 ## Draft preference priority
 
-Apply the following soft preferences in order, while satisfying all hard
-constraints. A lower-priority improvement must not worsen a higher-priority
-score; compare scores in order rather than adding them into a total.
+Every draft must satisfy the hard constraints. The scheduler then works through
+the preferences below in order. Once it proves the best score for a preference,
+it keeps that score while working on the next one. If time runs out, it returns
+the best valid draft found so far, provided it has found one.
 
 1. Monthly posting capacity overflow.
 2. Usual R1 route distribution.
 3. Monthly 2:1 Medicine-to-Neurology ratio within each paired route.
-4. Maximise each resident's fraction of evaluable requests fulfilled.
+4. Maximise the sum of residents' fulfilled request fractions, giving each resident equal weight.
 5. Balance posting requirements over time.
 6. Institution allocation targets: weighted IMH where offered, even distribution
    across eligible institutions otherwise.
