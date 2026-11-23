@@ -1,3 +1,4 @@
+import { isWorkbook } from './workbook.ts'
 import type { Source, Workbook } from './workbook'
 
 export type CatalogueEntry = {
@@ -118,10 +119,37 @@ export async function evaluateHistory(workbook: Workbook, store: ReviewStore, si
     throw new Error('Could not reach the backend for history review. Check the connection and retry.')
   }
   const data = await response.json().catch(() => null)
-  if (!response.ok || !data || ![data.entries, data.catalogue, data.decisions].every(Array.isArray)) {
+  if (!response.ok || !isHistoryReview(data)) {
     throw new Error(typeof data?.detail === 'string' ? data.detail : 'History review failed. Re-import the workbook or retry.')
   }
-  return data as HistoryReview
+  return data
+}
+
+function isHistoryReview(data: HistoryReview | null): data is HistoryReview {
+  return !!data && [data.entries, data.catalogue, data.decisions].every(Array.isArray)
+}
+
+const computedImportFields = new Set(['match_status', 'matched_resident_source', 'catalogue_match', 'is_intake_placeholder', 'slot_id'])
+
+export async function prepareYear(workbook: Workbook, target_year: number, store: ReviewStore, signal: AbortSignal): Promise<{ workbook: Workbook; labels: HistoryReview }> {
+  const { annual_sheets, requests, postings } = workbook
+  let response: Response
+  try {
+    response = await fetch('/api/prepare-year', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_year, annual_sheets, requests, postings, store },
+        (key, value) => computedImportFields.has(key) ? undefined : value),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+    })
+  } catch {
+    signal.throwIfAborted()
+    throw new Error('Could not prepare the planning year. Check the backend connection and try again.')
+  }
+  const data = await response.json().catch(() => null)
+  if (!response.ok || !isWorkbook(data?.workbook) || data.workbook.target_year !== target_year || !isHistoryReview(data.labels)) {
+    throw new Error(typeof data?.detail === 'string' ? data.detail : 'The backend returned unexpected planning year data. Please try again.')
+  }
+  return data
 }
 
 export const reviewReasons: Record<string, string> = {
