@@ -227,13 +227,13 @@ export function groupedDraftWarnings(reasons: DraftSchedule['blockers']) {
 
 
 export function groupedCapacityRows(rows: CapacityRow[]) {
-  const groups = new Map<string, { key: string; label: string; periods: { start: string; end: string; assigned: number; max: number }[] }>()
+  const groups = new Map<string, { key: string; label: string; source: Source; periods: { start: string; end: string; assigned: number; max: number }[] }>()
   const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
   for (const row of [...rows].sort((a, b) => a.month.localeCompare(b.month))) {
     const key = JSON.stringify([row.requirement_id, row.residency_year, row.category, row.institution, row.label, row.source.sheet, row.source.row, row.source.column])
     let group = groups.get(key)
     if (!group) {
-      group = { key, label: `${row.residency_year} - ${row.label}`, periods: [] }
+      group = { key, label: `${row.residency_year} - ${row.label}`, source: row.source, periods: [] }
       groups.set(key, group)
     }
     const last = group.periods.at(-1)

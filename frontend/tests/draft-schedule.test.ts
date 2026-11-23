@@ -275,16 +275,29 @@ test('alternative outcomes count once and mark only the selected months', () => 
 test('draft feedback shows historical warnings and request outcomes with the relevant details', async () => {
   const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   try {
-    const { default: DraftResidentWarnings } = await vite.ssrLoadModule('/src/components/DraftResidentWarnings.tsx')
-    assert.equal(renderToStaticMarkup(createElement(DraftResidentWarnings, { draft })), '')
-    const warnings = renderToStaticMarkup(createElement(DraftResidentWarnings, {
-      draft: { ...draft, historical_cluster_warnings: [{ name: 'Example', mcr: null, source: resident.source,
-        reasons: [{ code: 'historical_cluster_gap', source: resident.source, clusters: ['SHS'] }] }] },
+    const { default: DraftReview } = await vite.ssrLoadModule('/src/components/DraftReview.tsx')
+    const workbook: Workbook = { target_year: 2027, target_sheet: 'Timetable', available_years: [{ year: 2027, sheet: 'Timetable' }],
+      residents: [resident], months: [], histories: [], requests: [], warnings: [], postings: { core: [], rows: [] } }
+    const reviewProps = { draft, workbook, yearLabel: 'Jul 2027 – Jun 2028', onFind: () => {} }
+    assert.match(renderToStaticMarkup(createElement(DraftReview, reviewProps)), /No draft warnings/)
+    const warnings = renderToStaticMarkup(createElement(DraftReview, {
+      ...reviewProps, draft: { ...draft, historical_cluster_warnings: [{ name: 'Example', mcr: null, source: resident.source,
+        reasons: [{ code: 'historical_cluster_gap', source: resident.source, clusters: ['SHS'], month: '2027-08' }] }],
+      skipped_residents: [{ ...resident, reasons: [{ code: 'unresolved_history' }] }],
+      capacity_overflows: [{ month: '2027-08', requirement_id: 'r4.forensic', residency_year: 'R4', institution: 'IMH',
+        label: 'IMH Forensic Psychiatry', max: 5, assigned: 7, source: { sheet: 'Postings', row: 30 }, residents: [] }],
+      capacity_coverage_notes: ['B', 'C'].map((column) => ({ code: 'unresolved_occupied_posting', source: { sheet: 'Timetable', row: 3, column } })),
+      },
     }))
-    assert.match(warnings, /^<details><summary>1 resident has historical cluster warnings<\/summary>/)
+    assert.match(warnings, /4 warning groups/)
+    assert.match(warnings, /Historical cluster warnings.*1 resident/)
     assert.match(warnings, /<strong>Example<\/strong>/)
-    assert.match(warnings, /Completed R1-R4 with missing cluster coverage - SHS/)
+    assert.match(warnings, /Completed R1-R4 with missing cluster coverage - SHS.*Aug 27/)
     assert.match(warnings, /Source: Timetable \u00b7 row 3/)
+    assert.match(warnings, /Capacity counts need review.*1 record excluded/)
+    assert.match(warnings, /Timetable \u00b7 B3; Timetable \u00b7 C3/)
+    assert.match(warnings, /7 assigned \/ 5 max/)
+    assert.match(warnings, /Find in timetable/)
     const { default: RequestDetails } = await vite.ssrLoadModule('/src/components/RequestDetails.tsx')
     const row = { request: { posting_request: 'IMH Inpatient Psychiatry', period: null, source: { sheet: 'Request', row: 37 } },
       status: 'not_met', reason: 'R4 Inpatient must be outside IMH.',
