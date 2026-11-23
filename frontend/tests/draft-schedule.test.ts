@@ -314,6 +314,13 @@ test('draft feedback shows historical warnings and request outcomes with the rel
     assert.match(warnings, /7 assigned \/ 5 max/)
     assert.match(warnings, /Find in timetable/)
     const { default: RequestDetails } = await vite.ssrLoadModule('/src/components/RequestDetails.tsx')
+    const { default: RequestOutcomeFilter } = await vite.ssrLoadModule('/src/components/RequestOutcomeFilter.tsx')
+    for (const [selected, label] of [['not_met', 'Not met'], ['pending', 'Pending']]) {
+      const emptyFilter = renderToStaticMarkup(createElement(RequestOutcomeFilter, {
+        draft, selected, onChange: () => {}, disabled: false,
+      }))
+      assert.ok(emptyFilter.includes(`<option value="${selected}" selected="">${label} (0)</option>`))
+    }
     const row = { request: { posting_request: 'IMH Inpatient Psychiatry', period: null, source: { sheet: 'Request', row: 37 } },
       status: 'not_met', reason: 'R4 Inpatient must be outside IMH.',
       assigned: [{ label: 'SGH Inpatient Psychiatry', months: ['2028-04'] }] }

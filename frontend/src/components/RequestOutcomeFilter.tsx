@@ -6,13 +6,13 @@ export default function RequestOutcomeFilter({ draft, selected, onChange, disabl
 }) {
   const { met, not_met, pending } = requestTotals(draft)
   const total = met + not_met + pending
-  if (!total) return null
+  if (!total && !selected) return null
   return <label className="request-outcome-filter">Request outcome
     <select value={selected ?? ''} disabled={disabled} onChange={(event) => onChange((event.target.value || null) as RequestStatus | null)}>
       <option value="">All request outcomes ({total})</option>
       <option value="met">Met ({met})</option>
       <option value="not_met">Not met ({not_met})</option>
-      {pending > 0 && <option value="pending">Pending ({pending})</option>}
+      {(pending > 0 || selected === 'pending') && <option value="pending">Pending ({pending})</option>}
     </select>
   </label>
 }
