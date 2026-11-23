@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapLayout, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -408,8 +408,10 @@ test('released swaps wait, require confirmation for warnings, and show blocking 
     const checking = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: true, preview: null }))
     assert.match(checking, /Checking the swap.*Cancel/)
     assert.doesNotMatch(checking, /Apply swap/)
-    const confirmation = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: warning }))
+    const confirmation = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: warning,
+      proposal: 'Jul 2027, Geriatric Psychiatry. Oct 2027, Addiction Medicine.' }))
     assert.match(confirmation, /role="dialog".*aria-describedby=.*exceed capacity.*Cancel.*Apply swap/)
+    assert.match(confirmation, /Proposed arrangement\. Jul 2027, Geriatric Psychiatry\. Oct 2027, Addiction Medicine\./)
     assert.match(confirmation, /<p[^>]*>The swap would exceed capacity\.<\/p>/)
     const rejection = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: blocked }))
     assert.match(rejection, /Swap blocked.*posting must come first.*Dismiss/)
@@ -420,6 +422,19 @@ test('released swaps wait, require confirmation for warnings, and show blocking 
   } finally {
     await vite.close()
   }
+})
+
+test('swap previews exchange both posting labels across fixed leave without moving other blocks', () => {
+  const first = '2027-07', second = '2027-11', third = '2028-02'
+  const blocks = [first, first, undefined, first, second, second, second, third, undefined]
+  const dates = ['2027-07', '2027-08', '2027-09', '2027-10', '2027-11', '2027-12', '2028-01', '2028-02', '2028-03']
+  const months: DraftSchedule['residents'][number]['months'] = blocks.map((block_start, index) => ({
+    month: dates[index], status: block_start ? 'posting' : index === 2 ? 'loa' : 'outside_draft_scope',
+    label: block_start ? 'Posting' : null, block_start,
+  }))
+  assert.deepEqual(draftSwapLayout(months, first, second), [second, second, undefined, second, first, first, first, third, undefined])
+  assert.equal(draftSwapLayout(months, first, third), null)
+  assert.deepEqual(months.map((month) => month.block_start), blocks)
 })
 
 test('insertion previews reflow unequal blocks around fixed leave and identify adjacent no-ops', () => {

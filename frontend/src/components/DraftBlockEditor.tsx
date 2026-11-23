@@ -25,8 +25,8 @@ function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
   </ul>
 }
 
-export function DraftMoveFeedback({ anchor, kind, checking, preview, onApply, onDismiss }: {
-  anchor: HTMLElement; kind: 'swap' | 'insert'; checking: boolean; preview: DraftChangeResult | null; onApply: () => void; onDismiss: () => void
+export function DraftMoveFeedback({ anchor, kind, checking, preview, proposal, onApply, onDismiss }: {
+  anchor: HTMLElement; kind: 'swap' | 'insert'; checking: boolean; preview: DraftChangeResult | null; proposal?: string; onApply: () => void; onDismiss: () => void
 }) {
   const id = useId()
   const panel = useRef<HTMLDivElement>(null)
@@ -69,6 +69,7 @@ export function DraftMoveFeedback({ anchor, kind, checking, preview, onApply, on
     aria-labelledby={`${id}-title`} aria-describedby={`${id}-details`}>
     <h3 id={`${id}-title`}>{title}</h3>
     <div id={`${id}-details`} className="draft-editor-feedback">
+      {proposal && <p className="sr-only">Proposed arrangement. {proposal}</p>}
       {checking ? null : issues.length ? <DraftIssueMessages issues={issues} /> : <p>Could not apply this {action}. Try again.</p>}
     </div>
     <footer>
