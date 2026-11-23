@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { exportDraft, downloadDraft } from './lib/draft-export'
 import { restoreSession, saveSession } from './lib/workbook-session'
 import { useDraftSchedule } from './lib/use-draft-schedule'
 import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails from './components/RequestDetails'
-import RequestTotals from './components/RequestTotals'
+import RequestOutcomeFilter from './components/RequestOutcomeFilter'
 import type { DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, groupedCapacityRows, requestSummary, filterRequestResidents } from './lib/draft-schedule'
+import { draftBlockerLabel, draftPostings, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents } from './lib/draft-schedule'
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
-import DraftResidentWarnings from './components/DraftResidentWarnings'
-import DraftSearchLimit from './components/DraftSearchLimit'
+import DraftActions from './components/DraftActions'
 import MonthlyBreakdown from './components/MonthlyBreakdown'
 import ScrollToTop from './components/ScrollToTop'
 import { scrollToPosition } from './lib/scroll'
@@ -76,8 +76,12 @@ function ResidentDetail({ resident, workbook, onHistoryReview }: { resident: Res
   </details>
 }
 
-function Review({ workbook, view, query, requestFilter, year, years, onYearChange, onHistoryReview, historyResident, draftState, breakdownHost, onTimetableReady, loading = false }: { workbook: Workbook; view: View; query: string; requestFilter: RequestStatus | null; year: number; years: number[]; onYearChange: (year: number) => void; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState; breakdownHost: HTMLDivElement | null; onTimetableReady: (target: HTMLElement) => (() => void) | undefined; loading?: boolean }) {
-  const matches = (name: string | null, mcr: string | null) => `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+function matchesResident(query: string, name: string | null, mcr: string | null) {
+  return `${name || ''} ${mcr || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+}
+
+function Review({ workbook, view, query, year, onHistoryReview, historyResident, draftState }: { workbook: Workbook; view: View; query: string; year: number; onHistoryReview: (resident: Resident) => void; historyResident: string; draftState: DraftState }) {
+  const matches = (name: string | null, mcr: string | null) => matchesResident(query, name, mcr)
   const residents = workbook.residents.filter((resident) => matches(resident.name, resident.mcr))
   if (view === 'Issues') return <div className="review-content"><h2 className="issues-heading">Import issues <span className={`badge issue-badge ${(workbook.issues?.length || 0) + workbook.warnings.length > 0 ? 'issue-badge-warning' : 'issue-badge-neutral'}`} aria-label={`${(workbook.issues?.length || 0) + workbook.warnings.length} import issues`}>{(workbook.issues?.length || 0) + workbook.warnings.length}</span></h2>
     <ImportIssues issues={workbook.issues || []} warnings={workbook.warnings} />
@@ -90,18 +94,27 @@ function Review({ workbook, view, query, requestFilter, year, years, onYearChang
       ? draftState.draft.residents.flatMap((person) => person.requests || []).filter((outcome) => outcome.status === 'pending') : []
     return <><p className="table-note">Requests are not assigned to a planning year. The selected year changes resident links, not request dates or the recorded request rows.</p>{requests.length ? <div className="table-scroll"><table><caption className="sr-only">Workbook posting requests</caption><thead><tr><th>Resident</th><th>Request</th><th>Period</th><th>Remarks / source</th></tr></thead><tbody>{requests.map((request, index) => <tr key={index}><th scope="row">{show(request.name)}<small>{show(request.mcr)}</small></th><td>{show(request.posting_request)}</td><td>{show(request.period)}</td><td>{show(request.remarks)}{source(request.source)}<small>Identity: {request.match_status || 'Unresolved'}</small>{pending.filter((outcome) => sameSource(outcome.request.source, request.source)).map((outcome, i) => <small key={i}>Draft pending: {outcome.reason}</small>)}</td></tr>)}</tbody></table></div> : <p className="empty-note">No requests match this search.</p>}</>
   }
-  if (view === 'Timetable') return <Timetable residents={filterRequestResidents(residents, draftState.draft, requestFilter)} workbook={workbook} year={year} years={years} onYearChange={onYearChange} importLoading={loading} draftState={draftState} breakdownHost={breakdownHost} onReady={onTimetableReady} />
   if (!residents.length) return <p className="empty-note">{workbook.residents.length ? 'No residents match this search.' : 'No resident rows were found for this planning year.'}</p>
   return <div className="resident-list">{residents.map((resident) => <ResidentDetail key={JSON.stringify(resident.source)} resident={resident} workbook={workbook} onHistoryReview={() => onHistoryReview(resident)} />)}</div>
 }
 
 const postingCategoryLabels = { core: 'Core', elective: 'Elective', loa: 'LOA', unresolved: 'Unresolved', unallocated: 'Unallocated', requirements_completed: 'Requirements completed' }
 
-function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading = false }: { residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void; importLoading?: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined }) {
-  const { draft, busy: generating, error: draftError } = draftState
-  const hasDraft = draft?.status === 'optimal' || draft?.status === 'feasible'
+function residentRowId(source: Source) {
+  return `timetable-resident-${encodeURIComponent(JSON.stringify(source.kind ? [source.kind, source.slot_id] : [source.sheet, source.row]))}`
+}
+
+function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, filters, actions, exportError, focusSource }: {
+  residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
+  importLoading: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null; onReady: (target: HTMLElement) => (() => void) | undefined
+  filters: ReactNode; actions: ReactNode; exportError: string | undefined; focusSource: Source | null
+}) {
+  const { draft: result, error: draftError } = draftState
+  const draft = result?.status === 'optimal' || result?.status === 'feasible' ? result : null
+  const failedAttempt = draft ? null : result
   const timetable = useRef<HTMLDivElement>(null)
-  const revealAfterGeneration = useRef(false)
+  const focusedSource = useRef<Source | null>(null)
+  const beforeGeneration = useRef<{ draft: DraftSchedule | null } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState<{ workbook: Workbook; attempt: number; data: HistoryReview } | null>(null)
   const [failure, setFailure] = useState<{ workbook: Workbook; attempt: number; message: string } | null>(null)
@@ -124,7 +137,25 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   }, [workbook, attempt, importLoading])
   const resolution = !importLoading && loaded?.workbook === workbook && loaded.attempt === attempt ? loaded.data : null
   const error = !importLoading && failure?.workbook === workbook && failure.attempt === attempt ? failure.message : ''
-  const loading = importLoading || generating || (!resolution && !error)
+  const loading = importLoading || (!resolution && !error)
+  useLayoutEffect(() => {
+    if (loading || !focusSource || focusedSource.current === focusSource) return
+    const target = document.getElementById(residentRowId(focusSource))
+    if (target && timetable.current?.contains(target)) {
+      focusedSource.current = focusSource
+      target.focus({ preventScroll: true })
+      target.scrollIntoView({ block: 'center', inline: 'nearest' })
+    }
+  }, [focusSource, loading])
+  useEffect(() => {
+    if (importLoading || year !== workbook.target_year) { beforeGeneration.current = null; return }
+    if (draftState.busy) { beforeGeneration.current ??= { draft }; return }
+    if (loading || !beforeGeneration.current) return
+    const previous = beforeGeneration.current.draft
+    beforeGeneration.current = null
+    const grid = timetable.current
+    if (draft && draft !== previous && grid && grid.getBoundingClientRect().top >= window.innerHeight) return revealElement(grid)
+  }, [draft, draftState.busy, importLoading, loading, workbook.target_year, year])
   useEffect(() => {
     if (loading || !breakdownHost || !timetable.current) return
     let stop: (() => void) | undefined
@@ -136,52 +167,41 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     })
     return () => { cancelAnimationFrame(frame); stop?.() }
   }, [loading, breakdownHost, onReady, workbook])
-  useEffect(() => {
-    if (importLoading || workbook.target_year !== year) { revealAfterGeneration.current = false; return }
-    if (generating) { revealAfterGeneration.current = true; return }
-    if (loading || !revealAfterGeneration.current) return
-    revealAfterGeneration.current = false
-    if (hasDraft && timetable.current) return revealElement(timetable.current)
-  }, [generating, loading, hasDraft, importLoading, workbook.target_year, year])
-  const capacityGroups = groupedCapacityRows(draft?.capacity_overflows || [])
-  const capacityNotes = [...new Map((draft?.capacity_coverage_notes || []).map((note) => [
-    JSON.stringify([note.source.sheet, note.source.row, note.code]), note,
-  ])).values()]
   const availableYears = [...years].sort((a, b) => a - b)
   const yearIndex = availableYears.indexOf(year)
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
   const range = (block: PostingBlock) => block.length === 1 ? monthLabel(block[0].month) : `${monthLabel(block[0].month)} – ${monthLabel(block[block.length - 1].month)}`
   return <>
-    <div className="timetable-toolbar"><div className="year-navigation" role="group" aria-label="Timetable planning year"><button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button><span className="year-range">Jul {year} - Jun {year + 1}</span><button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button></div><ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-dot legend-${kind}`} />{label}</li>)}</ul></div>
-    {hasDraft && capacityNotes.length > 0 && <details className="draft-feedback"><summary>Capacity counts need review &middot; {capacityNotes.length} records excluded from known counts</summary>
-      <ul>{capacityNotes.map((note, index) => {
-        const resident = workbook.residents.find((person) => person.source.sheet === note.source.sheet && person.source.row === note.source.row)
-        return <li key={index}>{resident?.name || resident?.mcr || 'Unnamed resident'}: {draftBlockerLabel({ code: note.code }, workbook)} <span className="draft-warning-source">Source: {sourceLabel(note.source)}</span></li>
-      })}</ul>
-    </details>}
-    <div className="draft-feedback" aria-live="polite" role="status">
-      {hasDraft && !generating && <DraftResidentWarnings draft={draft} />}
-      {hasDraft && !generating && capacityGroups.length > 0 && <details><summary>{capacityGroups.length} {capacityGroups.length === 1 ? 'posting' : 'postings'} over max - review capacity</summary>
-        <div className="draft-resident-warnings">{capacityGroups.map((group) => <div key={group.key}>
-          <strong>{group.label}</strong>
-          <ul>{group.periods.map((period) => <li key={period.start}>
-            {monthLabel(period.start)}{period.end !== period.start && ` \u2013 ${monthLabel(period.end)}`} &middot; {period.assigned} assigned / {period.max} max &middot; {period.assigned - period.max} over
-          </li>)}</ul>
-        </div>)}</div>
-      </details>}
-      {draft && !generating && !hasDraft && <><p>{draft.status === 'blocked' ? 'Draft blocked. Resolve the input issues below, then generate again.' : draft.status === 'infeasible' ? 'No feasible draft meets the current constraints. Review availability, posting eligibility and outstanding training.' : draft.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>{draft.blockers.length > 0 && <ul>{draft.blockers.map((blocker, index) => <li key={index}>{draftBlockerLabel(blocker, workbook)}</li>)}</ul>}</>}
+    <div className="timetable-toolbar">
+      <div>
+        <div className="year-navigation" role="group" aria-label="Timetable planning year">
+          <h2 className="year-range">Jul {year} – Jun {year + 1}</h2>
+          <button type="button" className="button button-secondary year-arrow" aria-label="Previous planning year" disabled={importLoading || yearIndex <= 0} onClick={() => onYearChange(availableYears[yearIndex - 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" /></svg></button>
+          <button type="button" className="button button-secondary year-arrow" aria-label="Next planning year" disabled={importLoading || yearIndex < 0 || yearIndex >= availableYears.length - 1} onClick={() => onYearChange(availableYears[yearIndex + 1])}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg></button>
+        </div>
+        {draft && !draftState.busy && <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />}
+      </div>
+      {actions}
     </div>
+    {filters}
+    {failedAttempt && <div className="draft-feedback" role="status">
+      {draft && <p>The current draft is still available.</p>}
+      <p>{failedAttempt.status === 'blocked' ? 'Draft generation blocked. Resolve the input issues below, then generate again.' : failedAttempt.status === 'infeasible' ? 'No feasible draft meets the current constraints. Review availability, posting eligibility and outstanding training.' : failedAttempt.status === 'unknown' ? 'No solution was found within the time limit. Retry or review the inputs.' : 'The scheduling model could not be validated. Check the workbook inputs and retry.'}</p>
+      {failedAttempt.blockers.length > 0 && <ul>{failedAttempt.blockers.map((blocker, index) => <li key={index}>{draftBlockerLabel(blocker, workbook)}</li>)}</ul>}
+    </div>}
     {draftError && <p className="draft-error" role="alert">{draftError}</p>}
+    {exportError && <p className="draft-error" role="alert">{exportError}</p>}
     {error && <div className="timetable-label-error" role="alert"><p>Catalogue labels are unavailable. Original labels are shown. {error}</p><button className="button button-secondary" type="button" onClick={() => setAttempt((value) => value + 1)}>Retry catalogue labels</button></div>}
     <div ref={timetable} aria-busy={loading}>
-    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : generating ? 'Generating draft' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid><table>
-      <caption className="sr-only">{hasDraft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
+    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid><table>
+      <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
-      <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident, index) => {
+      <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident) => {
         const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
-        return <tr key={index}>
-          <th scope="row">
+        const rowId = residentRowId(resident.source)
+        return <tr key={rowId}>
+          <th scope="row" id={rowId} tabIndex={-1}>
             <span>{words(show(resident.name))}</span><small>{words(`${show(resident.mcr)} · ${show(draftResidentYear(resident, draft))}`)}</small>
             {rows.length > 0 && <div className="request-counts">{(['met', 'not_met', 'pending'] as const).map((status) => {
               const count = counts[status]
@@ -213,6 +233,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })}</tbody>
     </table></TimetableGrid>}
     </div>
+    {!loading && <ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-marker legend-${kind}`} />{label}</li>)}</ul>}
     {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft} entries={resolution?.entries || []} />, breakdownHost)}
   </>
 }
@@ -237,6 +258,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   const [view, setView] = useState<View>('Timetable')
   const [query, setQuery] = useState('')
+  const [focusSource, setFocusSource] = useState<Source | null>(null)
   const [historyResident, setHistoryResident] = useState('')
   const [breakdownHost, setBreakdownHost] = useState<HTMLDivElement | null>(null)
   const draftMemory = useDraftSchedule(workbook, busy || restoring, year)
@@ -292,6 +314,19 @@ export default function App() {
   const [requestSelection, setRequestSelection] = useState<{ draft: DraftSchedule; status: RequestStatus | null } | null>(null)
   const requestFilter = hasDraft && requestSelection?.draft === draftState.draft ? requestSelection.status : null
 
+  const matchingResidents = workbook?.residents.filter((resident) => matchesResident(query, resident.name, resident.mcr)) || []
+  const timetableResidents = filterRequestResidents(matchingResidents, draftState.draft, requestFilter)
+  function selectRequestFilter(status: RequestStatus | null) {
+    if (draftState.draft) setRequestSelection({ draft: draftState.draft, status })
+  }
+  function findInTimetable(source: Source) {
+    const resident = workbook?.residents.find((person) => sameSource(person.source, source))
+    if (!resident) return
+    if (!matchesResident(query, resident.name, resident.mcr)) setQuery('')
+    if (requestFilter && !requestSummary(resident, draftState.draft).counts[requestFilter]) setRequestSelection(null)
+    setFocusSource({ ...source })
+  }
+
   const revealTimetable = useCallback((target: HTMLElement) => {
     if (!revealAfterUpload.current) return
     revealAfterUpload.current = false
@@ -301,7 +336,7 @@ export default function App() {
 
   async function load(nextFile: File, nextYear?: number, reveal = false) {
     setLoadingHeight(review.current?.getBoundingClientRect().height)
-    setBusy(true); setError(''); setStatus('')
+    setBusy(true); setError(''); setStatus(''); setFocusSource(null)
     try {
       const result = await importWorkbook(nextFile, nextYear)
       revealAfterUpload.current = reveal
@@ -340,10 +375,24 @@ export default function App() {
         <div className="import-feedback"><p role="status" aria-live="polite">{restoring ? 'Restoring saved workbook...' : draftMemory.notice || status}</p>{storageError && <p role="status" className="error-message">{storageError}</p>}{error && <p id="import-error" role="alert" className="error-message">{error}{workbook && ' Your previous import is unchanged.'}</p>}</div>
       </section>
       {(workbook || busy) && <section ref={review} style={{ minHeight: busy ? loadingHeight : undefined }} className="workspace-panel review-panel" aria-label="Workbook review" aria-busy={busy}>
-        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
-        {['Timetable', 'Residents', 'Requests'].includes(view) && <div className="search-toolbar">{view !== 'Timetable' && <label>Planning year<select value={year ?? ''} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>}<SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />{view === 'Timetable' && hasDraft && draftState.draft && <RequestTotals draft={draftState.draft} selected={requestFilter} onChange={(status) => setRequestSelection({ draft: draftState.draft!, status })} />}{view === 'Timetable' ? draftState.canGenerate && <div className="draft-actions">{!hasDraft && !draftState.pending && <DraftSearchLimit value={draftState.searchSeconds} onChange={draftState.setSearchSeconds} disabled={busy} />}<DraftTimer draft={draftState.draft} startedAt={draftState.startedAt} elapsedSeconds={draftState.elapsedSeconds} /><button type="button" className={`button draft-generate${hasDraft && !draftState.busy ? ' button-secondary' : ''}`} disabled={busy || exporting || draftState.cancelling || (draftState.pending && !draftState.busy)} onClick={() => draftState.busy ? void draftState.cancelGeneration() : hasDraft ? discardSavedDraft() : void draftState.generate()}>{draftState.cancelling ? 'Cancelling...' : draftState.busy ? 'Cancel generation' : hasDraft ? 'Discard draft' : 'Generate draft'}</button>{hasDraft && !draftState.pending && <button type="button" className="button" disabled={busy || exporting} onClick={() => void downloadExcel()}>{exporting ? 'Exporting...' : 'Export Excel'}</button>}</div> : workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}</div>}
-        {exportError && exportError.file === file && exportError.draft === draftState.draft && view === 'Timetable' && <p className="draft-error" role="alert">{exportError.message}</p>}
-        {workbook && (!busy || view === 'Timetable') ? <Review workbook={workbook} view={view} query={query} requestFilter={requestFilter} year={year ?? workbook.target_year} years={years} onYearChange={selectYear} onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }} historyResident={historyResident} draftState={draftState} breakdownHost={breakdownHost} onTimetableReady={revealTimetable} loading={busy || restoring} /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
+        <nav className="view-nav" aria-label="Workbook views">{views.map((item) => <button type="button" key={item} className={view === item ? 'active' : ''} aria-current={view === item ? 'page' : undefined} disabled={busy} onClick={() => { setHistoryResident(''); setFocusSource(null); setView(item) }}>{item}{item === 'Issues' && issueCount ? ` (${issueCount})` : ''}</button>)}</nav>
+        {(view === 'Residents' || view === 'Requests') && <div className="search-toolbar">
+          <label>Planning year<select value={year ?? ''} disabled={busy} onChange={(event) => selectYear(Number(event.target.value))}>{years.map((value) => <option key={value} value={value}>Jul {value} - Jun {value + 1}</option>)}</select></label>
+          <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR number" value={query} disabled={busy} onChange={setQuery} />
+          {workbook && <p className="sheet-label">Source: {workbook.target_sheet}</p>}
+        </div>}
+        {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
+          onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring}
+          focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
+          actions={<DraftActions state={{ ...draftState, draft: hasDraft ? draftState.draft : null }} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`} exporting={exporting} onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable} />}
+          filters={<div className="search-toolbar timetable-filters">
+            <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR" value={query} disabled={busy} onChange={setQuery} />
+            <RequestOutcomeFilter draft={draftState.draft} selected={requestFilter} onChange={selectRequestFilter} disabled={busy} />
+          </div>}
+        /> : workbook && !busy ? <Review workbook={workbook} view={view} query={query} year={year ?? workbook.target_year}
+          onHistoryReview={(resident) => { setHistoryResident(resident.mcr || resident.name || ''); setView('History review') }}
+          historyResident={historyResident} draftState={draftState}
+        /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
       {workbook && view === 'Timetable' && <div ref={setBreakdownHost} />}
     </main>
