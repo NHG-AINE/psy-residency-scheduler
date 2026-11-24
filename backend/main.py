@@ -1,13 +1,15 @@
 import json
 from urllib.parse import quote
 from fastapi.responses import JSONResponse, Response
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
 from threading import Event
 from time import monotonic
 from uuid import uuid4
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 if __package__:
     from .workbook_export import export_workbook
@@ -198,7 +200,25 @@ async def generate_draft(request: DraftRequest, token: str | None = None):
             _draft_operations.pop(token, None)
 
 
-@app.post("/api/export")
+class ExportRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def handle(request: Request):
+            content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+            if content_type == "multipart/form-data":
+                try:
+                    # FastAPI validates the fields and closes uploads from the cached form.
+                    await request.form(max_part_size=2 * 1024 * 1024)
+                except StarletteHTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(400, "There was an error parsing the body") from exc
+            return await handler(request)
+
+        return handle
+
+
 async def export_draft(originalFile: UploadFile = File(...), target_year: int = Form(...), draft: str = Form(...)):
     try:
         if not originalFile.filename or not originalFile.filename.lower().endswith(".xlsx"):
@@ -218,3 +238,6 @@ async def export_draft(originalFile: UploadFile = File(...), target_year: int = 
                                  "X-Export-Retained-Residents": json.dumps(retained, ensure_ascii=True)})
     finally:
         await originalFile.close()
+
+
+app.router.add_api_route("/api/export", export_draft, methods=["POST"], route_class_override=ExportRoute)
