@@ -427,6 +427,15 @@ def draft_source_key(source):
     return (source["kind"], source["slot_id"]) if source.get("kind") == "intake_placeholder" else source_key(source)
 
 
+def _placement_future(placement, person):
+    option = placement["option"]
+    months = placement["months"]
+    return {"requirement_id": option["requirement_id"], "institution": option["institution"],
+            "label": option["label"], "months": placement["remaining"],
+            "block_start": person["availability"][months[0]]["month"] if months else None,
+            **({"training_start": placement["start"]} if not months else {})}
+
+
 def _add_fixed_draft(model, selected, candidates, variables, placements, fixed):
     """Constrain all visible blocks, planned routes and carryforward blocks."""
     for i, person in enumerate(selected):
@@ -449,14 +458,13 @@ def _add_fixed_draft(model, selected, candidates, variables, placements, fixed):
         if any(len({key for key, _ in items}) != 1 for items in by_start.values()):
             raise ValueError("A generated block must have the same posting and institution throughout.")
         available = defaultdict(list)
-        future = defaultdict(list)
+        future = []
         for choice, variable in zip(candidates[i], variables[i]):
             assigned_r1 = {month: source_key(option["source"]) for month, option in enumerate(choice["schedule"]) if option}
             if assigned_r1 != expected_r1 or choice["route"] != planned["route"]:
                 model.add(variable == 0)
                 continue
-            for (requirement, site), remaining in choice["carryforward"].items():
-                future[(requirement, site, None, remaining)].append(variable)
+            future.extend((row, variable) for row in choice["future"])
         for placement in placements[i]:
             option = placement["option"]
             variable = placement["variable"]
@@ -467,16 +475,49 @@ def _add_fixed_draft(model, selected, candidates, variables, placements, fixed):
                     continue
                 available[block].append(variable)
             if placement["remaining"]:
-                future[(option["requirement_id"], option["institution"], option["label"], placement["remaining"])].append(variable)
+                future.append((_placement_future(placement, person), variable))
         if expected - available.keys():
             return False
         for block in expected:
             model.add_exactly_one(available[block])
-        carryforward = Counter((item["requirement_id"], item["institution"], item.get("label"), item["months"])
-                               for item in planned["carryforward"])
-        for block in future.keys() | carryforward.keys():
-            model.add(sum(future[block]) == carryforward[block])
+        _fix_carryforward(model, planned["carryforward"], future)
     return True
+
+
+def _fix_carryforward(model, planned, future):
+    def identity(row):
+        return row["requirement_id"], row["institution"], row.get("label")
+
+    def explicit_key(row):
+        return *identity(row), row["months"], row["block_start"], row.get("training_start")
+
+    def aggregate_key(row):
+        # Older R1 drafts counted by requirement/site, even across split Medicine runs.
+        return *identity(row), None if row["requirement_id"].startswith("r1.") else row["months"]
+
+    def weight(row):
+        return row["months"] if row["requirement_id"].startswith("r1.") else 1
+
+    explicit = Counter(explicit_key(row) for row in planned if "block_start" in row)
+    options = defaultdict(list)
+    if len(planned) == sum(explicit.values()):
+        for row, variable in future:
+            options[explicit_key(row)].append(variable)
+        for key in options.keys() | explicit.keys():
+            model.add(sum(options[key]) == explicit[key])
+        return
+
+    totals = Counter()
+    for row in planned:
+        totals[aggregate_key(row)] += weight(row)
+    linked = defaultdict(list)
+    for row, variable in future:
+        options[aggregate_key(row)].append(weight(row) * variable)
+        linked[explicit_key(row)].append(variable)
+    for key in options.keys() | totals.keys():
+        model.add(sum(options[key]) == totals[key])
+    for key, count in explicit.items():
+        model.add(sum(linked[key]) == count)
 
 
 def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, prepared=None):
@@ -1040,10 +1081,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                                             for option in choice["schedule"] if option is not None]),
                                     },
                                     "credited_r1_months": choice["credited_r1_months"],
-                                    "carryforward": [{"requirement_id": requirement, "institution": institution, "months": months}
-                                                     for (requirement, institution), months in choice["carryforward"].items()]
-                                    + [{"requirement_id": p["option"]["requirement_id"], "institution": p["option"]["institution"],
-                                        "label": p["option"]["label"], "months": p["remaining"]} for p in chosen if p["remaining"]]})
+                                    "carryforward": choice["future"] + [_placement_future(p, person) for p in chosen if p["remaining"]]})
     for i, person, entry in retained_entries:
         for posting in entry["months"]:
             month = next((m for m, value in enumerate(prepared["planning_months"]) if value["month"] == posting["month"]), None)
