@@ -3,10 +3,10 @@
 from .r2_rules import partial_posting_identity
 if __package__ == "backend.rules":
     from ..programme_requirements import PROGRAMME_REQUIREMENTS
-    from ..requirement_ledger import month_number
+    from ..workbook_import import month_number
 else:
     from programme_requirements import PROGRAMME_REQUIREMENTS
-    from requirement_ledger import month_number
+    from workbook_import import month_number
 
 
 def completed_r1_inpatient_at_imh(person, planned_months=0):

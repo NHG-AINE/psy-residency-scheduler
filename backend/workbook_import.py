@@ -143,6 +143,11 @@ def normalized_posting_label(value):
     return normalized_label(label.replace("&", " and "))
 
 
+def month_number(value):
+    parsed = date.fromisoformat(value + "-01")
+    return parsed.year * 12 + parsed.month - 1
+
+
 def recorded_years(value):
     return set(re.findall(r"\br[1-5]\b", normalized_label(value)))
 
