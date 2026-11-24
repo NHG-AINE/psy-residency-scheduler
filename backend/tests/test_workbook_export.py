@@ -11,7 +11,7 @@ from openpyxl.styles import Alignment, Font
 
 from main import app
 from workbook_export import export_workbook
-from workbook_import import WorkbookError, parse_workbook, posting_catalogue
+from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, posting_catalogue
 from tests.test_workbook_import import structured_workbook_bytes
 
 
@@ -69,24 +69,44 @@ class ExportTests(unittest.TestCase):
                       'source': normal['source'], 'label': normal['label'], 'category': normal['category']}
                      for month in workbook['months']]
         draft = {'status': 'edited', 'cutoff': '2027-06', 'residents': residents, 'capacity_overflows': overflows}
-        baseline = {'capacity_overflows': overflows, 'residents': [
-            {'source': person['source'], 'months': [normal['source']] * 12} for person in residents]}
+        payload = json.dumps(draft, separators=(',', ':')).ljust(1_051_278)
+        self.assertEqual(len(payload.encode('utf-8')), 1_051_278)
 
-        client = TestClient(app)
-
-        def export(payload):
-            return client.post('/api/export', files={'originalFile': ('Example.xlsx', content)},
-                               data={'target_year': '2027', 'draft': json.dumps(payload, separators=(',', ':'))})
-
-        rejected = export({**draft, 'edit_baseline': baseline})
-        self.assertEqual(rejected.status_code, 400, rejected.text)
-        self.assertIn('maximum size', rejected.json()['detail'])
-        response = export(draft)
-        self.assertEqual(response.status_code, 200)
+        response = TestClient(app).post('/api/export', files={'originalFile': ('Example.xlsx', content)},
+                                        data={'target_year': '2027', 'draft': payload})
+        self.assertEqual(response.status_code, 200, response.text if response.status_code != 200 else '')
         self.assertEqual(response.headers['content-type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         exported = load_workbook(BytesIO(response.content))
         self.assertEqual(exported[sheet]['G4'].value, edited['label'])
         self.assertEqual(exported[sheet]['G167'].value, normal['label'] + ' (Elective)')
+
+    def test_draft_part_one_byte_over_export_limit_is_rejected(self):
+        content, draft = fixture()
+        payload = json.dumps(draft).ljust(2 * 1024 * 1024 + 1)
+        response = TestClient(app).post('/api/export', files={'originalFile': ('Example.xlsx', content)},
+                                        data={'target_year': '2027', 'draft': payload})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn('maximum size of 2048KB', response.json()['detail'])
+
+    def test_export_preserves_form_validation_and_workbook_upload_limit(self):
+        client = TestClient(app)
+        content, draft = fixture()
+        files = {'originalFile': ('Example.xlsx', content)}
+        fields = {'target_year': '2027', 'draft': json.dumps(draft)}
+        for invalid in ({'target_year': '2027'}, {**fields, 'target_year': 'bad'}, {**fields, 'draft': '{'}):
+            with self.subTest(fields=invalid.keys()):
+                response = client.post('/api/export', files=files, data=invalid)
+                self.assertEqual(response.status_code, 422, response.text)
+
+        response = client.post('/api/export', headers={'Content-Type': 'multipart/form-data; boundary=example'},
+                               content=b'bad multipart')
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()['detail'], 'Invalid multipart data.')
+
+        response = client.post('/api/export', data=fields,
+                               files={'originalFile': ('Example.xlsx', b'x' * (MAX_UPLOAD_BYTES + 1))})
+        self.assertEqual(response.status_code, 413, response.text)
+        self.assertEqual(response.json()['detail'], 'Workbook exceeds the 10 MB upload limit')
 
     def test_only_planned_cells_year_and_name_annotations_change(self):
         content, draft = fixture()

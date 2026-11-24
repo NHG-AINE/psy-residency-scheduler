@@ -57,8 +57,7 @@ test('large edited drafts omit only the warning baseline from the export form', 
     source, months: months.map(() => ({ ...target.source, row: 15 })),
   })) }
   const edited: DraftSchedule = { ...draft, status: 'edited', residents, capacity_overflows, edit_baseline: baseline }
-  const partLimit = 1024 * 1024
-  assert.ok(Buffer.byteLength(JSON.stringify(edited)) > partLimit)
+  assert.ok(Buffer.byteLength(JSON.stringify(edited)) > 1024 * 1024)
   const fetch = globalThis.fetch
   const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   let sent = ''
@@ -66,9 +65,7 @@ test('large edited drafts omit only the warning baseline from the export form', 
     globalThis.fetch = async (_, init) => {
       assert.ok(init?.body instanceof FormData)
       sent = init.body.get('draft') as string
-      return Buffer.byteLength(sent) > partLimit
-        ? new Response(JSON.stringify({ detail: 'Part exceeded maximum size of 1024KB.' }), { status: 400 })
-        : new Response('xlsx', { headers: { 'Content-Type': mime } })
+      return new Response('xlsx', { headers: { 'Content-Type': mime } })
     }
     const exported = await exportDraft(new File(['original workbook'], 'Programme.xlsx'), 2027, edited)
     assert.equal(exported.blob.type, mime)
