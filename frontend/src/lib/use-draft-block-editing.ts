@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { draftBaseline, prepareDraftEdit } from './draft-edit-history'
-import { draftDropEdges, draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
+import { draftContinuation, draftContinuationText, draftDropEdges, draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
 import type { ReviewStore } from './history-review'
 import type { DraftState } from './use-draft-schedule'
@@ -8,10 +8,10 @@ import { sameSource } from './workbook'
 import type { Source, Workbook } from './workbook'
 import type { SavedDraft } from './workbook-session'
 
-export type DraftBlock = { source: Source; name: string; label: string; start: string; months: string[]; id: string; anchor: HTMLButtonElement }
-export type DraftCell = Pick<DraftBlock, 'source' | 'start' | 'months'> & { leave?: boolean; label: string }
+export type DraftCell = { source: Source; start: string; months: string[]; continuation?: { months: number; ambiguous: boolean }; leave?: boolean; label: string }
+export type DraftBlock = DraftCell & { name: string; id: string; anchor: HTMLButtonElement }
 export type DraftDestination = DraftCell & { side?: DraftInsertionSide }
-type ReleasedMove = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean; kind: 'insert' | 'swap'; blocks: (string | undefined)[] | null; description: string }
+type ReleasedMove = { from: DraftBlock; focus: DraftBlock; anchor: HTMLElement; keyboard: boolean; kind: 'insert' | 'swap'; blocks: (string | undefined)[] | null; description: string; crossesCutoff: boolean }
 
 function sameBlock(a: DraftCell | null | undefined, b: DraftCell | null | undefined) {
   return !!a && !!b && sameSource(a.source, b.source) && a.start === b.start
@@ -21,8 +21,13 @@ export function draftDestinationError(from: DraftBlock, next: DraftDestination) 
   if (!sameSource(from.source, next.source)) return `Choose a block in ${from.name}’s row.`
   if (next.leave) return 'This period is recorded leave. A posting cannot be assigned during leave.'
   if (!next.months.length) return 'Choose another generated posting block.'
-  if (!next.side && from.months.length !== next.months.length) {
-    return `Only equal-length blocks can swap. These blocks span ${from.months.length} and ${next.months.length} training months.`
+  if (from.continuation?.ambiguous || next.continuation?.ambiguous) {
+    return 'This saved draft does not identify which future months continue the block. Generate a new draft to change this block.'
+  }
+  const fromLength = from.months.length + (from.continuation?.months ?? 0)
+  const nextLength = next.months.length + (next.continuation?.months ?? 0)
+  if (!next.side && fromLength !== nextLength) {
+    return `Only equal-length blocks can swap. These blocks span ${fromLength} and ${nextLength} training months.`
   }
   return ''
 }
@@ -97,11 +102,11 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
 
   function pointerDropEdges(next: DraftCell): ReturnType<typeof draftDropEdges> {
     const from = moving.current?.from
-    if (!from || !sameSource(from.source, next.source) || !next.months.length || from.months.length !== next.months.length) return [0.3, 0.3]
+    if (!from || draftDestinationError(from, next)) return [0.3, 0.3]
     const cached = dropEdges.current.get(next.start)
     if (cached) return cached
     const row = draft?.residents.find((person) => sameSource(person.source, from.source))
-    const edges = draftDropEdges(row?.months ?? [], from.start, next.start)
+    const edges = draftDropEdges(row?.months ?? [], from.start, next.start, row?.carryforward)
     dropEdges.current.set(next.start, edges)
     return edges
   }
@@ -201,20 +206,26 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     const kind = next.side ? 'insert' : 'swap'
     const row = draft?.residents.find((person) => sameSource(person.source, from.source))
     const insertion = next.side && row && sameSource(from.source, next.source)
-      ? draftInsertion(row.months, from.start, next.start, next.side) : null
+      ? draftInsertion(row.months, from.start, next.start, next.side, row.carryforward) : null
     if (insertion && !insertion.changed) { cancelMove(); announce('Original position.'); return }
-    const movedIndex = insertion?.blocks.indexOf(from.start) ?? -1
+    const message = draftDestinationError(from, next)
+    const blocks = message || !row ? null : next.side ? insertion?.blocks ?? null : draftSwapLayout(row.months, from.start, next.start, row.carryforward)
+    const movedIndex = blocks?.indexOf(from.start) ?? -1
     const focusMonth = row?.months[movedIndex]?.month ?? next.start
     const focus = { ...from, id: `${from.id.slice(0, -7)}${focusMonth}` }
-    const message = draftDestinationError(from, next)
-    const blocks = message || !row ? null : next.side ? insertion?.blocks ?? null : draftSwapLayout(row.months, from.start, next.start)
-    const movedBlocks = row && blocks ? [...new Set(blocks.filter((start, index) => start && start !== row.months[index].block_start))] : []
+    const movedBlocks = row && blocks ? [...new Set(row.months.flatMap((month, index) =>
+      month.block_start !== blocks[index] ? [month.block_start, blocks[index]] : []))].filter((start): start is string => !!start) : []
+    let crossesCutoff = false
     const description = movedBlocks.map((start) => {
-      const label = row?.months.find((month) => month.block_start === start)?.label
-      const months = row?.months.filter((_, index) => blocks?.[index] === start).map((month) => month.month) ?? []
-      return `${monthRanges(months)}, ${label}.`
+      const original = row!.months.filter((month) => month.block_start === start)
+      const months = row!.months.filter((_, index) => blocks?.[index] === start).map((month) => month.month)
+      const length = original.length + draftContinuation(row!.months, row!.carryforward, start).months
+      const tail = months.length ? draftContinuationText(length - months.length)
+        : `Starts next year and runs for ${length} training month${length === 1 ? '' : 's'}`
+      if (tail) crossesCutoff = true
+      return `${months.length ? `${monthRanges(months)}, ` : ''}${original[0].label}.${tail ? ` ${tail}.` : ''}`
     }).join(' ')
-    const release = { from, focus, anchor, keyboard, kind, blocks, description } as const
+    const release = { from, focus, anchor, keyboard, kind, blocks, description, crossesCutoff } as const
     setReturning(null)
     target.current = next; setDestination(next)
     moving.current = null; setMove(null); setReleased(release)

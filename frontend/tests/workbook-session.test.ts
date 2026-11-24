@@ -216,6 +216,38 @@ test('undo previews a label change in place in current and legacy edit history',
   }
 })
 
+test('selective undo after reopening restores a block moved wholly past June and keeps other edits', async () => {
+  const other = { sheet: 'Latest', row: 8 }
+  const { saved, planned } = draftHistoryFixture(other)
+  const march = '2028-03', june = '2028-06'
+  const original = planned([1, 2, 3, 4], 'feasible')
+  const first = original.residents[0]
+  const months = ['03', '04', '05', '06'].map((date) => `2028-${date}`)
+  first.months = months.map((month, i) => ({ month, status: 'posting', block_start: i === 3 ? june : march,
+    label: i === 3 ? 'Elective' : 'Child' }))
+  const elective = { requirement_id: 'r5.elective', institution: 'IMH', label: 'Elective', block_start: june, months: 5 }
+  const child = { requirement_id: 'r5.child_adolescent_psychiatry', institution: 'NUH', label: 'Child',
+    block_start: null, training_start: 6, months: 3 }
+  first.carryforward = [elective]
+  const inserted = structuredClone(original)
+  inserted.status = 'edited'
+  inserted.residents[0].months = first.months.map((month) => ({ ...month, block_start: march, label: elective.label }))
+  inserted.residents[0].carryforward = [{ ...elective, block_start: march, months: 2 }, child]
+  const otherEdit = { ...postingEdit(july, 6), resident: other }
+  const otherEdited = planned([1, 2, 3, 4], 'edited', [6, 2, 3, 4]).residents[1]
+  const later = { ...inserted, residents: [inserted.residents[0], otherEdited] }
+  const move = { kind: 'insert', resident, start: june, destination: march, side: 'before' } as const
+  saved.draft = { ...saved.draft!, data: later, undo: [original, inserted], undoChanges: [move, otherEdit] }
+  const reopened = parseSession(structuredClone(saved))!.draft!
+  const reverted = await undoDraftBlock(reopened, resident, march, async (base, change) => {
+    assert.deepEqual(change, otherEdit)
+    assert.deepEqual(base.residents[0], first)
+    return { draft: { ...base, status: 'edited', residents: [base.residents[0], otherEdited] }, issues: [] }
+  })
+  assert.deepEqual(reverted?.data.residents, [first, otherEdited])
+  assert.deepEqual(undoDraftEdit(reverted)?.data, original)
+})
+
 test('cancels a reversed swap across a saved session and rebuilds undo for an independent later swap', async () => {
   const { saved, planned } = draftHistoryFixture()
   const generated = saved.draft!

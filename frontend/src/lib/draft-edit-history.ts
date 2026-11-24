@@ -1,5 +1,5 @@
-import { draftInsertion, draftSwapLayout, draftSwapOutcome } from './draft-schedule.ts'
-import type { DraftChange, DraftChangeResult, DraftSchedule } from './draft-schedule.ts'
+import { draftContinuation, draftInsertion, draftSwapLayout, draftSwapOutcome } from './draft-schedule.ts'
+import type { DraftCarryforward, DraftChange, DraftChangeResult, DraftSchedule } from './draft-schedule.ts'
 import { sameSource } from './workbook.ts'
 import type { Source } from './workbook.ts'
 import type { SavedDraft } from './workbook-session.ts'
@@ -11,6 +11,15 @@ type Edit = Extract<DraftChange, { kind: 'edit' }>
 function residentMonths(draft: DraftSchedule, resident: Source) {
   const months = draft.residents.find((person) => person?.source && sameSource(person.source, resident))?.months
   return Array.isArray(months) ? months : []
+}
+
+function residentCarryforward(draft: DraftSchedule, resident: Source) {
+  return draft.residents.find((person) => person?.source && sameSource(person.source, resident))?.carryforward ?? []
+}
+
+function forwardLayout(months: Month[], carryforward: DraftCarryforward[], change: DraftChange | null) {
+  return change?.kind === 'swap' ? draftSwapLayout(months, change.start, change.destination, carryforward)
+    : change?.kind === 'insert' ? draftInsertion(months, change.start, change.destination, change.side, carryforward)?.blocks : null
 }
 
 function touchedMonths(draft: DraftSchedule, change: DraftChange) {
@@ -25,7 +34,7 @@ function touchedMonths(draft: DraftSchedule, change: DraftChange) {
 function affectedMonths(draft: DraftSchedule, change: DraftChange) {
   if (change.kind === 'insert') {
     const months = residentMonths(draft, change.resident)
-    const insertion = draftInsertion(months, change.start, change.destination, change.side)
+    const insertion = draftInsertion(months, change.start, change.destination, change.side, residentCarryforward(draft, change.resident))
     if (insertion) {
       const starts = new Map<string, string>()
       insertion.blocks.forEach((block, index) => {
@@ -56,13 +65,12 @@ function blockStarts(months: Month[]) {
   return months.map((month) => month?.status === 'posting' ? month.block_start : undefined)
 }
 
-function reverseLayout(current: Month[], restored: Month[], change: DraftChange | null) {
+function reverseLayout(current: Month[], restored: Month[], carryforward: DraftCarryforward[], change: DraftChange | null) {
   if (current.length !== restored.length || current.some((month, index) =>
     month?.month !== restored[index]?.month || month?.status !== restored[index]?.status)) return null
   const currentStarts = blockStarts(current)
   const restoredStarts = blockStarts(restored)
-  const forward = change?.kind === 'swap' ? draftSwapLayout(restored, change.start, change.destination)
-    : change?.kind === 'insert' ? draftInsertion(restored, change.start, change.destination, change.side)?.blocks : null
+  const forward = forwardLayout(restored, carryforward, change)
   const from = new Map<string, string>()
   const used = new Set<string>()
   const currentBlocks = [...new Set(currentStarts)].filter((start): start is string => !!start)
@@ -106,7 +114,7 @@ export function draftUndoPreview(saved: SavedDraft, restored: DraftSchedule, cha
     if (!person?.source || !Array.isArray(person.months) || (change && !sameSource(person.source, change.resident))) continue
     const current = person.months
     const previous = residentMonths(restored, person.source)
-    const positions = reverseLayout(current, previous, change)
+    const positions = reverseLayout(current, previous, residentCarryforward(restored, person.source), change)
     const months = current.flatMap((month, index) => month?.block_start &&
       ((positions && positions[index] !== month.block_start) || assignment(month) !== assignment(previous[index])) ? [month.month] : [])
     if (months.length) return { resident: person.source, name: person.name, positions, months, restored: previous }
@@ -127,9 +135,24 @@ function matchesAssignments(actual: DraftSchedule, expected: DraftSchedule, reve
 function matchesPlan(actual: DraftSchedule, expected: DraftSchedule) {
   return matchesAssignments(actual, expected) && actual.residents.every(({ route, carryforward }, index) => {
     const original = expected.residents[index]
-    const remaining = (rows: typeof carryforward) => rows?.map(({ requirement_id, institution, months, label }) =>
-      JSON.stringify([requirement_id, institution, months, label])).sort().join('\n')
-    return route === original.route && remaining(carryforward) === remaining(original.carryforward)
+    if (route !== original.route) return false
+    const key = (row: DraftCarryforward) => JSON.stringify([row.requirement_id, row.institution, row.months, row.label])
+    const sameLocation = (a: DraftCarryforward, b: DraftCarryforward) =>
+      a.block_start === b.block_start && a.training_start === b.training_start
+    const remaining = [...(original.carryforward ?? [])]
+    const unmatched = (carryforward ?? []).filter((row) => {
+      const match = remaining.findIndex((previous) => key(row) === key(previous) && sameLocation(row, previous))
+      if (match < 0) return true
+      remaining.splice(match, 1)
+      return false
+    })
+    return unmatched.length === remaining.length && unmatched.every((row) => {
+      const match = remaining.findIndex((previous) => key(row) === key(previous)
+        && (row.block_start === undefined || previous.block_start === undefined))
+      if (match < 0) return false
+      remaining.splice(match, 1)
+      return true
+    })
   })
 }
 
@@ -148,7 +171,8 @@ function asSwap(draft: DraftSchedule, change: DraftChange): Swap | null {
   const span = touchedMonths(draft, change).filter((month) => month.status === 'posting')
   const first = span.filter((month) => month.block_start === change.start)
   const second = span.filter((month) => month.block_start === change.destination)
-  if (!first.length || first.length !== second.length || first.length + second.length !== span.length) return null
+  if (!first.length || !second.length || first.length + second.length !== span.length
+    || !draftSwapLayout(residentMonths(draft, change.resident), change.start, change.destination, residentCarryforward(draft, change.resident))) return null
   return { kind: 'swap', resident: change.resident, start: change.start, destination: change.destination }
 }
 
@@ -331,11 +355,11 @@ export function draftBlockUndoTarget(saved: SavedDraft | null, resident: Source,
 function changedBlockStarts(before: DraftSchedule, after: DraftSchedule, change: DraftChange) {
   const restored = residentMonths(before, change.resident)
   const current = residentMonths(after, change.resident)
-  const positions = reverseLayout(current, restored, change)
+  const positions = forwardLayout(restored, residentCarryforward(before, change.resident), change)
   if (!positions) return null
   const starts = new Map<string, string>()
-  positions.forEach((start, index) => {
-    const previousStart = restored[index].block_start
+  positions.forEach((previousStart, index) => {
+    const start = current[index].block_start
     if (start && previousStart && start !== previousStart) starts.set(start, previousStart)
   })
   return starts
@@ -378,8 +402,11 @@ export async function undoDraftBlock(saved: SavedDraft, resident: Source, start:
       const restoredStart = blockMap?.get(operation.start) ?? operation.start
       const restoredBlock = actual.filter((month) => month.block_start === restoredStart)
       const edited = updated.find((month) => month.block_start === operation.start)
-      if (!edited || !touched.length || restoredBlock.length !== touched.length
-        || restoredBlock.some((month, position) => blockAssignment(month) !== blockAssignment(touched[position]))) {
+      const restoredTail = draftContinuation(actual, residentCarryforward(data, operation.resident), restoredStart)
+      const laterTail = draftContinuation(residentMonths(before, operation.resident), residentCarryforward(before, operation.resident), operation.start)
+      if (!edited || !touched.length || !restoredBlock.length || restoredTail.ambiguous || laterTail.ambiguous
+        || restoredBlock.length + restoredTail.months !== touched.length + laterTail.months
+        || restoredBlock.some((month) => blockAssignment(month) !== blockAssignment(touched[0]))) {
         throw new Error('Undo the later posting edit first. It depends on this change.')
       }
       for (const month of restoredBlock) planned.set(month.month, { ...month, label: edited.label, target: edited.target })

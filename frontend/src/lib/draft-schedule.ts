@@ -26,6 +26,10 @@ type ResidentWarning = { source: Source; name: string | null; mcr: string | null
 export type DraftEditOption = {
   posting: string; institution: string; residency_year: string; label: string; source: Source; category: 'core' | 'elective'; requirement_id: string
 }
+export type DraftCarryforward = {
+  requirement_id: string; institution: string; months: number; label?: string
+  block_start?: string | null; training_start?: number
+}
 export type DraftSchedule = {
   capacity_overflows?: CapacityOverflow[]
   capacity_coverage_notes?: { code: string; source: Source }[]
@@ -40,7 +44,7 @@ export type DraftSchedule = {
   residents: { source: Source; name: string | null; mcr: string | null; route?: string; projected_year?: string; recorded_year?: string
     requests?: RequestOutcome[]
     months: { month: string; status: 'posting' | 'loa' | 'outside_draft_scope' | 'requirements_completed'; label: string | null; block_start?: string; target?: { category: 'core' | 'elective'; residency_year?: string; source?: Source; requirement_id?: string; institution?: string } | null }[]
-    carryforward: { requirement_id: string; institution: string; months: number; label?: string }[] }[]
+    carryforward: DraftCarryforward[] }[]
   soft_priority?: string[]
   wall_time_seconds?: number
   optimisation_stages?: { priority: string; status: string; wall_time_seconds: number }[]
@@ -59,28 +63,69 @@ export function draftSwapOutcome(result: DraftChangeResult) {
   return result.issues.length ? 'warning' : 'clean'
 }
 
-export function draftSwapLayout(months: DraftSchedule['residents'][number]['months'], start: string, destination: string) {
-  const blocks = months.map((month) => month.status === 'posting' ? month.block_start : undefined)
-  const count = blocks.filter((block) => block === start).length
-  if (!count || start === destination || count !== blocks.filter((block) => block === destination).length) return null
-  return blocks.map((block) => block === start ? destination : block === destination ? start : block)
+type DraftMonths = DraftSchedule['residents'][number]['months']
+
+export function draftContinuation(months: DraftMonths, carryforward: DraftCarryforward[], start: string) {
+  const explicit = carryforward.filter((row) => row.block_start === start)
+  if (explicit.length) return { months: explicit.length === 1 ? explicit[0].months : 0, ambiguous: explicit.length !== 1 }
+  const block = months.filter((month) => month?.block_start === start)
+  const last = months.findLast((month) => month?.status === 'posting')
+  const target = last?.target
+  if (!target || last.block_start !== start) return { months: 0, ambiguous: false }
+  const matches = carryforward.filter((row) => row.block_start === undefined && row.requirement_id === target.requirement_id
+    && row.institution === target.institution && (row.label === undefined || row.label === last.label))
+  if (!matches.length) return { months: 0, ambiguous: false }
+  if (target.requirement_id === 'r1.general_medicine') {
+    if (matches[0] !== carryforward.find((row) => row.requirement_id.startsWith('r1.'))) return { months: 0, ambiguous: false }
+    if (block.length === 1 && matches[0].months > 1 && carryforward.some((row) => row.requirement_id === 'r1.neurology')) {
+      return { months: 0, ambiguous: true }
+    }
+  }
+  if (target.requirement_id?.startsWith('r5.')) {
+    if (target.requirement_id === 'r5.child_geriatric_psychiatry' && matches.length === 1 && block.length + matches[0].months <= 6) {
+      return { months: matches[0].months, ambiguous: false }
+    }
+    const partial = matches.filter((row) => row.months !== 3 && row.months !== 6 && block.length + row.months <= 6)
+    if (partial.length === 1) return { months: partial[0].months, ambiguous: false }
+    if (!partial.length && matches.every((row) => block.length + row.months > 6)) return { months: 0, ambiguous: false }
+    return { months: 0, ambiguous: true }
+  }
+  return { months: matches.length === 1 ? matches[0].months : 0, ambiguous: matches.length !== 1 }
 }
 
-export function draftInsertion(months: DraftSchedule['residents'][number]['months'], start: string,
-  destination: string, side: DraftInsertionSide) {
-  const blocks = months.map((month) => month.status === 'posting' ? month.block_start : undefined)
+export function draftContinuationText(months: number) {
+  return months ? `Continues for ${months} training month${months === 1 ? '' : 's'} next year` : ''
+}
+
+function movedLayout(months: DraftMonths, start: string, destination: string,
+  carryforward: DraftCarryforward[], side?: DraftInsertionSide) {
+  const blocks = months.map((month) => month?.status === 'posting' ? month.block_start : undefined)
   const from = blocks.indexOf(start)
   const target = blocks.indexOf(destination)
   if (from < 0 || target < 0 || from === target) return null
   const first = Math.min(from, target)
   const last = Math.max(blocks.lastIndexOf(start), blocks.lastIndexOf(destination))
-  const span = months.slice(first, last + 1)
-  if (span.some((month) => month.status !== 'posting' && month.status !== 'loa')) return null
+  if (months.slice(first, last + 1).some((month) => month.status !== 'posting' && month.status !== 'loa')) return null
   const training = blocks.slice(first, last + 1).flatMap((block) => block ? [block] : [])
-  const order = [...new Set(training)].filter((block) => block !== start)
-  order.splice(order.indexOf(destination) + Number(side === 'after'), 0, start)
-  const reordered = order.flatMap((block) => training.filter((key) => key === block))
-  const changed = reordered.some((block, index) => block !== training[index])
+  const order = [...new Set(training)]
+  const lengths = new Map<string, number>()
+  for (const block of order) {
+    const tail = draftContinuation(months, carryforward, block)
+    if (tail.ambiguous) return null
+    lengths.set(block, training.filter((key) => key === block).length + tail.months)
+  }
+  const fromBlock = order.indexOf(start)
+  const toBlock = order.indexOf(destination)
+  if (side) {
+    order.splice(fromBlock, 1)
+    order.splice(order.indexOf(destination) + Number(side === 'after'), 0, start)
+  } else {
+    if (lengths.get(start) !== lengths.get(destination)) return null
+    order[fromBlock] = destination
+    order[toBlock] = start
+  }
+  const reordered = order.flatMap((block) => Array<string>(lengths.get(block)!).fill(block))
+  const changed = training.some((block, index) => reordered[index] !== block)
   let index = 0
   for (let month = first; month <= last; month++) {
     if (blocks[month]) blocks[month] = reordered[index++]
@@ -88,10 +133,20 @@ export function draftInsertion(months: DraftSchedule['residents'][number]['month
   return { blocks, changed }
 }
 
-export function draftDropEdges(months: DraftSchedule['residents'][number]['months'], start: string, destination: string): [number, number] {
-  if (draftSwapLayout(months, start, destination)) {
+export function draftSwapLayout(months: DraftMonths, start: string, destination: string, carryforward: DraftCarryforward[] = []) {
+  return movedLayout(months, start, destination, carryforward)?.blocks ?? null
+}
+
+export function draftInsertion(months: DraftMonths, start: string, destination: string,
+  side: DraftInsertionSide, carryforward: DraftCarryforward[] = []) {
+  return movedLayout(months, start, destination, carryforward, side)
+}
+
+export function draftDropEdges(months: DraftMonths, start: string, destination: string,
+  carryforward: DraftCarryforward[] = []): [number, number] {
+  if (draftSwapLayout(months, start, destination, carryforward)) {
     const nearSide = start < destination ? 'before' : 'after'
-    if (draftInsertion(months, start, destination, nearSide)?.changed === false) {
+    if (draftInsertion(months, start, destination, nearSide, carryforward)?.changed === false) {
       return nearSide === 'before' ? [0.1, 0.3] : [0.3, 0.1]
     }
   }
