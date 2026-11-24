@@ -264,6 +264,18 @@ def _explain_conflict(prepared, person, original, moved):
             earlier = next((y for y in years[i + 1:] if y < year), None)
             if earlier:
                 return f"Complete {earlier} before starting {year}. This change would leave {earlier} postings after the start of {year}."
+    future = original["carryforward"]
+    last = next(m for m in reversed(original["months"]) if m["status"] == "posting")
+    previous = last["target"]
+    for block in moved:
+        target = block[0]["target"]
+        if (any(m["month"] == last["month"] for m in block)
+                and target["requirement_id"] == previous["requirement_id"]
+                and target["source"] != previous["source"]):
+            for item in future:
+                if (item["requirement_id"], item["institution"], item.get("label", previous["label"])) == (
+                        previous["requirement_id"], previous["institution"], previous["label"]):
+                    return f"Continue {previous['label']} at the same institution. The draft has {_amount(item['months'], 'training month')} planned there next year."
     if any(t["requirement_id"].startswith("r1.") for t in (b[0]["target"] for b in moved)):
         evidence = [*history, *planned]
         gm = {t["institution"] for t in evidence if t.get("requirement_id") == "r1.general_medicine"}
@@ -294,6 +306,9 @@ def _explain_conflict(prepared, person, original, moved):
             if missing:
                 name = person["name"] or "This resident"
                 return f"{name} would still need {' and '.join(missing)}."
+    if future:
+        return "This placement cannot fit with the other blocks and future assignments in place. Check the resident’s remaining requirements and postings planned beyond this year."
+    if "R5" in years:
         return "These dates leave no valid R5 plan with the other blocks in place. Check the remaining Child, Geriatric and elective months, including any credit earned by a six-month block."
     return "This placement cannot fit the resident’s remaining training with the other blocks in place. Check their posting history, block length and training order."
 
@@ -390,9 +405,7 @@ def validate_draft_change(workbook, store, draft, change, baseline_residents=Non
             for month in block:
                 month.update(label=option["label"], target=option)
 
-    # Reordering changes timing only. Keep the resident's route and carryforward fixed too.
-    result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed,
-                            edited_source=source if kind == "edit" else None, prepared=prepared)
+    result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed, prepared=prepared)
     if result["status"] == "infeasible":
         return blocked("hard_constraint", _explain_conflict(prepared, person, original, moved))
     if result["status"] != "feasible":
