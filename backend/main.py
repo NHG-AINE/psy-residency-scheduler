@@ -13,14 +13,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 if __package__:
     from .workbook_export import export_workbook
-    from .scheduler import DraftCancelled, draft_schedule
+    from .scheduler import DraftCancelled, DraftSearch, draft_schedule
     from .draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from .requirement_ledger import build_requirement_ledger
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
     from workbook_export import export_workbook
-    from scheduler import DraftCancelled, draft_schedule
+    from scheduler import DraftCancelled, DraftSearch, draft_schedule
     from draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from requirement_ledger import build_requirement_ledger
     from history_review import ReviewStore, evaluate_review
@@ -112,8 +112,26 @@ async def start_draft():
         if not operation["running"] and now - operation["created"] > DRAFT_REGISTRATION_TTL_SECONDS:
             del _draft_operations[token]
     token = uuid4().hex
-    _draft_operations[token] = {"cancel": Event(), "running": False, "created": now}
+    _draft_operations[token] = {"cancel": Event(), "search": DraftSearch(), "running": False, "created": now}
     return {"token": token}
+
+
+@app.get("/api/draft/{token}/status")
+async def draft_status(token: str):
+    operation = _draft_operations.get(token)
+    ready = bool(operation and not operation["cancel"].is_set() and operation["search"].ready.is_set())
+    return JSONResponse({"ready": ready}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/draft/{token}/finish")
+async def finish_draft(token: str):
+    operation = _draft_operations.get(token)
+    if operation and not operation["cancel"].is_set():
+        if not operation["search"].ready.is_set():
+            raise HTTPException(409, "A feasible draft is not available yet.")
+        operation["search"].finish.set()
+    # An operation that already returned has no remaining search to stop.
+    return Response(status_code=204)
 
 
 @app.delete("/api/draft/{token}")
@@ -186,7 +204,8 @@ async def generate_draft(request: DraftRequest, token: str | None = None):
         if request.workbook["target_year"] != latest_year:
             raise HTTPException(422, "Draft generation is available only for the latest planning year in this workbook.")
         if operation:
-            result = await run_in_threadpool(draft_schedule, request.workbook, request.store, max_seconds=request.max_seconds, cancel=operation["cancel"])
+            result = await run_in_threadpool(draft_schedule, request.workbook, request.store, max_seconds=request.max_seconds,
+                                             cancel=operation["cancel"], search=operation["search"])
             if operation["cancel"].is_set():
                 raise DraftCancelled()
             return result

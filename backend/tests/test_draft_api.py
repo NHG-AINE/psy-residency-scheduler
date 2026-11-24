@@ -1,7 +1,9 @@
 import unittest
+from threading import Event, Thread
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from ortools.sat.python import cp_model
 from main import app
 from tests.test_r1_solver import r1_book
 
@@ -135,6 +137,48 @@ class DraftCancellationTests(unittest.TestCase):
             worker.join(5)
             self.assertEqual(replies[0].status_code, 409)
             self.assertNotIn(token, main._draft_operations)
+
+
+class DraftFinishTests(unittest.TestCase):
+    def test_finish_stops_generation_and_returns_the_full_draft_with_warnings(self):
+        entered, stopped = Event(), Event()
+        real_solve = cp_model.CpSolver.solve
+        book = r1_book()
+        for posting in book["postings"]["core"]:
+            posting["max"] = 0
+        payload = {"workbook": book, "store": {"version": 1, "decisions": []}}
+        replies = []
+
+        def solve(solver, model, callback):
+            if solver.parameters.stop_after_first_solution:
+                return real_solve(solver, model, callback)
+            entered.set()
+            if not stopped.wait(5):
+                raise AssertionError("The finish request did not stop preference search.")
+            return cp_model.UNKNOWN
+
+        with TestClient(app) as client, patch.object(cp_model.CpSolver, "solve", new=solve), patch.object(
+                cp_model.CpSolver, "stop_search", new=lambda solver: stopped.set()):
+            token = client.post("/api/draft/start").json()["token"]
+            self.assertEqual(client.get(f"/api/draft/{token}/status").json(), {"ready": False})
+            self.assertEqual(client.post(f"/api/draft/{token}/finish").status_code, 409)
+            worker = Thread(target=lambda: replies.append(client.post(f"/api/draft?token={token}", json=payload)))
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            self.assertEqual(client.get(f"/api/draft/{token}/status").json(), {"ready": True})
+            self.assertEqual(client.post(f"/api/draft/{token}/finish").status_code, 204)
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(replies[0].status_code, 200)
+            draft = replies[0].json()
+            self.assertEqual(draft["status"], "feasible")
+            self.assertTrue(draft["finished_early"])
+            self.assertEqual(len(draft["residents"][0]["months"]), 12)
+            self.assertTrue(all(month["status"] == "posting" for month in draft["residents"][0]["months"]))
+            self.assertEqual(len(draft["capacity_overflows"]), 12)
+            self.assertEqual(draft["preference_scores"]["capacity_overflow"], 12)
+            self.assertEqual(client.get(f"/api/draft/{token}/status").json(), {"ready": False})
+            self.assertEqual(client.post(f"/api/draft/{token}/finish").status_code, 204)
 
 if __name__ == '__main__':
     unittest.main()
