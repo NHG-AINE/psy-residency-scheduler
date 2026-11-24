@@ -36,7 +36,9 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   For manual edits, require at least 3 months of Child credit and 3 months of
   Geriatric credit across the 12 months. An all-core plan can split Child and
   Geriatric 9+3, 6+6 or 3+9. A 12+0 split in either direction leaves one core
-  requirement unmet. Reserve the 9+3 and 3+9 splits for manual edits.
+  requirement unmet. Start a 9+3 or 3+9 split through a manual edit. When
+  recognised history already credits nine months in either core, schedule the
+  remaining months of the other core if the recorded blocks fit the split.
 
 - **Count R5 core and elective credit.** The six-month Child and Geriatric
   Psychiatry core posting gives 3 months of Child credit and 3 months of
