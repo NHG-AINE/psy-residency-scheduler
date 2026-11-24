@@ -380,10 +380,7 @@
 .draft-menu button:last-child { color: #9f352e; }
 .timetable-draft-status { display: flex; flex-wrap: wrap; align-items: center; column-gap: .5rem; min-height: 28px; }
 .draft-edited-label, .draft-finish-note { color: var(--color-muted); font-size: .75rem; }
-.draft-edit-controls { margin: 0 1.5rem .75rem; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
-.draft-edit-controls.table-note { padding: 0; }
-.draft-edit-controls summary { width: fit-content; cursor: pointer; }
-.draft-edit-controls p { margin-top: .375rem; max-width: 70ch; }
+.draft-regenerate-note { margin: 0 1.5rem .75rem; padding: 0; line-height: 1.5; }
 .draft-posting-cell, .draft-static-destination .posting-value { position: relative; }
 .timetable:has(.draft-block-slot[colspan="1"]) table { min-width: 1200px; }
 .draft-posting-cell:has(.draft-block-undo) { container-type: inline-size; }
