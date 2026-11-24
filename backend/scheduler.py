@@ -427,8 +427,8 @@ def draft_source_key(source):
     return (source["kind"], source["slot_id"]) if source.get("kind") == "intake_placeholder" else source_key(source)
 
 
-def _add_fixed_draft(model, selected, candidates, variables, placements, fixed, edited_source):
-    """Constrain every generated block and keep other residents' future choices fixed."""
+def _add_fixed_draft(model, selected, candidates, variables, placements, fixed):
+    """Constrain all visible blocks, planned routes and carryforward blocks."""
     for i, person in enumerate(selected):
         key = draft_source_key(person["source"])
         planned = fixed.get(key)
@@ -452,11 +452,11 @@ def _add_fixed_draft(model, selected, candidates, variables, placements, fixed, 
         future = defaultdict(list)
         for choice, variable in zip(candidates[i], variables[i]):
             assigned_r1 = {month: source_key(option["source"]) for month, option in enumerate(choice["schedule"]) if option}
-            if assigned_r1 != expected_r1 or (key != edited_source and choice["route"] != planned["route"]):
+            if assigned_r1 != expected_r1 or choice["route"] != planned["route"]:
                 model.add(variable == 0)
                 continue
             for (requirement, site), remaining in choice["carryforward"].items():
-                future[(requirement, site, None)].append(remaining * variable)
+                future[(requirement, site, None, remaining)].append(variable)
         for placement in placements[i]:
             option = placement["option"]
             variable = placement["variable"]
@@ -467,21 +467,19 @@ def _add_fixed_draft(model, selected, candidates, variables, placements, fixed, 
                     continue
                 available[block].append(variable)
             if placement["remaining"]:
-                future[(option["requirement_id"], option["institution"], option["label"])].append(placement["remaining"] * variable)
+                future[(option["requirement_id"], option["institution"], option["label"], placement["remaining"])].append(variable)
         if expected - available.keys():
             return False
         for block in expected:
             model.add_exactly_one(available[block])
-        if key != edited_source:
-            carryforward = Counter()
-            for item in planned["carryforward"]:
-                carryforward[(item["requirement_id"], item["institution"], item.get("label"))] += item["months"]
-            for option in future.keys() | carryforward.keys():
-                model.add(sum(future[option]) == carryforward[option])
+        carryforward = Counter((item["requirement_id"], item["institution"], item.get("label"), item["months"])
+                               for item in planned["carryforward"])
+        for block in future.keys() | carryforward.keys():
+            model.add(sum(future[block]) == carryforward[block])
     return True
 
 
-def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, edited_source=None, prepared=None):
+def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, prepared=None):
     """Schedule remaining R1 through R5 work in progression order.
 
     All years share capacity,
@@ -920,7 +918,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     if fixed is not None:
         if set(fixed) != {draft_source_key(person["source"]) for person in selected}:
             raise ValueError("The draft no longer matches the planning roster. Generate a new draft.")
-        if not _add_fixed_draft(model, selected, candidates, variables, placements, fixed, edited_source):
+        if not _add_fixed_draft(model, selected, candidates, variables, placements, fixed):
             return {**result, "status": "infeasible", "blockers": [{"code": "fixed_block_unavailable"}]}
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = max_seconds

@@ -65,7 +65,7 @@ class DraftEditTests(unittest.TestCase):
                 self.assertIsNone(blocked["draft"])
                 self.assertEqual(blocked["issues"][0]["code"], "hard_constraint")
 
-    def test_manual_r5_uses_combined_history_and_keeps_the_selected_carryforward(self):
+    def test_r5_posting_edit_cannot_replace_future_elective_with_core(self):
         book = combined_book()
         add_history(book, [(f"2027-{month:02d}", LABEL) for month in range(1, 7)])
         for month in book["residents"][0]["postings"][4:]:
@@ -76,11 +76,12 @@ class DraftEditTests(unittest.TestCase):
         original = draft_schedule(book, STORE, max_seconds=5)
         geri = next(o for o in original["edit_options"] if o["requirement_id"] == GERI and o["institution"] == "CGH")
         result = self.edit(book, original, "2027-07", geri)
-        self.assertIsNotNone(result["draft"], result["issues"])
-        saved = json.loads(json.dumps(result["draft"]))
-        edited, other = saved["residents"]
-        self.assertEqual(edited["carryforward"], [{
-            "requirement_id": GERI, "institution": "CGH", "label": "CGH Geriatric Psychiatry", "months": 2}])
+        self.assertIsNone(result["draft"])
+        self.assertIn("future", result["issues"][0]["message"])
+        saved = json.loads(json.dumps(original))
+        resident, other = saved["residents"]
+        self.assertEqual(resident["carryforward"], [{
+            "requirement_id": "r5.elective", "institution": "IMH", "label": "IMH Forensic Psychiatry", "months": 2}])
         inpatient = other["months"][6]
         alternate = next(o for o in saved["edit_options"] if o["requirement_id"] == inpatient["target"]["requirement_id"]
                          and o["institution"] != inpatient["target"]["institution"])
@@ -88,7 +89,31 @@ class DraftEditTests(unittest.TestCase):
             "kind": "edit", "resident": other["source"], "start": inpatient["block_start"],
             "posting": alternate["posting"], "institution": alternate["institution"], "offering": alternate["source"]})
         self.assertIsNotNone(changed["draft"], changed["issues"])
-        self.assertEqual(changed["draft"]["residents"][0], edited)
+        self.assertEqual(changed["draft"]["residents"][0], resident)
+
+    def test_r5_site_edit_preserves_fully_future_child_and_elective_assignments(self):
+        book = r5_book()
+        roster, = book["residents"]
+        for month in roster["postings"][3:]:
+            month.update(status="loa", value="LOA")
+        book["requests"] = [{"matched_resident_source": roster["source"],
+                             "posting_request": "CGH Geriatric Psychiatry", "period": "Jul - Sep 2027"}]
+        original = draft_schedule(book, STORE, max_seconds=5)
+        person, = original["residents"]
+        self.assertEqual([m["label"] for m in person["months"][:3]], ["CGH Geriatric Psychiatry"] * 3)
+        future = {row["requirement_id"]: row for row in person["carryforward"]}
+        self.assertEqual({key: row["months"] for key, row in future.items()}, {CHILD: 3, "r5.elective": 6})
+        # A saved plan can have a different eligible future site from the one the
+        # feasibility solve would independently choose.
+        future[CHILD].update(institution="KKH", label="KKH Child & Adolescent Psychiatry")
+        target = next(o for o in original["edit_options"] if o["requirement_id"] == GERI and o["institution"] == "NUH")
+        result = self.edit(book, original, "2027-07", target)
+        self.assertIsNotNone(result["draft"], result["issues"])
+        updated, = result["draft"]["residents"]
+        self.assertEqual([m["label"] for m in updated["months"][:3]], [target["label"]] * 3)
+        self.assertEqual(updated["months"][3:], person["months"][3:])
+        self.assertEqual(updated["route"], person["route"])
+        self.assertCountEqual(updated["carryforward"], person["carryforward"])
 
     def test_completed_nine_plus_three_history_leaves_no_elective_requirement(self):
         book = r5_book()
@@ -150,10 +175,10 @@ class DraftEditTests(unittest.TestCase):
         first, leave = person["months"][0], person["months"][3]
         self.assertEqual({m["block_start"] for m in person["months"] if m["target"]}, {first["month"]})
         target = next(o for o in draft["edit_options"] if o["residency_year"] == "R3" and o["label"] != first["label"])
-        updated = self.edit(book, draft, first["month"], target)["draft"]["residents"][0]
-        self.assertEqual(updated["months"][3], leave)
-        self.assertEqual({m["label"] for m in updated["months"] if m["target"]}, {target["label"]})
-        self.assertEqual(updated["carryforward"][0]["institution"], target["institution"])
+        self.assertEqual(leave["status"], "loa")
+        rejected = self.edit(book, draft, first["month"], target)
+        self.assertIsNone(rejected["draft"])
+        self.assertIn(f"Continue {first['label']}", rejected["issues"][0]["message"])
         response = validate_draft_change(book, STORE, draft, {"kind": "swap", "resident": person["source"],
             "start": first["month"], "destination": leave["month"]})
         self.assertIsNone(response["draft"])
@@ -202,16 +227,18 @@ class DraftEditTests(unittest.TestCase):
                            additional_requirement=None, additional_credit_months=None)
             if row["posting"] == neurology:
                 row["max"] = "1"
-        for resident in book["residents"]:
+        for resident in book["residents"][1:]:
             resident["postings"][3].update(status="loa", value="LOA")
 
         draft = draft_schedule(book, STORE, max_seconds=5)
         self.assertEqual(draft["capacity_overflows"], [])
         # Capacity forces the three schedules to cover each valid Neurology window.
-        index = next(i for i, resident in enumerate(draft["residents"]) if resident["months"][2]["label"] == neurology)
+        index = next(i for i, resident in enumerate(draft["residents"])
+                     if resident["months"][2]["label"] == neurology and resident["months"][3]["status"] == "loa")
         original = draft["residents"][index]
-        other_index = next(i for i in range(3) if i != index)
+        other_index = 0
         other = draft["residents"][other_index]
+        self.assertEqual(other["carryforward"], [])
         active = [month for month in original["months"][:7] if month["status"] == "posting"]
         first, middle, last = (month["month"] for month in active[::2])
         starts = [first, first, middle, middle, last, last]
@@ -239,7 +266,7 @@ class DraftEditTests(unittest.TestCase):
                 self.assertEqual(edited["months"][3], original["months"][3])
                 self.assertEqual(swapped["residents"][other_index]["months"], other["months"])
 
-                inpatient = other["months"][7]
+                inpatient = other["months"][6]
                 option = next(o for o in draft["edit_options"]
                               if o["requirement_id"] == "r1.inpatient_psychiatry" and o["label"] != inpatient["label"])
                 changed_other = apply(swapped, {"kind": "edit", "resident": other["source"], "start": inpatient["block_start"],
@@ -248,6 +275,15 @@ class DraftEditTests(unittest.TestCase):
                 reversed_draft = apply(changed_other, {**swap, "start": destination, "destination": start})
                 self.assertEqual(reversed_draft["residents"][index]["months"], original["months"])
                 self.assertEqual(reversed_draft["residents"][other_index]["months"], changed_other["residents"][other_index]["months"])
+
+        inpatient = original["months"][7]
+        option = next(o for o in draft["edit_options"]
+                      if o["requirement_id"] == "r1.inpatient_psychiatry" and o["label"] != inpatient["label"])
+        rejected = validate_draft_change(book, STORE, draft, {"kind": "edit", "resident": original["source"],
+            "start": inpatient["block_start"], "posting": option["posting"],
+            "institution": option["institution"], "offering": option["source"]})
+        self.assertIsNone(rejected["draft"])
+        self.assertIn(f"Continue {inpatient['label']}", rejected["issues"][0]["message"])
 
     def test_r1_swap_preserves_inpatient_carryforward(self):
         book = r1_book(3)
