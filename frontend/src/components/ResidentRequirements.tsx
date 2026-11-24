@@ -11,6 +11,7 @@ const explanation: Record<string, string> = {
   unsafe_historical_identity_evidence_excluded: 'Some historical identity records are unsafe and have been excluded. Review Issues.',
   requirement_year_unconfirmed: 'The label is recognized, but its requirement year needs resident-specific confirmation.',
   conflicting_month_evidence: 'Conflicting records for the same month; no months allocated.',
+  conflicting_partial_r5_history: 'The recorded R5 blocks do not fit a valid training plan. Check the posting dates and institutions in the workbook.',
   unresolved_history: 'The posting label or its allocation is unresolved.',
 }
 const explain = (reason: string) => explanation[reason] || reasonLabel(reason)

@@ -61,6 +61,7 @@ class R5RolloverTests(unittest.TestCase):
             with self.subTest(cut=cut):
                 following = next_year(book, months[:cut])
                 ledger, = build_requirement_ledger(following, STORE)["residents"]
+                self.assertEqual(ledger["warnings"], [])
                 left = {r["requirement_id"]: r["remaining_months"] for r in ledger["requirements"]}
                 result = draft_schedule(following, STORE, max_seconds=5)
                 self.assertIn(result["status"], {"optimal", "feasible"}, result["skipped_residents"])
@@ -197,3 +198,6 @@ class R5RolloverTests(unittest.TestCase):
         result = draft_schedule(following, STORE, max_seconds=5)
         self.assertEqual(result["status"], "blocked")
         self.assertIn("conflicting_partial_r5_history", [r["code"] for r in result["skipped_residents"][0]["reasons"]])
+        recorded = [m["target"]["label"] for m in ledger["months"] if m.get("requirement_year") == "R5"]
+        self.assertEqual(recorded, [OTHER_GERI] + [GERI_SITE] * 5 + [CHILD_SITE] * 6)
+        self.assertIn("conflicting_partial_r5_history", ledger["warnings"])
