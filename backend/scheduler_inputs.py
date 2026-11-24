@@ -76,7 +76,9 @@ def prepare_scheduler_inputs(workbook, reviewstore):
 
     residents = []
     for raw, progress in zip(workbook.get("residents", []), ledger["residents"]):
-        blockers = [{"code": warning, "source": deepcopy(raw["source"])} for warning in progress["warnings"]]
+        # R5 route selection checks the history against the full posting catalogue.
+        blockers = [{"code": warning, "source": deepcopy(raw["source"])} for warning in progress["warnings"]
+                    if warning != "conflicting_partial_r5_history"]
         years = recorded_years(raw.get("residency_year"))
         if not years:
             blockers.append({"code": "recorded_year_unknown", "source": deepcopy(raw["source"])})

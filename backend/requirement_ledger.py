@@ -110,7 +110,7 @@ def build_requirement_ledger(workbook, store):
             outcome = outcomes[0] if all(item == outcomes[0] for item in outcomes) else {
                 "status": "pending", "reasons": ["conflicting_month_evidence"]}
             months.append({"month": month, **outcome, "evidence": [evidence for evidence, _ in values]})
-        summaries, _ = _summaries(months, start_number)
+        summaries, supported_r5_plan = _summaries(months, start_number)
         mixed_progress = [{"label": run["target"]["label"], "start": run["start_month"], "end": run["end_month"],
                            "months": run["count"]}
                           for run in r5_runs(months) if run["count"] < 6 and additional_r5_credit(run["target"])]
@@ -123,7 +123,8 @@ def build_requirement_ledger(workbook, store):
                           "recorded_year": resident.get("residency_year"), "source": resident["source"], "slot_id": resident.get("slot_id"),
                           "identity_safe": identity_safe,
                           "warnings": (["unsafe_identity"] if not identity_safe else [])
-                          + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else []),
+                          + (["unsafe_historical_identity_evidence_excluded"] if not placeholder and identity in unsafe_history else [])
+                          + ([] if supported_r5_plan else ["conflicting_partial_r5_history"]),
                           "months": months, "requirements": summaries, "r1_routes": routes,
                           "mixed_progress": mixed_progress,
                           "cluster_coverage": cluster_coverage(months),
