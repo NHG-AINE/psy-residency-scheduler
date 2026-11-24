@@ -449,6 +449,7 @@
 .draft-editor-feedback .hard { color: #9f352e; }
 .draft-editor-feedback .soft { color: #67436b; }
 .draft-block-editor footer { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.draft-move-proposal { margin-bottom: .5rem; }
 .draft-swap-feedback footer { flex-wrap: wrap; gap: .5rem; }
 .draft-swap-feedback.hard h3 { color: #9f352e; }
 @media (max-width: 640px) {

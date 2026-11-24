@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftDropEdges, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapLayout, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
+import { canGenerateDraft, cancelDraft, startDraft, draftBlockerLabel, draftContinuation, draftDropEdges, draftInsertion, draftPostings, draftPostingChoices, draftPreviewIssuesForRow, draftResidentYear, draftSwapLayout, draftSwapOutcome, generateDraft, groupDraftResidents, groupedDraftWarnings, groupedCapacityRows, requestSummary, requestTotals, filterRequestResidents, settleDraftAttempt } from '../src/lib/draft-schedule.ts'
 import type { SavedDraft } from '../src/lib/workbook-session.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
 import type { DraftEditOption, DraftSchedule } from '../src/lib/draft-schedule.ts'
@@ -20,6 +20,34 @@ const draft: DraftSchedule = {
   status: 'feasible', cutoff: '2027-06', blockers: [], residents: [{ source: resident.source, name: resident.name, mcr: resident.mcr, carryforward: [],
     months: resident.postings.map((posting, index) => ({ month: posting.month, status: index === 2 ? 'outside_draft_scope' : 'posting', label: 'IMH Inpatient Psychiatry' })) }],
 }
+
+test('drop layouts compare full training months and leave future-only assignments outside the preview', () => {
+  const march = '2028-03', june = '2028-06'
+  const geriatric = { category: 'core' as const, requirement_id: 'r2.geriatric_psychiatry', institution: 'NUH' }
+  const elective = { category: 'elective' as const, requirement_id: 'r2.elective', institution: 'NUH' }
+  const months: DraftSchedule['residents'][number]['months'] = [
+    ...['03', '04', '05'].map((month) => ({ month: `2028-${month}`, block_start: march, status: 'posting' as const, label: 'Geriatric', target: geriatric })),
+    { month: june, block_start: june, status: 'posting', label: 'Women’s Health', target: elective },
+  ]
+  const future = { requirement_id: 'r2.elective', institution: 'NUH', label: 'Women’s Health', months: 2 }
+  const expected = [june, june, june, march]
+  for (const rows of [[future], [{ ...future, block_start: june }]]) {
+    assert.deepEqual(draftSwapLayout(months, june, march, rows), expected)
+    assert.deepEqual(draftInsertion(months, june, march, 'before', rows), { blocks: expected, changed: true })
+  }
+  assert.equal(draftSwapLayout(months, june, march, [{ ...future, block_start: null, training_start: 10 }]), null)
+
+  const legacy = { ...future, requirement_id: 'r5.elective', months: 3 }
+  const longer = months.map((month) => ({ ...month, block_start: march, target: { ...elective, requirement_id: 'r5.elective' }, label: legacy.label })).slice(0, 3)
+  assert.deepEqual(draftContinuation(longer, [legacy], march), { months: 0, ambiguous: true })
+  for (const remaining of [4, 5]) {
+    assert.deepEqual(draftContinuation(longer.slice(0, 6 - remaining), [{ ...legacy, months: remaining }], march),
+      { months: remaining, ambiguous: false })
+  }
+  const combined = { ...legacy, requirement_id: 'r5.child_geriatric_psychiatry' }
+  assert.deepEqual(draftContinuation(longer.map((month) => ({ ...month, target: { ...elective, requirement_id: combined.requirement_id } })),
+    [combined], march), { months: 3, ambiguous: false })
+})
 
 test('editor choices combine recorded years, separate core from elective, and retain offering cells', () => {
   const offer = (year: string, posting: string, category: DraftEditOption['category'], institution: string, column: string): DraftEditOption => ({

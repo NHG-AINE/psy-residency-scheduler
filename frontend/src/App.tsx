@@ -10,7 +10,7 @@ import type { DraftState } from './lib/use-draft-schedule'
 import RequestDetails, { RequestOutcomeDetails } from './components/RequestDetails'
 import RequestOutcomeFilter from './components/RequestOutcomeFilter'
 import type { DraftChange, DraftChangeIssue, DraftSchedule, RequestStatus } from './lib/draft-schedule'
-import { draftBlockerLabel, draftInsertion, draftPostings, draftPreviewIssuesForRow, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft, validateDraftChange } from './lib/draft-schedule'
+import { draftBlockerLabel, draftContinuation, draftInsertion, draftPostings, draftPreviewIssuesForRow, draftResidentYear, groupDraftResidents, requestSummary, filterRequestResidents, isUsableDraft, validateDraftChange } from './lib/draft-schedule'
 import { draftDestinationError, issuesForCell, useDraftBlockEditing } from './lib/use-draft-block-editing'
 import type { DraftBlock, DraftCell, DraftDestination } from './lib/use-draft-block-editing'
 import DraftBlockEditor, { DraftBlockFlagIcon, DraftBlockReasons, DraftMoveFeedback } from './components/DraftBlockEditor'
@@ -51,6 +51,24 @@ function draftIssueStyle(issues: DraftChangeIssue[]) {
 
 type UndoPreview = NonNullable<ReturnType<typeof draftUndoPreview>>
 
+function draftPreviewParts(positions: (string | undefined)[]) {
+  const parts: { start: string; index: number; length: number; key: string }[] = []
+  const counts = new Map<string, number>()
+  positions.forEach((start, index) => {
+    if (!start) return
+    const previous = parts.at(-1)
+    if (previous?.start === start && previous.index + previous.length === index) {
+      previous.length++
+    } else {
+      const count = counts.get(start) ?? 0
+      counts.set(start, count + 1)
+      parts.push({ start, index, length: 1, key: `${start}-${count}` })
+    }
+  })
+  // Keep the DOM order fixed so React can update transforms without moving the cards.
+  return parts.sort((first, second) => first.start.localeCompare(second.start) || first.index - second.index)
+}
+
 function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anchorLength, source, warnings, requestIndicator, undo, onSettled }: {
   months: DraftSchedule['residents'][number]['months']; preview: (string | undefined)[] | null
   placeholderStart?: string; anchorIndex: number; anchorLength: number
@@ -81,44 +99,38 @@ function DraftMovePreview({ months, preview, placeholderStart, anchorIndex, anch
     })
     return () => { current = false; cancelAnimationFrame(frame) }
   }, [settling])
-  const parts: { start: string; index: number; length: number; key: string }[] = []
-  const counts = new Map<string, number>()
   const positions = (undo ? (undoReady ? undo.positions : null) : preview) ?? months.map((month) => month.block_start)
-  positions.forEach((start, index) => {
-    if (!start) return
-    const previous = parts.at(-1)
-    if (previous?.start === start && previous.index + previous.length === index) {
-      previous.length++
-    } else {
-      const count = counts.get(start) ?? 0
-      counts.set(start, count + 1)
-      parts.push({ start, index, length: 1, key: `${start}-${count}` })
-    }
+  const restacking = undo && !undo.positions && months.some((month, index) => month.block_start !== undo.restored[index]?.block_start)
+  const cardStyle = (index: number, length: number) => ({
+    transform: `translateX(${100 * (index - anchorIndex) / anchorLength}cqw)`, width: `calc(${100 * length / anchorLength}% - 8px)`,
   })
-  // Keep the DOM order fixed so React can update transforms without moving the cards.
-  parts.sort((first, second) => first.start.localeCompare(second.start) || first.index - second.index)
   return <div ref={layer} className="draft-move-preview" aria-hidden="true" data-visible={!!(preview || onSettled || undo)}>
-    {parts.map(({ start, index, length, key }) => {
+    {draftPreviewParts(positions).map(({ start, index, length, key }) => {
       const block = months.filter((month) => month.block_start === start)
       const placeholder = start === placeholderStart
       const issueStyle = placeholder ? '' : draftIssueStyle(issuesForCell(warnings, source, block.map((month) => month.month)))
       const precedingMonths = positions.slice(0, index).filter((position) => position === start).length
-      const request = placeholder ? undefined : requestIndicator(block[precedingMonths].month)
-      const restored = undo && !undo.positions && undo.months.includes(months[index].month) ? undo.restored[index] : undefined
-      const style = { transform: `translateX(${100 * (index - anchorIndex) / anchorLength}cqw)`, width: `calc(${100 * length / anchorLength}% - 8px)` }
-      return <DraftPreviewCard key={key} style={style} category={block[0].target?.category ?? 'core'} issueStyle={issueStyle}
-        placeholder={placeholder} request={request?.status} label={block[0].label} restored={restored} undoReady={undoReady} />
+      const request = placeholder ? undefined : requestIndicator((block[precedingMonths] ?? block[0]).month)
+      const restored = undo && !undo.positions && !restacking && undo.months.includes(months[index].month) ? undo.restored[index] : undefined
+      return <DraftPreviewCard key={key} style={cardStyle(index, length)} category={block[0].target?.category ?? 'core'} issueStyle={issueStyle}
+        placeholder={placeholder} request={request?.status} label={block[0].label} restored={restored} undoReady={undoReady}
+        opacity={restacking && undoReady ? 0 : undefined} />
+    })}
+    {restacking && draftPreviewParts(undo.restored.map((month) => month.block_start)).map(({ index, length, key }) => {
+      const month = undo.restored[index]
+      return <div key={`restored-${key}`} className={`posting-value ${month.target?.category ?? 'core'}`}
+        style={{ ...cardStyle(index, length), opacity: undoReady ? 1 : 0 }}><span className="posting-name">{month.label}</span></div>
     })}
   </div>
 }
 
-function DraftPreviewCard({ style, category, issueStyle, placeholder, request, label, restored, undoReady }: {
+function DraftPreviewCard({ style, category, issueStyle, placeholder, request, label, restored, undoReady, opacity }: {
   style: { transform: string; width: string }; category: string; issueStyle: string; placeholder: boolean;
-  request?: RequestStatus; label: string | null; restored?: DraftSchedule['residents'][number]['months'][number]; undoReady: boolean
+  request?: RequestStatus; label: string | null; restored?: DraftSchedule['residents'][number]['months'][number]; undoReady: boolean; opacity?: number
 }) {
   return <>
     <div className={`posting-value ${category} ${issueStyle}${placeholder ? ' draft-insertion-gap' : ''}`}
-      style={{ ...style, opacity: restored && undoReady ? 0 : undefined }}>
+      style={{ ...style, opacity: restored && undoReady ? 0 : opacity }}>
       {!placeholder && <span className="posting-name">{label}</span>}
       {issueStyle && <span className={`draft-block-flag ${issueStyle}`}><DraftBlockFlagIcon /></span>}
       {request && <span className={`request-indicator ${request}`}><RequestIndicatorIcon status={request} /></span>}
@@ -401,7 +413,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     editing.drop(dragDestination(event, cell), event.currentTarget)
   }
 
-  function keyboardMove(event: KeyboardEvent<HTMLButtonElement>, block: DraftBlock, months: NonNullable<typeof draft>['residents'][number]['months']) {
+  function keyboardMove(event: KeyboardEvent<HTMLButtonElement>, block: DraftBlock, row: DraftSchedule['residents'][number]) {
     const move = editing.moving.current
     if (event.key === 'Tab' && editing.released?.keyboard && editing.checking) {
       editing.dismissDrop(false)
@@ -442,9 +454,10 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     if (!next || !button) return
     button.focus({ preventScroll: true })
     button.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    const nextMonths = months.filter((month) => month.block_start === next)
+    const nextMonths = row.months.filter((month) => month.block_start === next)
     editing.selectDestination({ source: block.source, start: next, label: nextMonths[0].label ?? '',
-      months: nextMonths.map((month) => month.month), side: event.shiftKey ? (right ? 'after' : 'before') : undefined })
+      months: nextMonths.map((month) => month.month), continuation: draftContinuation(row.months, row.carryforward, next),
+      side: event.shiftKey ? (right ? 'after' : 'before') : undefined })
   }
   useLayoutEffect(() => {
     if (loading || !focusSource || focusedSource.current === focusSource) return
@@ -524,7 +537,9 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident) => {
         const { rows, counts, indicator: requestIndicator } = requestSummary(resident, draft)
         const rowId = residentRowId(resident.source)
-        const draftMonths = draft?.residents.find((item) => sameSource(item.source, resident.source))?.months ?? []
+        const draftRow = draft?.residents.find((item) => sameSource(item.source, resident.source))
+        const draftMonths = draftRow?.months ?? []
+        const carryforward = draftRow?.carryforward ?? []
         const held = editing.move && sameSource(resident.source, editing.move.from.source) ? editing.move.from : null
         const proposed = editing.proposed && sameSource(resident.source, editing.proposed.from.source) ? editing.proposed.blocks : null
         const returning = editing.returning && sameSource(resident.source, editing.returning.from.source) ? editing.returning : null
@@ -532,7 +547,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         const destination = editing.destination
         const canSwap = held && destination && !destination.side && held.start !== destination.start && !draftDestinationError(held, destination)
         const insertion = held && destination?.side && sameSource(resident.source, destination.source)
-          ? draftInsertion(draftMonths, held.start, destination.start, destination.side) : null
+          ? draftInsertion(draftMonths, held.start, destination.start, destination.side, carryforward) : null
         const hover = insertion?.changed ? insertion.blocks : null
         const preview = proposed ?? hover
         const previewAnchor = draftMonths.findIndex((month) => month.block_start)
@@ -563,7 +578,8 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const name = show(resident.name)
             const cellMonths = block.map((month) => month.month)
             const cell = { source: resident.source, start: start ?? block[0].month, leave: status === 'loa', label: value,
-              months: start ? draftMonths.filter((month) => month.block_start === start).map((month) => month.month) : [] }
+              months: start ? draftMonths.filter((month) => month.block_start === start).map((month) => month.month) : [],
+              continuation: start ? draftContinuation(draftMonths, carryforward, start) : undefined }
             const issueMonths = cell.months.length ? cell.months : cellMonths
             const atDestination = destination && sameSource(resident.source, destination.source) && cell.start === destination.start
             const swapping = atDestination && canSwap
@@ -590,7 +606,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
                   aria-haspopup="dialog" disabled={!canEdit || checkingUndo}
                   data-posting-tooltip={`${hoverName} · ${hoverRange}`} data-draft-start={start} draggable={canEdit && !checkingUndo}
                   onClick={(event) => editing.openEditor(makeBlock(event.currentTarget))}
-                  onKeyDown={(event) => keyboardMove(event, makeBlock(event.currentTarget), draftMonths)}
+                  onKeyDown={(event) => { if (draftRow) keyboardMove(event, makeBlock(event.currentTarget), draftRow) }}
                   onDragStart={(event) => {
                     event.dataTransfer.effectAllowed = 'move'
                     event.dataTransfer.setData('text/plain', blockId)
@@ -626,6 +642,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     </table></TimetableGrid>}
     </div>
     {editing.released && <DraftMoveFeedback anchor={editing.released.anchor} kind={editing.released.kind} checking={editing.checking} preview={editing.preview} proposal={editing.proposed?.description}
+      crossesCutoff={editing.released.crossesCutoff}
       onApply={editing.confirmDrop} onDismiss={() => editing.dismissDrop()} />}
     {editor && draft && editorResident && <DraftBlockEditor block={editor} options={draft.edit_options ?? []} current={editorCurrent}
       years={`${editorResident.recorded_year ?? ''};${editorResident.projected_year ?? ''};${workbook.residents.find((person) => sameSource(person.source, editor.source))?.residency_year ?? ''}`}

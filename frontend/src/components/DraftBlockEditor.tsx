@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { draftPostingChoices, draftSwapOutcome, monthRanges } from '../lib/draft-schedule'
+import { draftContinuationText, draftPostingChoices, draftSwapOutcome, monthRanges } from '../lib/draft-schedule'
 import type { DraftChangeIssue, DraftChangeResult, DraftEditOption } from '../lib/draft-schedule'
 import type { DraftBlock } from '../lib/use-draft-block-editing'
 import { sameSource } from '../lib/workbook'
@@ -26,8 +26,9 @@ function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
   </ul>
 }
 
-export function DraftMoveFeedback({ anchor, kind, checking, preview, proposal, onApply, onDismiss }: {
-  anchor: HTMLElement; kind: 'swap' | 'insert'; checking: boolean; preview: DraftChangeResult | null; proposal?: string; onApply: () => void; onDismiss: () => void
+export function DraftMoveFeedback({ anchor, kind, checking, preview, proposal, crossesCutoff, onApply, onDismiss }: {
+  anchor: HTMLElement; kind: 'swap' | 'insert'; checking: boolean; preview: DraftChangeResult | null; proposal?: string; crossesCutoff?: boolean
+  onApply: () => void; onDismiss: () => void
 }) {
   const id = useId()
   const panel = useRef<HTMLDivElement>(null)
@@ -70,7 +71,7 @@ export function DraftMoveFeedback({ anchor, kind, checking, preview, proposal, o
     aria-labelledby={`${id}-title`} aria-describedby={`${id}-details`}>
     <h3 id={`${id}-title`}>{title}</h3>
     <div id={`${id}-details`} className="draft-editor-feedback">
-      {proposal && <p className="sr-only">Proposed arrangement. {proposal}</p>}
+      {proposal && <p className={crossesCutoff ? 'draft-move-proposal' : 'sr-only'}>Proposed arrangement. {proposal}</p>}
       {checking ? null : issues.length ? <DraftIssueMessages issues={issues} /> : <p>Could not apply this {action}. Try again.</p>}
     </div>
     <footer>
@@ -92,6 +93,7 @@ export default function DraftBlockEditor({ block, options, current, years, check
   const choices = draftPostingChoices(options, years)
   const offers = choices.find((choice) => choice.key === posting)?.offers ?? []
   const picked = offers.find((offer) => JSON.stringify(offer.source) === site)
+  const continuation = block.continuation?.months ?? 0
 
   useLayoutEffect(() => {
     const panel = dialog.current
@@ -120,7 +122,9 @@ export default function DraftBlockEditor({ block, options, current, years, check
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
     }}>
     <header>
-      <div><h3 id={`${id}-title`}>Edit posting block</h3><p id={`${id}-context`}>{block.name} · {monthRanges(block.months)}</p></div>
+      <div><h3 id={`${id}-title`}>Edit posting block</h3><p id={`${id}-context`}>{block.name} · {monthRanges(block.months)}
+        {continuation > 0 && <><br />{block.months.length + continuation} training months. {draftContinuationText(continuation)}.</>}
+      </p></div>
       <button type="button" className="draft-editor-close" aria-label="Close posting editor" onClick={onClose}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg>
       </button>
