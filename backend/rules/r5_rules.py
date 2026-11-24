@@ -111,12 +111,12 @@ def _templates(runs, options, requests, allow_split):
                     yield [(COMBINED["id"], 6, None)] + elective_slots + variant
 
 
-def _manual_core_templates():
+def _manual_core_templates(splits=((3, 9), (6, 6), (9, 3))):
     # A core can be completed as a three- or six-month block. Separate blocks
     # remain distinct even when they count towards the same requirement.
     partitions = {0: [()], 3: [(3,)], 6: [(6,), (3, 3)],
                   9: [(6, 3), (3, 6), (3, 3, 3)]}
-    for child, geriatric in ((3, 9), (6, 6), (9, 3)):
+    for child, geriatric in splits:
         for combined in ([], [(COMBINED["id"], 6, None)]):
             shared = 3 if combined else 0
             for lengths in product(partitions[child - shared], partitions[geriatric - shared]):
@@ -167,6 +167,10 @@ def _fit_history(template, runs, options, months, planning_start, earlier_months
                 matched[index] = {**run, "count": 3}
                 index, length = available[1], length - 3
                 required = template[index][1]
+            elif key in R5_CORES and length == 9 and sum(template[i][1] for i in available) == length:
+                # Reimported adjacent blocks at one site have no visible boundary.
+                matched.update((i, {**run, "count": template[i][1]}) for i in available)
+                continue
             else:
                 return None
         if length < required and not _continues(run, months, planning_start, earlier_months):
@@ -181,21 +185,23 @@ def _fit_history(template, runs, options, months, planning_start, earlier_months
 def prepare_routes(person, options, planning_start, earlier_months, blockers, allow_split=False, requests=(), *, fixed=None):
     requirements = {r["requirement_id"]: r for r in person["requirements"]}
     runs = r5_runs(person["months"])
-    _, _, pending = r5_credit_progress(runs)
+    credits, _, pending = r5_credit_progress(runs)
     if not pending and all(not requirements[key]["remaining_months"] for key in (*R5_CORES, R5_ELECTIVE)):
         return [[]]
 
     routes, missing = [], None
-    templates = _templates(runs, options, requests, allow_split)
+    templates = list(_templates(runs, options, requests, allow_split))
+    historical_splits = [split for split in ((3, 9), (9, 3))
+                         if any(length == 9 and credits[key] >= length for key, length in zip(R5_CORES, split))]
+    templates.extend(_manual_core_templates(historical_splits))
     fixed_blocks, manual = Counter(), set()
     if fixed is not None:
         fixed_blocks = Counter((month["block_start"], month["target"]["requirement_id"])
                                for month in fixed["months"] if month["status"] == "posting"
                                and month["target"]["residency_year"] == "R5")
     if fixed_blocks and all(key != R5_ELECTIVE for _, key in fixed_blocks):
-        generated = list(templates)
-        manual = {tuple(template) for template in _manual_core_templates()} - {tuple(template) for template in generated}
-        templates = [*generated, *sorted(manual)]
+        manual = {tuple(template) for template in _manual_core_templates()} - {tuple(template) for template in templates}
+        templates.extend(sorted(manual))
     for template in templates:
         matched = _fit_history(template, runs, options, person["months"], planning_start, earlier_months)
         if matched is None:
