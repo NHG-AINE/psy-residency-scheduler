@@ -58,6 +58,42 @@ def _month_targets(person):
     return [m["target"]["source"] if m.get("target") else None for m in person["months"]]
 
 
+def _block_continuation(person, block):
+    """Resolve an older draft only when a future row can be linked safely."""
+    first = block[0]
+    start, target = first["block_start"], first["target"]
+    future = person["carryforward"]
+    explicit = [row for row in future if row.get("block_start") == start]
+    if explicit:
+        return (explicit[0], False) if len(explicit) == 1 else (None, True)
+    if any(month["status"] == "posting" and month["month"] > block[-1]["month"] for month in person["months"]):
+        return None, False
+    key, site = target["requirement_id"], target["institution"]
+    matches = [row for row in future if "block_start" not in row and row["requirement_id"] == key
+               and row["institution"] == site and row.get("label", first["label"]) == first["label"]]
+    if not matches:
+        return None, False
+    if key == "r1.general_medicine":
+        # The old R1 aggregate listed future runs in chronological order.
+        seen_r1 = next((row for row in future if row["requirement_id"].startswith("r1.")), None)
+        if matches[0] is not seen_r1:
+            return None, False
+        if len(block) == 1 and matches[0]["months"] > 1 and any(
+                row["requirement_id"] == "r1.neurology" for row in future):
+            return None, True
+    if key.startswith("r5."):
+        if key == r5_rules.COMBINED["id"] and len(matches) == 1 and len(block) + matches[0]["months"] <= 6:
+            return matches[0], False
+        partial = [row for row in matches if row["months"] not in {3, 6} and len(block) + row["months"] <= 6]
+        if len(partial) == 1:
+            return partial[0], False
+        # Separate R5 blocks at the same offering can have identical labels.
+        if not partial and all(len(block) + row["months"] > 6 for row in matches):
+            return None, False
+        return None, True
+    return (matches[0], False) if len(matches) == 1 else (None, True)
+
+
 class DraftWarningBaselineRequired(ValueError):
     pass
 
@@ -254,7 +290,8 @@ def _explain_conflict(prepared, person, original, moved):
                 return "Choose another institution for R4 Inpatient Psychiatry. This resident already has six months of R1 Inpatient Psychiatry at IMH in their history or draft."
         req = requirements[key]
         past = [m for m in history if m.get("requirement_id") == key]
-        if option["residency_year"] in {"R2", "R3", "R4"} and req["remaining_months"] and past and all(m["institution"] != option["institution"] for m in past):
+        if (option["residency_year"] in {"R2", "R3", "R4"} or key == "r1.inpatient_psychiatry") and (
+                req["remaining_months"] and past and all(m["institution"] != option["institution"] for m in past)):
             return f"Continue {req['posting']} at {past[-1]['institution']}. This resident has completed {req['expected_months']} of {req['required_months']} months there."
         if option["residency_year"] == "R5" and option["category"] == "elective" and r5_rules.elective_durations(option) == (6,) and len(block) < 6 and block[-1]["month"] != person["months"][-1]["month"]:
             return f"{option['label']} needs six training months at the same institution. This block has {_amount(len(block), 'month')}."
@@ -265,17 +302,6 @@ def _explain_conflict(prepared, person, original, moved):
             if earlier:
                 return f"Complete {earlier} before starting {year}. This change would leave {earlier} postings after the start of {year}."
     future = original["carryforward"]
-    last = next(m for m in reversed(original["months"]) if m["status"] == "posting")
-    previous = last["target"]
-    for block in moved:
-        target = block[0]["target"]
-        if (any(m["month"] == last["month"] for m in block)
-                and target["requirement_id"] == previous["requirement_id"]
-                and target["source"] != previous["source"]):
-            for item in future:
-                if (item["requirement_id"], item["institution"], item.get("label", previous["label"])) == (
-                        previous["requirement_id"], previous["institution"], previous["label"]):
-                    return f"Continue {previous['label']} at the same institution. The draft has {_amount(item['months'], 'training month')} planned there next year."
     if any(t["requirement_id"].startswith("r1.") for t in (b[0]["target"] for b in moved)):
         evidence = [*history, *planned]
         gm = {t["institution"] for t in evidence if t.get("requirement_id") == "r1.general_medicine"}
@@ -337,43 +363,47 @@ def validate_draft_change(workbook, store, draft, change, baseline_residents=Non
     first = [m for m in person["months"] if m["status"] == "posting" and m.get("block_start") == start]
     if not first:
         return blocked("not_generated", "Only generated posting blocks can be changed.")
-    moved = [first]
     kind = change["kind"]
+    span = first
+    order = [(start, first)]
     if kind in {"swap", "insert"}:
         second = [m for m in person["months"] if m["status"] == "posting" and m.get("block_start") == end]
         if any(m["month"] == end and m["status"] == "loa" for m in person["months"]):
             return blocked("leave", f"{_month(end)} is recorded as leave. Choose a block outside the leave period.")
         if not second or end == start:
             return blocked("invalid_destination", "Choose another generated posting block in the same resident’s row.")
+        low = min(start, end)
+        high = max(first[-1]["month"], second[-1]["month"])
+        span = [m for m in person["months"] if low <= m["month"] <= high]
+        if any(m["status"] not in {"posting", "loa"} for m in span):
+            return blocked("outside_draft", "Choose a destination within the same generated training period.")
+        order = [(key, list(months)) for key, months in groupby(
+            (m for m in span if m["status"] == "posting"), key=lambda m: m["block_start"])]
+    blocks = []
+    continuation = None
+    for key, months in order:
+        tail, ambiguous = _block_continuation(person, months)
+        if ambiguous:
+            return blocked("ambiguous_continuation", "This saved draft does not identify which future months continue the block. Generate a new draft to change this block.")
+        if tail:
+            continuation = tail
+        blocks.append((key, months[0]["target"], len(months) + (tail["months"] if tail else 0)))
+    if kind in {"swap", "insert"}:
+        index = next(i for i, (key, _, _) in enumerate(blocks) if key == start)
+        destination = next(i for i, (key, _, _) in enumerate(blocks) if key == end)
         if kind == "swap":
-            if len(first) != len(second):
-                return blocked("unequal_length", f"Only equal-length blocks can swap. These blocks span {len(first)} and {len(second)} training months.")
-            targets = [second[0]["target"], first[0]["target"]]
-            moved.append(second)
+            a, b = blocks[index], blocks[destination]
+            if a[2] != b[2]:
+                return blocked("unequal_length", f"Only equal-length blocks can swap. These blocks span {a[2]} and {b[2]} training months.")
+            if draft_source_key(a[1]["source"]) == draft_source_key(b[1]["source"]):
+                return blocked("no_change", "Choose a different posting or institution.")
+            blocks[index], blocks[destination] = b, a
         else:
-            low = min(start, end)
-            high = max(first[-1]["month"], second[-1]["month"])
-            span = [m for m in person["months"] if low <= m["month"] <= high]
-            if any(m["status"] not in {"posting", "loa"} for m in span):
-                return blocked("outside_draft", "Choose a destination within the same generated training period.")
-            training = [m for m in span if m["status"] == "posting"]
-            order = [(key, list(months)) for key, months in groupby(training, key=lambda m: m["block_start"])]
-            original_order = [key for key, _ in order]
-            order = [item for item in order if item[0] != start]
-            index = next(i for i, (key, _) in enumerate(order) if key == end)
-            order.insert(index + (change["side"] == "after"), (start, first))
-            if [key for key, _ in order] == original_order:
+            picked = blocks.pop(index)
+            position = destination - (index < destination) + (change["side"] == "after")
+            if position == index:
                 return blocked("no_change", "Choose an insertion point that changes the block order.")
-            # Pack the reordered blocks into the same training months, leaving LOA in place.
-            blocks = [(block[0]["target"], len(block)) for _, block in order]
-            moved = []
-            offset = 0
-            for option, length in blocks:
-                block = training[offset:offset + length]
-                for month in block:
-                    month.update(label=option["label"], target=option, block_start=block[0]["month"])
-                moved.append(block)
-                offset += length
+            blocks.insert(position, picked)
     prepared = prepare_scheduler_inputs(workbook, store)
     warning_scores = {"posting_balance", *r1_rules.SOFT_PRIORITIES, *draft.get("soft_priority", [])}
     warning_months = [month["month"] for month in prepared["planning_months"]]
@@ -395,21 +425,46 @@ def validate_draft_change(workbook, store, draft, change, baseline_residents=Non
                    and (not change.get("offering") or option["source"] == change["offering"])]
         if not options:
             return blocked("catalogue_offering", "Choose a posting and institution offered for this resident’s training years.")
-        targets = options
         if len(options) > 1:
             return blocked("ambiguous_offering", "The workbook lists more than one matching offering for this posting and institution.")
-    if kind != "insert":
-        if all(draft_source_key(block[0]["target"]["source"]) == draft_source_key(option["source"]) for block, option in zip(moved, targets)):
+        key, previous, length = blocks[0]
+        option = options[0]
+        if draft_source_key(previous["source"]) == draft_source_key(option["source"]):
             return blocked("no_change", "Choose a different posting or institution.")
-        for block, option in zip(moved, targets):
-            for month in block:
-                month.update(label=option["label"], target=option)
+        blocks[0] = key, option, length
+
+    # Repack full blocks, including the virtual tail, while leaving LOA in place.
+    training = [m for m in span if m["status"] == "posting"]
+    moved, offset = [], 0
+    if continuation:
+        person["carryforward"].remove(continuation)
+    for _, option, length in blocks:
+        block = training[offset:offset + length]
+        block_start = block[0]["month"] if block else None
+        for month in block:
+            month.update(label=option["label"], target=option, block_start=block_start)
+        if block:
+            moved.append(block)
+        if length > len(block):
+            row = {"requirement_id": option["requirement_id"], "institution": option["institution"],
+                   "months": length - len(block), "block_start": block_start}
+            if not row["requirement_id"].startswith("r1."):
+                row["label"] = option["label"]
+            if not block:
+                row["training_start"] = sum(m["status"] == "posting" and m["month"] < span[0]["month"]
+                                            for m in person["months"]) + offset
+            person["carryforward"].append(row)
+        offset += length
 
     result = draft_schedule(workbook, store, max_seconds=10, fixed=fixed, prepared=prepared)
     if result["status"] == "infeasible":
         return blocked("hard_constraint", _explain_conflict(prepared, person, original, moved))
     if result["status"] != "feasible":
         raise ValueError("The change could not be validated. Check the workbook and try again.")
+    for updated in result["residents"]:
+        prior = fixed[draft_source_key(updated["source"])]["carryforward"]
+        if any("block_start" not in row for row in prior):
+            updated["carryforward"] = prior
     if recover_current:
         reason = "Warnings could not be recovered from this draft’s saved placements. Generate a new draft to make changes."
         draft = {**draft, **_recover_warning_diagnostics(workbook, store, prepared, draft["residents"], reason)}

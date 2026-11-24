@@ -1,6 +1,7 @@
 """R1 candidate schedules and preferences, added to the shared scheduling model."""
 from collections import Counter, defaultdict
 from copy import deepcopy
+from itertools import groupby
 
 from ortools.sat.python import cp_model
 
@@ -107,6 +108,7 @@ def prepare_candidates(selected, options, planning_start, blockers):
         blockers.extend(deepcopy(person["blockers"]))
         incoming = person["recorded_years"] == ["r1"] and (person.get("intake") or "").strip() == planning_start[:4]
         active_intake.append(incoming and any(m["available"] for m in person["availability"]))
+        active = [month["month"] for month in person["availability"] if month["available"]]
         choices = []
         for route, remaining in _paths(person, by_key):
             if any(key not in by_key for key in remaining):
@@ -118,7 +120,19 @@ def prepare_candidates(selected, options, planning_start, blockers):
                 else:
                     schedule.append(by_key[remaining[consumed]])
                     consumed += 1
+            future = []
+            if consumed < len(remaining):
+                start = 0
+                for key, run in groupby(remaining):
+                    end = start + len(list(run))
+                    if end > consumed:
+                        future.append({"requirement_id": key[0], "institution": key[1],
+                                       "months": end - max(start, consumed),
+                                       "block_start": active[start] if start < consumed else None,
+                                       **({"training_start": start} if start >= consumed else {})})
+                    start = end
             choices.append({"route": route, "schedule": schedule, "carryforward": Counter(remaining[consumed:]),
+                            "future": future,
                             "credited_r1_months": R1_REQUIRED_MONTHS - len(remaining)})
         candidates.append(choices)
     return by_key, candidates, active_intake

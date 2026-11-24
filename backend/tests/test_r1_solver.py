@@ -231,7 +231,8 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(len(active), 9)
         self.assertTrue(all(m["target"]["requirement_id"] != "r1.inpatient_psychiatry" for m in active[:6]))
         self.assertTrue(all(m["target"]["requirement_id"] == "r1.inpatient_psychiatry" for m in active[6:]))
-        self.assertEqual(person["carryforward"], [{"requirement_id": "r1.inpatient_psychiatry", "institution": active[-1]["target"]["institution"], "months": 3}])
+        self.assertEqual(person["carryforward"], [{"requirement_id": "r1.inpatient_psychiatry",
+            "institution": active[-1]["target"]["institution"], "months": 3, "block_start": active[-1]["block_start"]}])
         self.assertEqual(workbook, original)
         for month in workbook["residents"][0]["postings"]:
             month.update(status="loa", value="LOA")
