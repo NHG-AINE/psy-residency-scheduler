@@ -342,10 +342,10 @@ function changedBlockStarts(before: DraftSchedule, after: DraftSchedule, change:
 }
 
 function acceptedWarnings(issues: DraftChangeResult['issues'], after: DraftSchedule) {
-  const key = ({ code, message, affected }: DraftChangeResult['issues'][number]) => JSON.stringify([code, message,
-    affected.map(({ month, source }) => JSON.stringify([month, source.kind, source.slot_id, source.sheet, source.row])).sort()])
-  const accepted = new Set(after.edit_warnings?.map(key))
-  return issues.every((issue) => issue.severity === 'soft' && accepted.has(key(issue)))
+  return issues.every((issue) => issue.severity === 'soft' && after.edit_warnings?.some((accepted) =>
+    accepted.severity === issue.severity && accepted.code === issue.code && accepted.message === issue.message
+    && issue.affected.every(({ month, source }) =>
+      accepted.affected.some((cell) => cell.month === month && sameSource(cell.source, source)))))
 }
 
 export async function undoDraftBlock(saved: SavedDraft, resident: Source, start: string,

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { draftBaseline, draftBlockUndoTarget, draftUndoPreview, prepareDraftEdit, undoDraftBlock, undoDraftEdit } from '../src/lib/draft-edit-history.ts'
 import { parseSession, sessionWriter } from '../src/lib/workbook-session.ts'
 import type { WorkbookSession } from '../src/lib/workbook-session.ts'
-import type { DraftChange, DraftSchedule } from '../src/lib/draft-schedule.ts'
+import type { DraftChange, DraftChangeIssue, DraftSchedule } from '../src/lib/draft-schedule.ts'
 import { filterRequestResidents, requestTotals, settleDraftAttempt, validateDraftChange } from '../src/lib/draft-schedule.ts'
 import type { Resident } from '../src/lib/workbook.ts'
 import { reviewSignature } from '../src/lib/history-review.ts'
@@ -336,6 +336,62 @@ test('selective undo keeps history intact if a dependent move or replayed warnin
   const accepted = { ...independent, data: { ...independent.data, edit_warnings: [warning] } }
   assert.deepEqual((await undoDraftBlock(accepted, resident, july, async () =>
     ({ draft: { ...restored, edit_warnings: [warning] }, issues: [warning] })))?.undoChanges, [swapB])
+})
+
+test('selective undo keeps an independent posting edit when its accepted warning affects fewer cells', async () => {
+  const { saved, planned } = draftHistoryFixture()
+  const dates = ['2027-07', '2027-08', '2027-09', '2027-10', '2027-11', '2027-12',
+    '2028-01', '2028-02', '2028-03', '2028-04', '2028-05', '2028-06']
+  const anchors = dates.map((month) => ({ source: resident, month }))
+  const warning: DraftChangeIssue = {
+    severity: 'soft', code: 'posting_balance', message: 'Monthly posting distribution is less even.', affected: anchors.slice(0, 6),
+  }
+  const narrower = { ...warning, affected: anchors.slice(3, 6) }
+  const plan = (order: number[], status: DraftSchedule['status'], edit_warnings: DraftChangeIssue[] = []) => {
+    const draft = planned(order, status)
+    const [person] = draft.residents
+    const months = dates.map((month, i) => {
+      const block = Math.floor(i / 3)
+      return { ...person.months[block], month, block_start: dates[block * 3] }
+    })
+    return { ...draft, residents: [{ ...person, months }], edit_warnings }
+  }
+  const editA = postingEdit(dates[0], 5)
+  const editB = postingEdit(dates[3], 6)
+  const generated = { ...saved.draft!, data: plan([1, 2, 3, 4], 'feasible') }
+  const afterA = await prepareDraftEdit(generated, editA, plan([5, 2, 3, 4], 'edited',
+    [{ ...warning, affected: anchors.slice(0, 3) }]), withoutReplay)
+  const afterAB = await prepareDraftEdit(afterA, editB, plan([5, 6, 3, 4], 'edited', [warning]), withoutReplay)
+  const reopened = parseSession(structuredClone({ ...saved, draft: afterAB }))!.draft!
+  const afterB = plan([1, 6, 3, 4], 'edited', [narrower])
+  const result = await undoDraftBlock(reopened, resident, editA.start, async (base, change) => {
+    assert.deepEqual(base, generated.data)
+    assert.deepEqual(change, editB)
+    return { draft: afterB, issues: [narrower] }
+  })
+  const rebased = parseSession(structuredClone({ ...saved, draft: result }))!.draft!
+  assert.deepEqual(rebased.data, afterB)
+  assert.deepEqual(rebased.undoChanges, [editB])
+  assert.deepEqual(undoDraftEdit(rebased)?.data, generated.data)
+  assert.equal(undoDraftEdit(undoDraftEdit(rebased)), null)
+
+  for (const rejected of [
+    { ...warning, affected: anchors.slice(0, 7) },
+    { ...narrower, affected: anchors.slice(6, 9) },
+    { ...narrower, affected: narrower.affected.map((cell) => ({ ...cell, source: { ...resident, row: 3 } })) },
+    { ...narrower, message: 'A different posting distribution warning.' },
+    { ...narrower, code: 'inpatient_allocation' },
+    { ...narrower, severity: 'hard' as const },
+  ]) {
+    await assert.rejects(undoDraftBlock(reopened, resident, editA.start, async () =>
+      ({ draft: { ...afterB, edit_warnings: [rejected] }, issues: [] })), /new draft warning/)
+  }
+  const separate = { ...reopened, data: { ...reopened.data, edit_warnings: [
+    { ...warning, affected: anchors.slice(0, 4) }, { ...warning, affected: anchors.slice(4, 6) },
+  ] } }
+  await assert.rejects(undoDraftBlock(separate, resident, editA.start, async () =>
+    ({ draft: afterB, issues: [narrower] })), /new draft warning/)
+  assert.deepEqual(reopened, afterAB)
 })
 
 test('preserves a later swap of the same months on a different resident row', async () => {
