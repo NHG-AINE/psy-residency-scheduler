@@ -510,10 +510,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         exporting={exporting} checkingUndo={checkingUndo} onUndo={undoLastChange} onExport={onExport} onDiscard={onDiscard} onFind={onFind} />
     </div>
     {filters}
-    {draft && !hasEditOptions && <p className="table-note draft-edit-controls">Regenerate this draft to edit its posting blocks.</p>}
-    {hasEditOptions && <details className="draft-edit-controls"><summary>Timetable controls</summary>
-      <p>Select a posting to edit it. Drag to a block’s edge to insert before or after it, or to the centre of an equal-length block to swap. With the keyboard, press Space to pick up a block, use the arrow keys to choose a swap or hold Shift while using the arrows to insert, then press Enter to drop or Escape to cancel. Use the arrow on a changed block to undo its latest change.</p>
-    </details>}
+    {draft && !hasEditOptions && <p className="table-note draft-regenerate-note">Regenerate this draft to edit its posting blocks.</p>}
     <p className={hiddenUndo || checkingUndo ? 'table-note' : undoError?.draft === draft ? 'draft-error' : 'sr-only'} role="status">
       {checkingUndo ? 'Checking which later changes can be kept…' : undoError?.draft === draft ? undoError.message
         : hiddenUndo ? `Undid the last change to ${hiddenUndo}’s draft. The resident’s row was filtered out when you selected Undo.` : editing.announcement}
