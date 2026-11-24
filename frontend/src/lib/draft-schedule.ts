@@ -34,6 +34,7 @@ export type DraftSchedule = {
   capacity_overflows?: CapacityOverflow[]
   capacity_coverage_notes?: { code: string; source: Source }[]
   status: 'blocked' | 'infeasible' | 'unknown' | 'model_invalid' | 'feasible' | 'optimal' | 'edited'
+  finished_early?: boolean
   edit_options?: DraftEditOption[]
   edit_baseline?: unknown
   edit_warnings?: DraftChangeIssue[]
@@ -234,6 +235,20 @@ export async function startDraft(): Promise<string> {
 export async function cancelDraft(token: string): Promise<void> {
   const response = await fetch(`/api/draft/${encodeURIComponent(token)}`, { method: 'DELETE', signal: AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS) })
   if (!response.ok) throw new Error('Could not cancel draft generation. Check the connection and retry.')
+}
+
+export async function checkDraftReady(token: string, signal: AbortSignal): Promise<boolean> {
+  const response = await fetch(`/api/draft/${encodeURIComponent(token)}/status`, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS)]),
+  })
+  return response.ok && (await response.json()).ready === true
+}
+
+export async function finishDraft(token: string, signal: AbortSignal): Promise<void> {
+  const response = await fetch(`/api/draft/${encodeURIComponent(token)}/finish`, {
+    method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS)]),
+  })
+  if (!response.ok) throw new Error('Could not use the current draft. Check the connection and retry.')
 }
 
 export async function generateDraft(workbook: Workbook, store: ReviewStore, signal: AbortSignal, token?: string, maxSeconds = 120): Promise<DraftSchedule> {

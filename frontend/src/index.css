@@ -307,6 +307,10 @@
 @layer components {
   .draft-actions { @apply flex flex-wrap items-center gap-2; }
   .draft-timer, .draft-running { @apply text-xs text-muted; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .draft-stop { min-inline-size: 10rem; white-space: nowrap; border: 1px solid transparent; transition-duration: 120ms; }
+  .draft-stop.button-secondary { border-color: var(--color-hairline-strong); }
+  .draft-stop[aria-disabled="true"] { cursor: default; opacity: .5; }
+  @media (prefers-reduced-motion: reduce) { .draft-stop { transition: none; } }
   .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
   .draft-feedback, .draft-error { @apply mb-4 rounded-lg px-4 py-3; background: #fff0ee; color: #9f352e; }
   .draft-feedback ul { @apply mt-2 list-disc pl-5; }
@@ -374,8 +378,8 @@
 .draft-menu button { display: block; width: 100%; min-height: 40px; padding: .5rem .75rem; border-radius: .5rem; text-align: left; font-size: .8125rem; cursor: pointer; }
 .draft-menu button:hover { background: var(--color-surface-strong); }
 .draft-menu button:last-child { color: #9f352e; }
-.timetable-draft-status { display: flex; align-items: center; min-height: 28px; }
-.draft-edited-label { color: var(--color-muted); font-size: .75rem; }
+.timetable-draft-status { display: flex; flex-wrap: wrap; align-items: center; column-gap: .5rem; min-height: 28px; }
+.draft-edited-label, .draft-finish-note { color: var(--color-muted); font-size: .75rem; }
 .draft-edit-controls { margin: 0 1.5rem .75rem; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
 .draft-edit-controls.table-note { padding: 0; }
 .draft-edit-controls summary { width: fit-content; cursor: pointer; }
