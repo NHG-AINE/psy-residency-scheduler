@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { canGenerateDraft, cancelDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
+import { canGenerateDraft, cancelDraft, checkDraftReady, finishDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
 import type { DraftResult } from './draft-schedule'
 import type { SavedDraft } from './workbook-session'
 import { readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './history-review'
@@ -16,7 +16,12 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   const resultRef = useRef(result)
   const updateResult = useCallback((value: DraftResult) => { resultRef.current = value; setResult(value) }, [])
   const [cancelling, setCancelling] = useState(false)
-  const active = useRef<{ token: Promise<string>; controller: AbortController; cancelled: boolean; invalidated: boolean; reviewSignature: string | null } | null>(null)
+  const [ready, setReady] = useState(false)
+  const [finishing, setFinishing] = useState(false)
+  const active = useRef<{
+    token: Promise<string>; controller: AbortController; cancelled: boolean; invalidated: boolean
+    ready: boolean; finishing: boolean; reviewSignature: string | null
+  } | null>(null)
   const cancelGeneration = useCallback(async () => {
     const operation = active.current
     if (!operation || operation.cancelled) return
@@ -34,6 +39,21 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
       }
     }
   }, [])
+  async function finishGeneration() {
+    const operation = active.current
+    if (!operation?.ready || operation.finishing || operation.cancelled || operation.invalidated) return
+    operation.finishing = true
+    setFinishing(true); setError('')
+    try {
+      await finishDraft(await operation.token, operation.controller.signal)
+    } catch {
+      if (active.current === operation && !operation.cancelled && !operation.invalidated) {
+        operation.finishing = false
+        setFinishing(false)
+        setError('Could not use the current draft. Check the connection and retry.')
+      }
+    }
+  }
   const discard = useCallback((reason = '') => {
     if (active.current) {
       active.current.invalidated = true
@@ -79,31 +99,53 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   const canGenerate = canGenerateDraft(workbook, selectedYear, importing)
   async function generate() {
     if (!workbook || !canGenerate || importing || active.current) return
-    const operation = { token: startDraft(), controller: new AbortController(), cancelled: false, invalidated: false, reviewSignature: null as string | null }
+    const operation = {
+      token: startDraft(), controller: new AbortController(), cancelled: false, invalidated: false,
+      ready: false, finishing: false, reviewSignature: null as string | null,
+    }
     active.current = operation
     const start = performance.now()
     setOriginYear(workbook.target_year)
     setStartedAt(start)
     setBusy(true); updateResult({ saved: resultRef.current.saved, failure: null }); setError(''); setNotice('')
+    let statusTimeout: ReturnType<typeof setTimeout> | undefined
     try {
       const saved = readReviewStore(window.localStorage)
       if (saved.error) throw new Error(saved.error)
       operation.reviewSignature = reviewSignature(saved.store)
       const token = await operation.token
       if (operation.cancelled || operation.invalidated) return
-      const data = await generateDraft(workbook, saved.store, operation.controller.signal, token, searchSeconds)
+      const signal = operation.controller.signal
+      const request = generateDraft(workbook, saved.store, signal, token, searchSeconds)
+      async function pollStatus() {
+        const available = await checkDraftReady(token, signal).catch(() => false)
+        if (signal.aborted || active.current !== operation) return
+        if (available) {
+          operation.ready = true
+          setReady(true)
+        } else {
+          statusTimeout = setTimeout(() => void pollStatus(), 500)
+        }
+      }
+      void pollStatus()
+      const data = await request
       const elapsedSeconds = Math.floor((performance.now() - start) / 1000)
       updateResult(settleDraftAttempt(resultRef.current, { year: workbook.target_year, data, elapsedSeconds, reviewSignature: operation.reviewSignature }, operation))
     } catch (problem) {
       if (!operation.cancelled && !operation.invalidated) setError(problem instanceof Error ? problem.message : 'Draft generation failed. Retry.')
     } finally {
-      if (active.current === operation) { active.current = null; setBusy(false); setCancelling(false); setStartedAt(null) }
+      clearTimeout(statusTimeout)
+      operation.controller.abort()
+      if (active.current === operation) {
+        active.current = null
+        setBusy(false); setCancelling(false); setFinishing(false); setReady(false); setStartedAt(null)
+      }
       void operation.token.then(cancelDraft).catch(() => {})
     }
   }
   const visible = canGenerate && result.saved?.year === workbook?.target_year ? result.saved : null
   const onOriginYear = canGenerate && originYear === selectedYear
-  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
+  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, ready: ready && onOriginYear, finishing: finishing && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, finishGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
     elapsedSeconds: visible?.elapsedSeconds ?? null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>

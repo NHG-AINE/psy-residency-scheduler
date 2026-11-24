@@ -503,6 +503,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         {draft && !draftState.busy && <div className="timetable-draft-status">
           {draft.status === 'edited' ? <span className="draft-edited-label">Edited draft</span>
             : <DraftTimer draft={draft} startedAt={null} elapsedSeconds={draftState.elapsedSeconds} />}
+          {draft.finished_early && draft.status !== 'edited' && <span className="draft-finish-note">Search ended early. Showing the best draft found.</span>}
         </div>}
       </div>
       <DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`}
