@@ -88,8 +88,10 @@ The resident needs at least 3 months of credit in each core. For example,
 give 9 months of Geriatric credit. Another 3 months of Child & Adolescent
 Psychiatry complete the year. The same rule allows 9 months of Child and
 3 months of Geriatric. These 9-month totals are initiated through manual edits.
-When recognised history already credits nine months in one core, the scheduler
-can complete the remaining months in the other core.
+If June falls within an established nine-month core allocation, the resident
+finishes the current block at its recorded institution after leave or at the
+start of the next planning year. For example, six months of SKH Geriatric
+and two months of CGH Geriatric leave one month at CGH and three months of Child.
 
 Residents with 6 elective months to complete normally take one continuous
 six-month block. If an eligible request allows a three-month placement, they

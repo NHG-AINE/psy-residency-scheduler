@@ -6,15 +6,13 @@ from math import lcm
 if __package__:
     from .workbook_import import normalized_label, normalized_posting_label
     from .rules.r2_rules import partial_posting_identity
-    from .rules.r5_rules import elective_durations
-    from .requirement_ledger import R5_CORES, R5_ELECTIVE
+    from .rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations
     from .programme_requirements import additional_r5_credit
     from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
     from workbook_import import normalized_label, normalized_posting_label
     from rules.r2_rules import partial_posting_identity
-    from rules.r5_rules import elective_durations
-    from requirement_ledger import R5_CORES, R5_ELECTIVE
+    from rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations
     from programme_requirements import additional_r5_credit
     from rules.r4_rules import completed_r1_inpatient_at_imh
 
