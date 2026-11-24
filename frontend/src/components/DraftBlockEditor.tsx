@@ -5,6 +5,7 @@ import type { DraftBlock } from '../lib/use-draft-block-editing'
 import { sameSource } from '../lib/workbook'
 import type { Source } from '../lib/workbook'
 import { PostingStatus } from './TimetableGrid'
+import { draftWarningLines } from '../lib/draft-warning-copy'
 
 function positionPanel(panel: HTMLElement, anchor: HTMLElement, centered = false) {
   const { clientWidth: width, clientHeight: height } = document.documentElement
@@ -20,9 +21,11 @@ function positionPanel(panel: HTMLElement, anchor: HTMLElement, centered = false
 
 function DraftIssueMessages({ issues }: { issues: DraftChangeIssue[] }) {
   if (!issues.length) return null
-  if (issues.length === 1) return <p className={issues[0].severity}>{issues[0].message}</p>
+  const lines = draftWarningLines(issues)
+  const text = ({ title, description }: typeof lines[number]) => <>{title && <strong>{title}: </strong>}{description}</>
+  if (lines.length === 1) return <p className={lines[0].severity}>{text(lines[0])}</p>
   return <ul className="draft-issue-list">
-    {issues.map((issue, index) => <li key={`${issue.code}-${index}`} className={issue.severity}>{issue.message}</li>)}
+    {lines.map((line, index) => <li key={index} className={line.severity}>{text(line)}</li>)}
   </ul>
 }
 

@@ -448,6 +448,19 @@ test('released swaps wait, require confirmation for warnings, and show blocking 
     assert.match(confirmation, /role="dialog".*aria-describedby=.*exceed capacity.*Cancel.*Apply swap/)
     assert.match(confirmation, /Proposed arrangement\. Jul 2027, Geriatric Psychiatry\. Oct 2027, Addiction Medicine\./)
     assert.match(confirmation, /<p[^>]*>The swap would exceed capacity\.<\/p>/)
+    const ratio = (month: string, medicine: number, neurology: number) => ({ ...soft,
+      code: 'monthly_medicine_neurology_ratio',
+      message: `In ${month}, the SGH route would have ${medicine} in Medicine and ${neurology} in Neurology. The usual split is 2 to 1.` })
+    const issues = [
+      { ...soft, code: 'capacity_overflow', message: 'September to October at SGH would have 8 residents in General Medicine. The max is 6.' },
+      { ...soft, code: 'capacity_overflow', message: 'November to December at SGH would have 4 residents in Neurology. The max is 3.' },
+      ratio('September', 8, 3), ratio('October', 8, 3), ratio('December', 6, 4),
+    ]
+    const summary = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: { draft: edited, issues } }))
+    assert.equal(summary.match(/<li\b/g)?.length, 3)
+    assert.match(summary, /<strong>Capacity exceeded: <\/strong>SGH General Medicine has 8 residents in Sep and Oct \(max 6\)\./)
+    assert.match(summary, /SGH Neurology has 4 residents in Nov and Dec \(max 3\)/)
+    assert.match(summary, /<strong>R1 ratio off target: <\/strong>SGH has 8 Medicine to 3 Neurology in Sep and Oct and 6 to 4 in Dec\. The usual split is 2 to 1\./)
     const rejection = renderToStaticMarkup(createElement(DraftMoveFeedback, { ...props, checking: false, preview: blocked }))
     assert.match(rejection, /Swap blocked.*posting must come first.*Dismiss/)
     assert.match(rejection, /<ul[^>]*><li[^>]*>The swap would exceed capacity\.<\/li><li[^>]*>The posting must come first\.<\/li><\/ul>/)

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { draftWarningLines } from './draft-warning-copy'
 import { draftBaseline, prepareDraftEdit } from './draft-edit-history'
 import { draftContinuation, draftContinuationText, draftDropEdges, draftInsertion, draftSwapLayout, draftSwapOutcome, monthRanges, validateDraftChange } from './draft-schedule'
 import type { DraftChange, DraftChangeIssue, DraftChangeResult, DraftInsertionSide, DraftSchedule } from './draft-schedule'
@@ -178,7 +179,8 @@ export function useDraftBlockEditing(workbook: Workbook, store: ReviewStore, dra
     const prepared = active.current?.prepared
     if (!prepared || !applyChange(prepared.previous, prepared.next)) return false
     cancelMove(); setEditor(null); setReturning(null)
-    announce(`${block.name}’s draft updated.${prepared.issues.length ? ` ${prepared.issues.map((issue) => issue.message).join(' ')}` : ''}`)
+    const warnings = draftWarningLines(prepared.issues).map(({ title, description }) => title ? `${title}: ${description}` : description)
+    announce([`${block.name}’s draft updated.`, ...warnings].join(' '))
     requestAnimationFrame(() => focusBlock(block))
     return true
   }
