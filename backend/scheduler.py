@@ -1,6 +1,7 @@
 """Shared draft model and optimisation for R1-R5."""
 from collections import Counter, defaultdict
 from copy import deepcopy
+from dataclasses import dataclass, field
 from math import isfinite, gcd, floor
 from time import perf_counter as monotonic
 from threading import Event, Thread
@@ -192,16 +193,31 @@ class DraftCancelled(Exception):
     pass
 
 
-def _solve_model(solver, model, callback, cancel):
-    """Use the same cancellation handling for feasibility and preference search."""
+@dataclass
+class DraftSearch:
+    ready: Event = field(default_factory=Event)
+    finish: Event = field(default_factory=Event)
+    finished_early: bool = False
+
+    def observe_finish(self):
+        if self.finish.is_set():
+            self.finished_early = True
+            return True
+        return False
+
+
+def _solve_model(solver, model, callback, cancel, search=None):
+    """Stop the active solver while preserving any result on graceful finish."""
     if cancel and cancel.is_set():
         raise DraftCancelled()
+    if search and search.observe_finish():
+        return cp_model.UNKNOWN
     finished = Event()
-    def stop_when_cancelled():
+    def watch_for_stop():
         while not finished.wait(CANCEL_POLL_SECONDS):
-            if cancel.is_set():
+            if (cancel and cancel.is_set()) or (search and search.observe_finish()):
                 solver.stop_search()
-    monitor = Thread(target=stop_when_cancelled, daemon=True) if cancel else None
+    monitor = Thread(target=watch_for_stop, daemon=True) if cancel or search else None
     if monitor:
         monitor.start()
     try:
@@ -215,7 +231,7 @@ def _solve_model(solver, model, callback, cancel):
     return status
 
 
-def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None, initial_feasibility=False, score_values=None):
+def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1_ratio_data=None, posting_balance_data=None, posting_block_data=None, initial_feasibility=False, score_values=None, *, search=None):
     """Find a fallback, then lock only proven preference scores within one budget."""
     started = monotonic()
     deadline = started + max_seconds
@@ -224,8 +240,13 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
     status = cp_model.UNKNOWN
     completed = 0
     variables = list({variable.index: variable for variable in variables}.values())
-    if cancel and cancel.is_set():
-        raise DraftCancelled()
+    def stopping():
+        if cancel and cancel.is_set():
+            raise DraftCancelled()
+        return search and search.observe_finish()
+
+    if stopping():
+        return None, "unknown", stages, monotonic() - started
     if initial_feasibility and deadline > monotonic():
         stage_started = monotonic()
         model.clear_objective()
@@ -235,26 +256,27 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
         solver.parameters.stop_after_first_solution = True
         callback = _BestScoreTime()
-        feasibility_status = _solve_model(solver, model, callback, cancel)
+        feasibility_status = _solve_model(solver, model, callback, cancel, search)
         valid = feasibility_status in {cp_model.OPTIMAL, cp_model.FEASIBLE}
         stages.append({"priority": "initial_feasibility",
                        "status": "feasible" if valid else solver.status_name(feasibility_status).lower()})
         if valid:
             best = solver
             best_scores = score_values(solver) if score_values else tuple(solver.value(objective) for _, objective in objectives)
+            if search:
+                search.ready.set()
             model.clear_hints()
             for variable in variables:
                 model.add_hint(variable, solver.value(variable))
             if callback.best_time is not None:
                 stages[-1]["first_solution_time_seconds"] = callback.best_time
         stages[-1]["wall_time_seconds"] = monotonic() - stage_started
-        if cancel and cancel.is_set():
-            raise DraftCancelled()
         if not valid:
+            stopping()
             return None, solver.status_name(feasibility_status).lower(), stages, monotonic() - started
     for objective_index, (name, objective) in enumerate(objectives):
-        if cancel and cancel.is_set():
-            raise DraftCancelled()
+        if stopping():
+            break
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
@@ -262,8 +284,8 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         if callable(objective):
             objective = objective()
             objectives[objective_index] = (name, objective)
-            if cancel and cancel.is_set():
-                raise DraftCancelled()
+            if stopping():
+                break
             remaining = deadline - monotonic()
             if remaining <= 0:
                 stages.append({"priority": name, "status": "unknown", "wall_time_seconds": monotonic() - stage_started})
@@ -277,7 +299,9 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
                 *r1_ratio_data, stages[-1]["score"])
             bound_budget = max(0, min(deadline, bound_started + R1_RATIO_BOUND_SECONDS) - monotonic())
             bound_solver, bound_status, bound_stages, _ = _solve_priorities(
-                small_model, [("ratio_bound", small_objective)], small_variables, bound_budget, cancel)
+                small_model, [("ratio_bound", small_objective)], small_variables, bound_budget, cancel, search=search)
+            if stopping():
+                break
             bound = floor(bound_stages[-1]["best_objective_bound"]) if bound_solver is not None else None
             if bound is not None:
                 model.add(objective >= bound)
@@ -291,7 +315,9 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
             small_model, small_objective, small_variables = _posting_balance_relaxation(*posting_balance_data)
             bound_budget = max(0, min(deadline, bound_started + POSTING_BALANCE_BOUND_SECONDS) - monotonic())
             bound_solver, bound_status, bound_stages, _ = _solve_priorities(
-                small_model, [("posting_bound", small_objective)], small_variables, bound_budget, cancel)
+                small_model, [("posting_bound", small_objective)], small_variables, bound_budget, cancel, search=search)
+            if stopping():
+                break
             bound = floor(bound_stages[-1]["best_objective_bound"]) if bound_solver is not None else None
             count_bound = bound
             block_bound = None
@@ -306,7 +332,9 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
                     posting_block_data, year_totals, max(0, bound - remainder_bound), request_score)
                 bound_budget = max(0, min(deadline, bound_started + POSTING_BALANCE_BOUND_SECONDS) - monotonic())
                 bound_solver, bound_status, bound_stages, _ = _solve_priorities(
-                    small_model, [("posting_block_bound", small_objective)], small_variables, bound_budget, cancel)
+                    small_model, [("posting_block_bound", small_objective)], small_variables, bound_budget, cancel, search=search)
+                if stopping():
+                    break
                 if bound_solver is not None:
                     block_bound = floor(bound_stages[-1]["best_objective_bound"])
                     bound = max(bound, block_bound)
@@ -324,7 +352,7 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         solver.parameters.num_search_workers = SOLVER_WORKERS
         solver.parameters.random_seed = SOLVER_RANDOM_SEED
         callback = _BestScoreTime()
-        status = _solve_model(solver, model, callback, cancel)
+        status = _solve_model(solver, model, callback, cancel, search)
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
         if relaxation is not None:
@@ -350,6 +378,8 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
             model.add_hint(variable, best.value(variable))
         completed += 1
     complete = completed == len(objectives) and status == cp_model.OPTIMAL
+    if complete and initial_feasibility and search:
+        search.finished_early = False
     final_status = "optimal" if complete else "feasible" if best is not None else cp_model.CpSolver().status_name(status).lower()
     return best, final_status, stages, monotonic() - started
 
@@ -520,7 +550,7 @@ def _fix_carryforward(model, planned, future):
         model.add(sum(linked[key]) == count)
 
 
-def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, prepared=None):
+def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, cancel=None, *, fixed=None, prepared=None, search=None):
     """Schedule remaining R1 through R5 work in progression order.
 
     All years share capacity,
@@ -982,7 +1012,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
                                   {} if shared_r5 or variable_r5_totals else weights) if weights else None,
             # Split electives and combined cores need route-aware projections.
             posting_block_data=None if shared_r5 or flexible_r5_blocks else (selected, candidates, (blocks, r3_blocks, r4_blocks, r5_blocks), request_outcomes),
-            initial_feasibility=True, score_values=score_values)
+            initial_feasibility=True, score_values=score_values, search=search)
     result.update(status=status, wall_time_seconds=elapsed, optimisation_stages=stages,
                   soft_targets={"active_incoming_cohort_size": sum(active_intake), "routes": r1_rules._targets(sum(active_intake)),
                                 "inpatient_residents": inpatient_size, "inpatient": inpatient_targets,
@@ -992,6 +1022,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
             blockers.append({"code": "r4_schedule_infeasible"})
             blockers.extend(cluster_review)
         return result
+    if search and search.finished_early:
+        result["finished_early"] = True
     if historical_cluster_warnings:
         result["historical_cluster_warnings"] = historical_cluster_warnings
     diagnostics = scored[solver]

@@ -9,7 +9,7 @@ from ortools.sat.python import cp_model
 from history_review import ReviewStore
 from programme_requirements import PROGRAMME_REQUIREMENTS
 from tests.catalogue_fixtures import INSTITUTIONS
-from scheduler import draft_schedule, _allocation_targets, _solve_priorities, _capacity_overflow_lower_bound
+from scheduler import DraftSearch, draft_schedule, _allocation_targets, _solve_priorities, _capacity_overflow_lower_bound
 from rules.r1_rules import add_preferences, prepare_candidates
 from scheduler_inputs import prepare_scheduler_inputs
 from cluster_coverage import CLUSTERS
@@ -565,6 +565,76 @@ class R1SolverTests(unittest.TestCase):
                 if proven:
                     self.assertEqual(stages[1]["score"], solver.value(x))  # Retained fallback satisfies the proof lock.
                     self.assertEqual(list(model.proto.solution_hint.values), list(expected))
+
+    def test_finish_compares_active_full_candidate_with_the_saved_fallback(self):
+        from threading import Event
+        real_solve = cp_model.CpSolver.solve
+        for fallback, candidate in ((0, 1), (1, 0)):
+            with self.subTest(fallback=fallback, candidate=candidate):
+                model = cp_model.CpModel()
+                choice = model.new_bool_var("choice")
+                search = DraftSearch()
+                stopped = Event()
+
+                def solve(solver, current, callback):
+                    fixed = current.clone()
+                    fixed.add(choice == (candidate if search.ready.is_set() else fallback))
+                    outcome = real_solve(solver, fixed, callback)
+                    if search.ready.is_set():
+                        search.finish.set()
+                        self.assertTrue(stopped.wait(5))
+                        return cp_model.FEASIBLE
+                    return outcome
+
+                with patch.object(cp_model.CpSolver, "solve", new=solve), patch.object(
+                        cp_model.CpSolver, "stop_search", new=lambda solver: stopped.set()):
+                    solver, status, stages, _ = _solve_priorities(
+                        model, [("first", choice), ("later", 1 - choice)], [choice], 3,
+                        initial_feasibility=True, search=search)
+                self.assertEqual(status, "feasible")
+                self.assertTrue(search.finished_early)
+                self.assertEqual(solver.value(choice), 0)
+                self.assertEqual([stage["priority"] for stage in stages], ["initial_feasibility", "first"])
+
+    def test_finish_stops_active_bound_search_and_keeps_the_full_timetable(self):
+        from threading import Event, Thread
+        full, relaxation = cp_model.CpModel(), cp_model.CpModel()
+        choice = full.new_bool_var("choice")
+        bound = relaxation.new_bool_var("bound")
+        real_solve = cp_model.CpSolver.solve
+        search = DraftSearch()
+        entered, stopped = Event(), Event()
+        solves, results = [], []
+
+        def solve(solver, model, callback):
+            solves.append(model)
+            if model is relaxation:
+                entered.set()
+                if not stopped.wait(5):
+                    raise AssertionError("The finish request did not stop the bound search.")
+                return cp_model.UNKNOWN
+            return real_solve(solver, model, callback)
+
+        def run():
+            results.append(_solve_priorities(full, [("posting_balance", choice)], [choice], 30,
+                posting_balance_data=([], [], {}), initial_feasibility=True, search=search))
+
+        with patch.object(cp_model.CpSolver, "solve", new=solve), patch.object(
+                cp_model.CpSolver, "stop_search", new=lambda solver: stopped.set()), patch(
+                "scheduler._posting_balance_relaxation", return_value=(relaxation, bound, [bound])):
+            worker = Thread(target=run)
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            self.assertTrue(search.ready.is_set())
+            search.finish.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        solver, status, stages, _ = results[0]
+        self.assertEqual(solves, [full, relaxation])
+        self.assertEqual(status, "feasible")
+        self.assertTrue(search.finished_early)
+        self.assertIn(solver.value(choice), (0, 1))
+        self.assertEqual([stage["priority"] for stage in stages], ["initial_feasibility"])
 
     def test_bound_submodels_do_not_repeat_initial_feasibility(self):
         model, bound_model = cp_model.CpModel(), cp_model.CpModel()
