@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { exportDraft, downloadDraft } from './lib/draft-export'
+import { exportCurrentWorkbook, downloadWorkbook, prepareNextWorkbook } from './lib/draft-export'
 import { draftBaseline, draftBlockUndoTargets, draftUndoPreview, undoDraftBlock, undoDraftEdit } from './lib/draft-edit-history'
 import { restoreSession, saveSession } from './lib/workbook-session'
 import type { SavedDraft } from './lib/workbook-session'
@@ -17,6 +17,7 @@ import DraftBlockEditor, { DraftBlockFlagIcon, DraftBlockReasons, DraftMoveFeedb
 import Skeleton from './components/Skeleton'
 import DraftTimer from './components/DraftTimer'
 import DraftActions from './components/DraftActions'
+import type { ExcelExport } from './components/ExportMenu'
 import MonthlyBreakdown from './components/MonthlyBreakdown'
 import ScrollToTop from './components/ScrollToTop'
 import { revealTimetableCells, scrollToPosition } from './lib/scroll'
@@ -234,9 +235,9 @@ function readTimetableReviews(raw: ReturnType<typeof reviewSnapshot>) {
 
 function Timetable({ residents, workbook, year, years, onYearChange, draftState, breakdownHost, onReady, importLoading, exporting, filters, onExport, onDiscard, onFind, exportError, focusSource, labels, onLabels }: {
   residents: Resident[]; workbook: Workbook; year: number; years: number[]; onYearChange: (year: number) => void
-  importLoading: boolean; exporting: boolean; draftState: DraftState; breakdownHost: HTMLDivElement | null
+  importLoading: boolean; exporting: ExcelExport | null; draftState: DraftState; breakdownHost: HTMLDivElement | null
   onReady: (target: HTMLElement, workbook: Workbook, labelsReady: boolean) => (() => void) | undefined
-  filters: ReactNode; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
+  filters: ReactNode; onExport: (kind: ExcelExport) => void; onDiscard: () => void; onFind: (source: Source) => void
   exportError: string | undefined; focusSource: Source | null
   labels: TimetableLabels | undefined; onLabels: (workbook: Workbook, labels: TimetableLabels) => void
 }) {
@@ -507,7 +508,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         </div>}
       </div>
       <DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`}
-        exporting={exporting} checkingUndo={checkingUndo} onUndo={undoLastChange} onExport={onExport} onDiscard={onDiscard} onFind={onFind} />
+        exporting={exporting} checkingUndo={checkingUndo} loading={importLoading} onUndo={undoLastChange} onExport={onExport} onDiscard={onDiscard} onFind={onFind} />
     </div>
     {filters}
     {draft && !hasEditOptions && <p className="table-note draft-regenerate-note">Regenerate this draft to edit its posting blocks.</p>}
@@ -663,8 +664,8 @@ export default function App() {
   const [year, setYear] = useState<number>()
   const [busy, setBusy] = useState(false)
   const [restoring, setRestoring] = useState(true)
-  const [exporting, setExporting] = useState(false)
-  const [exportError, setExportError] = useState<{ file: File; draft: DraftSchedule; message: string } | null>(null)
+  const [exporting, setExporting] = useState<ExcelExport | null>(null)
+  const [exportError, setExportError] = useState<{ file: File; draft: DraftSchedule | null; message: string } | null>(null)
   const [storageError, setStorageError] = useState('')
   const currentSession = useRef<{ file: File; workbook: Workbook } | null>(null)
   const workbookYears = useRef(new Map<number, Workbook>())
@@ -725,27 +726,33 @@ export default function App() {
     if (!restoring && currentSession.current) persistCurrent()
   }, [file, workbook, draftMemory.savedResult, restoring, persistCurrent])
   const hasDraft = isUsableDraft(draftState.draft)
-  const exportSnapshot = useRef({ file, draft: draftState.draft })
-  useLayoutEffect(() => { exportSnapshot.current = { file, draft: draftState.draft } }, [file, draftState.draft])
   const exportController = useRef<AbortController | null>(null)
-  useEffect(() => () => { exportController.current?.abort(); exportSnapshot.current = { file: null, draft: null } }, [])
-  async function downloadExcel() {
-    const draft = getSavedResult()?.data
-    if (!file || !workbook || !hasDraft || !draft || !draftState.canGenerate || draftState.pending || exporting) return
+  useEffect(() => () => { exportController.current?.abort() }, [])
+  async function downloadExcel(kind: ExcelExport) {
+    if (!file || !workbook || busy || draftState.pending || exportController.current) return
+    const latest = Math.max(...workbook.available_years.map(({ year }) => year))
+    const saved = getSavedResult()
+    const draft = saved?.year === latest && isUsableDraft(saved.data) ? saved.data : null
     const originalFile = file
-    const targetYear = workbook.target_year
     const controller = new AbortController()
     exportController.current = controller
-    setExporting(true); setExportError(null)
+    setExporting(kind); setExportError(null)
+    const current = () => !controller.signal.aborted && currentSession.current?.file === originalFile && getSavedResult() === saved
     try {
-      const { blob } = await exportDraft(originalFile, targetYear, draft, controller.signal)
-      if (exportSnapshot.current.file === originalFile && exportSnapshot.current.draft === draft) {
-        downloadDraft(blob, originalFile.name, targetYear)
+      if (kind === 'current') {
+        const { blob } = await exportCurrentWorkbook(originalFile, latest, draft, controller.signal)
+        if (current()) downloadWorkbook(blob, originalFile.name, draft ? latest : undefined)
+      } else {
+        const reviews = readReviewStore(window.localStorage)
+        if (reviews.error) throw new Error(reviews.error)
+        const year = latest + 1
+        const blob = await prepareNextWorkbook(originalFile, year, reviews.store, draft, controller.signal)
+        if (current()) downloadWorkbook(blob, originalFile.name, year, 'Prepared')
       }
     } catch (problem) {
-      if (exportSnapshot.current.file === originalFile && exportSnapshot.current.draft === draft) setExportError({ file: originalFile, draft, message: problem instanceof Error ? problem.message : 'Excel export failed. Retry.' })
+      if (current()) setExportError({ file: originalFile, draft, message: problem instanceof Error ? problem.message : 'Excel export failed. Retry.' })
     } finally {
-      if (exportController.current === controller) { exportController.current = null; setExporting(false) }
+      if (exportController.current === controller) { exportController.current = null; setExporting(null) }
     }
   }
   const [requestSelection, setRequestSelection] = useState<{ draft: DraftSchedule; status: RequestStatus | null } | null>(null)
@@ -903,8 +910,8 @@ export default function App() {
         {workbook && view === 'Timetable' ? <Timetable residents={timetableResidents} workbook={workbook} year={year ?? workbook.target_year} years={years}
           onYearChange={selectYear} draftState={draftState} breakdownHost={breakdownHost} onReady={revealTimetable} importLoading={busy || restoring} exporting={exporting}
           labels={selectedLabels} onLabels={saveLabels}
-          focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === draftState.draft ? exportError.message : undefined}
-          onExport={() => void downloadExcel()} onDiscard={discardSavedDraft} onFind={findInTimetable}
+          focusSource={focusSource} exportError={exportError && exportError.file === file && exportError.draft === (draftState.savedResult?.data ?? null) ? exportError.message : undefined}
+          onExport={(kind) => void downloadExcel(kind)} onDiscard={discardSavedDraft} onFind={findInTimetable}
           filters={<div className="search-toolbar timetable-filters">
             <SearchField id="resident-search" label="Search residents" placeholder="Name or MCR" value={query} disabled={busy} onChange={setQuery} />
             <RequestOutcomeFilter draft={draftState.draft} selected={requestFilter} onChange={selectRequestFilter} disabled={busy} />

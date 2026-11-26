@@ -377,7 +377,17 @@
 .draft-menu { position: fixed; inset: auto; width: 11rem; margin: 0; padding: .375rem; border: 1px solid var(--color-hairline); border-radius: .75rem; background: var(--color-surface); box-shadow: 0 8px 24px #29252426; }
 .draft-menu button { display: block; width: 100%; min-height: 40px; padding: .5rem .75rem; border-radius: .5rem; text-align: left; font-size: .8125rem; cursor: pointer; }
 .draft-menu button:hover { background: var(--color-surface-strong); }
-.draft-menu button:last-child { color: #9f352e; }
+.draft-menu:not(.export-menu) button:last-child { color: #9f352e; }
+.export-trigger { gap: .375rem; }
+.export-trigger svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.export-trigger[aria-disabled="true"], .export-menu button:disabled { cursor: default; opacity: .65; }
+.export-menu { width: min(19rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow-y: auto; }
+.export-menu:popover-open { animation: export-menu-in 130ms ease-out; }
+.export-menu small { display: block; margin-top: .15rem; color: var(--color-muted); font-size: .75rem; }
+.export-menu button:disabled:hover { background: transparent; }
+.export-menu button:focus-visible { outline-offset: -2px; }
+@keyframes export-menu-in { from { opacity: 0; transform: scale(.985); } }
+@media (prefers-reduced-motion: reduce) { .export-menu:popover-open { animation: none; } }
 .timetable-draft-status { display: flex; flex-wrap: wrap; align-items: center; column-gap: .5rem; min-height: 28px; }
 .draft-edited-label, .draft-finish-note { color: var(--color-muted); font-size: .75rem; }
 .draft-regenerate-note { margin: 0 1.5rem .75rem; padding: 0; line-height: 1.5; }
