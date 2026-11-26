@@ -12,9 +12,11 @@ If a resident starts in July and needs four uninterrupted three-month blocks, th
 possible starts are July, October, January and April. The solver can skip August
 because no preceding block could finish after just one month.
 
-These dates come from the resident’s remaining training. A partially completed
-block resumes first, and LOA pauses the count of training months. R2–R5 use this
-calculation. R1 uses its own Medicine, Neurology and Inpatient Psychiatry routes.
+These dates come from the resident’s remaining training. Started blocks resume
+before new blocks in the same training year. When several have started, the
+possible starts account for the lengths of their remainders. LOA pauses the
+count of training months. R2–R5 use this calculation. R1 uses its own Medicine,
+Neurology and Inpatient Psychiatry routes.
 
 See `add_blocks` in [r2_rules.py](../backend/rules/r2_rules.py).
 

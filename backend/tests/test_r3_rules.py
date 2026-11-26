@@ -68,17 +68,44 @@ class R3Tests(unittest.TestCase):
         for person in result["residents"]:
             self.assertEqual(len({m["label"] for m in person["months"]}), 1)
 
-    def test_disconnected_partial_history_is_blocked(self):
-        book = r3_book()
-        past = book["annual_sheets"][-1]["residents"][0]
-        for m in past["postings"]:
-            m["month"] = str(int(m["month"][:4]) - 1) + m["month"][4:]
-        for m in book["annual_sheets"][0]["residents"][0]["postings"]:
-            m["month"] = str(int(m["month"][:4]) - 1) + m["month"][4:]
-        book["annual_sheets"].append({"residents": [resident([("2027-04", "TTSH Continuity Clinic"), ("2027-06", "TTSH Continuity Clinic")], "R3", "Clinic")]})
-        result = draft_schedule(book, STORE)
-        self.assertEqual(result["status"], "blocked")
-        self.assertIn("conflicting_partial_r3_history", [b["code"] for b in result["blockers"]])
+    def test_clinic_credit_across_leave_gap_and_other_posting(self):
+        from requirement_ledger import build_requirement_ledger
+        from tests.rollover_fixtures import following_year
+        from tests.test_r5_rules import r5_book
+
+        book = r5_book()
+        del book["annual_sheets"][-2:]
+        book["residents"][0]["residency_year"] = "R4"
+        clinic = "IMH Continuity Clinic"
+        book["annual_sheets"].append({"residents": [resident(
+            [(f"2025-{m:02d}", clinic) for m in range(7, 11)] + [("2025-11", "LOA"), ("2025-12", "LOA")]
+            + [(f"2026-{m:02d}", clinic) for m in range(1, 7)], "R3", "Earlier clinic")]})
+        book["annual_sheets"].append({"residents": [resident(
+            [(f"2026-{m:02d}", "IMH Forensic Psychiatry") for m in (7, 8, 9)],
+            "R4", "Other rotations")]})
+        for remaining, site in ((2, None), (0, clinic), (2, "TTSH Continuity Clinic")):
+            with self.subTest(site=site):
+                current = deepcopy(book)
+                if site:
+                    current["annual_sheets"].append({"residents": [resident(
+                        [("2027-05", site), ("2027-06", site)], "R3", "Later clinic")]})
+                ledger, = build_requirement_ledger(current, STORE)["residents"]
+                progress = next(r for r in ledger["requirements"] if r["requirement_year"] == "R3")
+                self.assertEqual(progress["remaining_months"], remaining)
+                result = draft_schedule(current, STORE, max_seconds=5)
+                if site and site != clinic:
+                    self.assertEqual(result["status"], "blocked")
+                    self.assertIn("conflicting_partial_r3_history", [b["code"] for b in result["blockers"]])
+                else:
+                    self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                    months = result["residents"][0]["months"]
+                    assigned = [m for m in months if m["target"] and m["target"]["residency_year"] == "R3"]
+                    self.assertEqual([m["label"] for m in assigned], [clinic] * remaining)
+                    if assigned:
+                        following = following_year(current, assigned, "R3")
+                        next_ledger, = build_requirement_ledger(following, STORE)["residents"]
+                        self.assertEqual(next(r["remaining_months"] for r in next_ledger["requirements"]
+                                              if r["requirement_year"] == "R3"), 0)
 
     def test_completed_clinic_is_not_repeated_for_mixed_r3_r4(self):
         book = r3_book()

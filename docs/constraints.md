@@ -15,17 +15,19 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   requirements carry forward, even across academic years. July does not
   automatically advance a resident's R-year.
 - **Keep each continuous block at the same posting and institution.** LOA
-  pauses the block. When recognised history shows a partially completed block,
-  schedule the remaining months at the original posting and institution. Flag
-  unclear or conflicting history for review.
+  pauses the block. Recognised training months in R2–R5 remain credited across
+  academic years, leave, gaps and other rotations. Resume each identifiable
+  unfinished block at its original posting and institution before starting
+  new blocks in that training year. Leave and gaps earn no credit.
 
-  For R3 Continuity Clinic, a later posting or gap does not erase credit already
-  earned. Resume the remaining months at the same clinic and institution. If the
-  history shows multiple disconnected clinic runs, flag them for review before
-  adding their months together.
+  Combine R3 Continuity Clinic months from the same clinic and institution.
+  A resident with 4 months at one clinic, then LOA, then 6 months at that clinic
+  has 2 months left there, even if they have since done other rotations.
 
   Separate completed blocks, including remediation, may take place at different
-  institutions. Follow the duration, timing and permitted splits for each posting.
+  institutions. Flag conflicting evidence when partial postings at different
+  sites cannot be assigned to valid blocks. Follow the duration, timing and
+  permitted splits for each posting.
 
 - **Complete 12 months of R5 training.** The default route is 3 months of Child
   & Adolescent Psychiatry, 3 months of Geriatric Psychiatry and 6 months of

@@ -1,5 +1,5 @@
 """Expected programme progress from workbook evidence; never certified training credit."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date
 
 if __package__:
@@ -199,6 +199,7 @@ def _allocation(entry, workbook):
 
 def _summaries(months, resume_month=None):
     counts = defaultdict(int)
+    site_counts = defaultdict(Counter)
     groups = []
     active = None
     previous = None
@@ -214,6 +215,8 @@ def _summaries(months, resume_month=None):
             continue
         key = month["requirement_id"]
         counts[key] += 1
+        if key.startswith(("r2.", "r3.")):
+            site_counts[key][month["posting"], month["institution"]] += 1
         if key != "r3.continuity_clinic":
             active = None
             continue
@@ -238,8 +241,10 @@ def _summaries(months, resume_month=None):
             key = rule["id"]
             count = r5_counts[key] if year == "R5" else counts[key]
             required = targets.get(key, rule["months"])
-            if year == "R3":
-                count = max((group["expected_months"] for group in groups), default=0)
+            if year in {"R2", "R3"}:
+                same_site = max(site_counts[key].values(), default=0)
+                if year == "R3" or same_site < required:
+                    count = same_site
             item = {"requirement_id": rule["id"], "requirement_year": year, "posting": posting,
                     "required_months": required, "expected_months": count,
                     "remaining_months": max(0, required - count),

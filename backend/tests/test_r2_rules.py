@@ -110,6 +110,24 @@ class R2SolverTests(unittest.TestCase):
         self.assertEqual(result["months"][1]["status"], "loa")
         self.assertEqual(result["carryforward"], [])
 
+    def test_two_partial_requirements_resume_at_their_sites(self):
+        from requirement_ledger import build_requirement_ledger
+        from tests.rollover_fixtures import following_year
+
+        book = r2_book()
+        elective = "IMH ANDS (Elective)"
+        geriatric = "CGH Geriatric Psychiatry"
+        book["annual_sheets"].append({"residents": [resident(
+            [("2027-03", elective), ("2027-04", geriatric), ("2027-06", elective)], "R2", "Partial")]})
+        for month in book["residents"][0]["postings"][9:]:
+            month.update(status="loa", value="LOA")
+        generated = self.solve(book)["residents"][0]["months"]
+        self.assertEqual(Counter(m["label"] for m in generated[:3]), {"IMH ANDS": 1, geriatric: 2})
+        self.assertEqual(sum(m["target"] is not None for m in generated), 9)
+        following = following_year(book, generated, "R2")
+        ledger, = build_requirement_ledger(following, STORE)["residents"]
+        self.assertEqual({r["remaining_months"] for r in ledger["requirements"] if r["requirement_year"] == "R2"}, {0})
+
     def test_elective_capacity_is_per_catalogue_entry_not_institution_or_core(self):
         book = r2_book(4)
         for elective in book["postings"]["electives"]:
@@ -141,7 +159,9 @@ class R2SolverTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 book = r2_book()
                 if kind == "partial":
-                    book["annual_sheets"].insert(1,{"residents":[resident([("2027-05","IMH ANDS (Elective)"),("2027-06","IMH Addiction Medicine (Elective)")],"R2","Partial")]})
+                    book["annual_sheets"].insert(1,{"residents":[resident(
+                        [("2027-04","IMH ANDS (Elective)"),("2027-05","IMH Addiction Medicine (Elective)"),
+                         ("2027-06","IMH ANDS (Elective)")],"R2","Partial")]})
                     code="conflicting_partial_r2_history"
                 elif kind == "remarks":
                     book["postings"]["electives"][0]["remarks"]=[{"text":"Must start in July"}]

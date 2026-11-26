@@ -34,8 +34,6 @@ def prepare_blocks(person, options, blockers):
         if not eligible:
             blockers.append({"code": "missing_r2_catalogue_option", "source": person["source"], "requirement_id": key})
         blocks.append((requirement, eligible, partial is not None))
-    if sum(partial for _, _, partial in blocks) > 1:
-        blockers.append({"code": "conflicting_partial_r2_history", "source": person["source"]})
     return blocks
 
 
@@ -53,15 +51,12 @@ def add_blocks(model, person, blocks, r1_months, resident_index, enabled=None):
     for requirement, options, partial in blocks:
         length = requirement["remaining_months"]
         choices = []
-        if partial:
-            starts = {r1_months}
-        else:
-            # Only whole remaining blocks can precede this one. A partial block
-            # must resume first; LOA is handled by the active-month mapping below.
-            starts = {r1_months + partial_months}
-            for other, _, other_partial in blocks:
-                if not other_partial and other.get("block_id", other["requirement_id"]) != requirement.get("block_id", requirement["requirement_id"]):
-                    starts |= {start + other["remaining_months"] for start in starts}
+        # Resume started blocks before new ones. A block's candidate starts
+        # follow any subset of the other remainders in its group.
+        starts = {r1_months if partial else r1_months + partial_months}
+        for other, _, other_partial in blocks:
+            if other_partial == partial and other.get("block_id", other["requirement_id"]) != requirement.get("block_id", requirement["requirement_id"]):
+                starts |= {start + other["remaining_months"] for start in starts}
         for start in sorted(starts):
             for option in options:
                 variable = model.new_bool_var(f"{requirement['requirement_id']}_{resident_index}_{len(placements)}")
