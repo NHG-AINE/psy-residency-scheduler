@@ -1,6 +1,6 @@
 import json
 import unittest
-from copy import deepcopy
+from copy import copy, deepcopy
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -36,7 +36,7 @@ def fixture():
     months[4]['status'] = 'requirements_completed'
     draft = {'status': 'feasible', 'cutoff': '2027-06', 'residents': [
         {'source': person['source'], 'name': person['name'], 'mcr': person['mcr'], 'projected_year': 'R4,R5', 'months': months,
-         'requests': [{'request': {'posting_request': 'Requested posting', 'period': 'Oct-Dec'}, 'status': 'not_met',
+         'requests': [{'request': {'posting_request': 'Requested posting', 'period': 'October 2027'}, 'status': 'not_met',
                        'reason': 'Outstanding training', 'assigned': [{'label': option['label'], 'months': ['2027-10']}]}]}]}
     return content, draft
 
@@ -134,7 +134,7 @@ class ExportTests(unittest.TestCase):
         self.assertIn('requirements completed', s['D3'].comment.text)
         self.assertIn('Keep this note', s['D3'].comment.text)
         self.assertIn('Requested posting', s['D3'].comment.text)
-        self.assertIn('Oct-Dec', s['D3'].comment.text)
+        self.assertIn('Oct 2027', s['D3'].comment.text)
         self.assertIn('Assigned:', s['D3'].comment.text)
         self.assertEqual(s['D3'].font.color.rgb, 'FFFF0000')
         self.assertTrue(s['D3'].font.bold)
@@ -142,7 +142,8 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(s['D3'].font.name, 'Arial')
         with ZipFile(BytesIO(content)) as before, ZipFile(BytesIO(output)) as after:
             differences = [n for n in before.namelist() if before.read(n) != after.read(n)]
-            self.assertEqual(set(differences), {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml'})
+            self.assertEqual(set(differences), {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml',
+                                                'xl/drawings/commentsDrawing1.vml'})
         imported = parse_workbook(output)
         self.assertEqual(imported['residents'][0]['postings'][3]['status'], 'posting')
         self.assertEqual(imported['residents'][0]['postings'][0]['value'], 'LOA')
@@ -198,6 +199,77 @@ class ExportTests(unittest.TestCase):
         self.assertIn('Assigned: First posting (Dec 2027–Jan 2028, Mar 2028); Second posting (Apr 2028)', note)
         self.assertIn('Draft projection: requirements completed; unallocated months remain blank '
                       '(Nov 2027–Jan 2028, Mar 2028).', note)
+
+    def test_dated_miss_shades_only_requested_cells_and_appends_first_cell_note(self):
+        content, draft = fixture()
+        book = load_workbook(BytesIO(content))
+        sheet = book['Jul 2027 - Jun 2028']
+        sheet['M3'] = '=1+1'
+        sheet['M3'].font = Font(color='FF123456', italic=True)
+        sheet['M3'].comment = Comment('Keep January note', 'Planner')
+        stream = BytesIO()
+        book.save(stream)
+        person = draft['residents'][0]
+        request = {'status': 'not_met', 'request': {'posting_request': 'IMH EPIP', 'period': 'Jan - Jun 2028'}}
+        person['requests'] = [request, {**request, 'duplicate_of': 0},
+                              {**request, 'status': 'pending', 'request': {'posting_request': 'Pending', 'period': 'Jul - Sep 2027'}},
+                              {**request, 'alternatives': [{**request, 'status': 'met'}]}]
+        output, _ = export_workbook(stream.getvalue(), 2027, draft)
+        exported = load_workbook(BytesIO(output))[sheet.title]
+        for cell in exported['G3:L3'][0]:
+            self.assertNotEqual(cell.fill.fgColor.rgb, 'FFFBE1DF')
+        for cell in exported['M3:R3'][0]:
+            self.assertEqual((cell.fill.patternType, cell.fill.fgColor.rgb), ('solid', 'FFFBE1DF'))
+        self.assertEqual(exported['M3'].value, '=1+1')
+        self.assertEqual(exported['M3'].font, copy(sheet['M3'].font))
+        self.assertEqual(exported['M3'].comment.text, 'Keep January note\n\nRequested IMH EPIP for Jan–Jun 2028. No matching assignment.')
+        self.assertTrue(all(cell.comment is None for cell in exported['N3:R3'][0]))
+        self.assertEqual(exported['D3'].font.color.rgb, 'FFFF0000')
+
+    def test_any_time_request_highlights_the_year_for_wrong_site_different_posting_or_no_assignment(self):
+        def edit(book):
+            sheet = book['Jul 2027 - Jun 2028']
+            sheet.unmerge_cells('H3:I3')
+            sheet['G3'] = None
+            book['Postings'].append(['R3', 'Core', 'NUH', 'Continuity Clinic', 12, 12, 'Continuity Clinic'])
+        content = structured_workbook_bytes(edit)
+        workbook = parse_workbook(content)
+        catalogue = posting_catalogue(workbook['postings'])
+        clinic = next(o for o in catalogue if o['label'] == 'NUH Continuity Clinic')
+        for assigned, period in [(clinic, None), (catalogue[0], None), (None, None), (None, 'After exams')]:
+            with self.subTest(assignment=assigned and assigned['label'], period=period):
+                person = {key: workbook['residents'][0][key] for key in ('source', 'name', 'mcr')}
+                dates = [m['month'] for m in workbook['months']]
+                person['months'] = [dict(month=m, status='posting', target=assigned, label=assigned['label'])
+                                    if assigned else dict(month=m, status='outside_draft_scope') for m in dates]
+                person['requests'] = [{'request': {'posting_request': 'IMH Continuity Clinic', 'period': period},
+                                       'status': 'not_met', 'requested_months': 12,
+                                       'option_keys': [['r3.continuity_clinic', 'IMH', 'IMH Continuity Clinic']],
+                                       'assigned': [{'label': assigned['label'], 'months': dates}] if assigned is clinic else []}]
+                output, _ = export_workbook(content, 2027, {'status': 'feasible', 'cutoff': '2027-06', 'residents': [person]})
+                sheet = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
+                self.assertTrue(all(cell.fill.fgColor.rgb == 'FFFBE1DF' for cell in sheet['G3:R3'][0]))
+                timing = 'for After exams' if period else 'at any time in the planning year'
+                self.assertIn(f'Requested IMH Continuity Clinic {timing}', sheet['G3'].comment.text)
+                self.assertTrue(all(cell.comment is None for cell in sheet['H3:R3'][0]))
+
+    def test_partial_match_only_marks_missed_months_and_shared_first_cell_keeps_both_notes(self):
+        content, draft = fixture()
+        person = draft['residents'][0]
+        target = person['months'][3]['target']
+        target.update(requirement_id='r5.elective', institution='IMH')
+        key = [target['requirement_id'], target['institution'], target['label']]
+        request = {'status': 'not_met', 'request': {'posting_request': target['label'], 'period': 'Oct - Dec 2027'},
+                   'assigned': [{'label': target['label'], 'months': ['2027-10', '2027-12']}],
+                   'option_keys': [key], 'matched_months': ['2027-12']}
+        person['requests'] = [request, {'status': 'not_met', 'request': {'posting_request': 'Other posting', 'period': 'November 2027'}}]
+        output, _ = export_workbook(content, 2027, draft)
+        sheet = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
+        self.assertNotEqual(sheet['J3'].fill.fgColor.rgb, 'FFFBE1DF')
+        self.assertNotEqual(sheet['L3'].fill.fgColor.rgb, 'FFFBE1DF')
+        self.assertEqual(sheet['K3'].fill.fgColor.rgb, 'FFFBE1DF')
+        self.assertIn(f"Requested {target['label']} for Oct–Dec 2027.", sheet['K3'].comment.text)
+        self.assertIn("Requested Other posting for Nov 2027.", sheet['K3'].comment.text)
 
     def test_pending_and_met_alternative_are_not_red_and_new_notes_are_readable(self):
         content, draft = fixture()
@@ -282,7 +354,8 @@ class ExportTests(unittest.TestCase):
             self.assertIn('Requested posting', thread)
             self.assertIn('id="original-id"', thread)
             for name in before.namelist():
-                if name not in {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml', 'xl/threadedComments/threadedComment1.xml'}:
+                if name not in {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml',
+                                'xl/drawings/commentsDrawing1.vml', 'xl/threadedComments/threadedComment1.xml'}:
                     self.assertEqual(before.read(name), after.read(name), name)
 
     def test_payload_mismatches_are_rejected_and_download_has_filename(self):
