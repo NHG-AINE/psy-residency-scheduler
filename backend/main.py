@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 if __package__:
     from .workbook_export import export_workbook
+    from .workbook_rollover import prepare_next_workbook
     from .scheduler import DraftCancelled, DraftSearch, draft_schedule
     from .draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from .requirement_ledger import build_requirement_ledger
@@ -20,6 +21,7 @@ if __package__:
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
     from workbook_export import export_workbook
+    from workbook_rollover import prepare_next_workbook
     from scheduler import DraftCancelled, DraftSearch, draft_schedule
     from draft_edits import DraftWarningBaselineRequired, validate_draft_change
     from requirement_ledger import build_requirement_ledger
@@ -260,3 +262,28 @@ async def export_draft(originalFile: UploadFile = File(...), target_year: int = 
 
 
 app.router.add_api_route("/api/export", export_draft, methods=["POST"], route_class_override=ExportRoute)
+
+
+async def export_next_year(originalFile: UploadFile = File(...), target_year: int = Form(...), store: str = Form(...), draft: str | None = Form(None)):
+    try:
+        if not originalFile.filename or not originalFile.filename.lower().endswith(".xlsx"):
+            raise HTTPException(400, "Choose an .xlsx workbook")
+        content = await originalFile.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "Workbook exceeds the 10 MB upload limit")
+        try:
+            reviews = ReviewStore.model_validate_json(store)
+            data = json.loads(draft) if draft is not None else None
+            output, target_year, warnings = await run_in_threadpool(prepare_next_workbook, content, reviews, data, target_year=target_year)
+        except (WorkbookError, KeyError, TypeError, ValueError, AttributeError, IndexError) as exc:
+            raise HTTPException(422, str(exc) if isinstance(exc, WorkbookError) else "The workbook could not be prepared. Check the workbook and saved review data, then retry.") from exc
+        basename = originalFile.filename.replace("\\", "/").split("/")[-1][:-5]
+        filename = f"{basename} - Prepared {target_year}-{target_year + 1}.xlsx"
+        return Response(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename),
+                                 "X-Preparation-Review": json.dumps(warnings, separators=(",", ":"))})
+    finally:
+        await originalFile.close()
+
+
+app.router.add_api_route("/api/export/prepare-next-year", export_next_year, methods=["POST"], route_class_override=ExportRoute)

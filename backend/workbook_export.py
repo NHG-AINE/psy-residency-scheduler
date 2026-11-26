@@ -299,6 +299,12 @@ def _add_notes(parts, sheet_path, sheet_xml, notes):
     return sheet_xml
 
 
+def worksheet_path(book, rels, title):
+    rid = next(s.get(f'{{{DOCREL}}}id') for s in book.find(f'{{{MAIN}}}sheets') if s.get('name') == title)
+    target = next(r.get('Target') for r in rels if r.get('Id') == rid)
+    return target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/' + target)
+
+
 def export_workbook(content, target_year, draft):
     workbook = parse_workbook(content)
     if target_year != workbook['target_year'] or draft.get('status') not in {'optimal', 'feasible', 'edited'} or draft.get('cutoff') != f'{target_year}-06':
@@ -315,9 +321,7 @@ def export_workbook(content, target_year, draft):
             parts = {name: archive.read(name) for name in archive.namelist()}
             book = ET.fromstring(parts['xl/workbook.xml'])
             rels = ET.fromstring(parts['xl/_rels/workbook.xml.rels'])
-            rid = next(s.get(f'{{{DOCREL}}}id') for s in book.find(f'{{{MAIN}}}sheets') if s.get('name') == sheet.title)
-            target = next(r.get('Target') for r in rels if r.get('Id') == rid)
-            sheet_path = target.lstrip('/') if target.startswith('/') else posixpath.normpath('xl/' + target)
+            sheet_path = worksheet_path(book, rels, sheet.title)
             xml = parts[sheet_path].decode('utf-8')
             styles = parts['xl/styles.xml'].decode('utf-8')
             notes, seen, unmerged, retained = {}, set(), set(), []
