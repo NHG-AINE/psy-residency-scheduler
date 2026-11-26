@@ -4,7 +4,9 @@ from colorsys import rgb_to_hsv
 from copy import deepcopy
 from datetime import date
 from io import BytesIO
+import posixpath
 import re
+from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import quoteattr
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -16,11 +18,11 @@ from openpyxl.utils.datetime import to_excel
 
 if __package__:
     from .requirement_ledger import build_requirement_ledger, programme_requirements_completed
-    from .workbook_export import DOCREL, MAIN, MONTH_ABBREVIATIONS, _append, _append_style, export_workbook, worksheet_path
+    from .workbook_export import DOCREL, EXCEL, MAIN, MONTH_ABBREVIATIONS, VML, _append, _append_style, export_workbook, worksheet_path
     from .workbook_import import IDENTITY_FIELDS, WorkbookError, header, normalized_label, parse_workbook, recorded_years, required_sheet
 else:
     from requirement_ledger import build_requirement_ledger, programme_requirements_completed
-    from workbook_export import DOCREL, MAIN, MONTH_ABBREVIATIONS, _append, _append_style, export_workbook, worksheet_path
+    from workbook_export import DOCREL, EXCEL, MAIN, MONTH_ABBREVIATIONS, VML, _append, _append_style, export_workbook, worksheet_path
     from workbook_import import IDENTITY_FIELDS, WorkbookError, header, normalized_label, parse_workbook, recorded_years, required_sheet
 
 
@@ -259,18 +261,59 @@ def _worksheet(xml, template, imported, year, epoch, roster, vacancies, styles):
     return ET.tostring(root, encoding='utf-8')
 
 
-def _clear_requests(xml, sheet):
+def _clear_requests(archive, sheet_path, sheet):
     heading, columns = header(sheet, {'name', 'mcr no.', 'posting request', 'period'})
-    fields = {get_column_letter(column) for column in columns.values()}
+    fields = set(columns.values())
+
+    def cleared(column, row):
+        return column in fields and row > heading
 
     def clear(match):
-        if match['column'] not in fields or int(match['row']) <= heading:
+        if not cleared(column_index_from_string(match['column']), int(match['row'])):
             return match[0]
         attributes = re.sub(r'\s+(?:t|cm|vm|ph)="[^"]*"', '', match['attributes'])
         return f"<{match['tag']}{attributes}/>"
 
-    return re.sub(r'<(?P<tag>(?:\w+:)?c)\b(?P<attributes>[^>]*\br="(?P<column>[A-Z]+)(?P<row>\d+)"[^>]*?)(?:/>|>.*?</(?P=tag)>)',
-                  clear, xml, flags=re.DOTALL)
+    xml = archive.read(sheet_path).decode('utf-8')
+    touched = {sheet_path: re.sub(
+        r'<(?P<tag>(?:\w+:)?c)\b(?P<attributes>[^>]*\br="(?P<column>[A-Z]+)(?P<row>\d+)"[^>]*?)(?:/>|>.*?</(?P=tag)>)',
+        clear, xml, flags=re.DOTALL)}
+    directory, filename = posixpath.split(sheet_path)
+    rel_path = posixpath.join(directory, '_rels', filename + '.rels')
+    if rel_path not in archive.namelist():
+        return touched
+
+    drawing = ET.fromstring(xml).find(_tag('legacyDrawing'))
+    drawing_id = drawing.get(f'{{{DOCREL}}}id') if drawing is not None else None
+    for rel in ET.fromstring(archive.read(rel_path)):
+        kind = rel.get('Type', '').rsplit('/', 1)[-1]
+        if kind != 'comments' and not (kind == 'vmlDrawing' and rel.get('Id') == drawing_id):
+            continue
+        target = rel.get('Target')
+        path = target.lstrip('/') if target.startswith('/') else posixpath.normpath(posixpath.join(directory, target))
+        # Keep the original namespace prefixes, including those used by VML controls.
+        with minidom.parseString(archive.read(path)) as part:
+            removed = False
+            if kind == 'comments':
+                for note in part.getElementsByTagNameNS(MAIN, 'comment'):
+                    column, row = coordinate_from_string(note.getAttribute('ref'))
+                    if cleared(column_index_from_string(column), row):
+                        note.parentNode.removeChild(note)
+                        removed = True
+            else:
+                for data in part.getElementsByTagNameNS(EXCEL, 'ClientData'):
+                    shape = data.parentNode
+                    if data.getAttribute('ObjectType') != 'Note' or (shape.namespaceURI, shape.localName) != (VML, 'shape'):
+                        continue
+                    coords = {node.localName: node.firstChild.nodeValue.strip() for node in data.childNodes
+                              if node.namespaceURI == EXCEL and node.localName in {'Row', 'Column'} and node.firstChild}
+                    row, column = coords.get('Row', ''), coords.get('Column', '')
+                    if row.isdecimal() and column.isdecimal() and cleared(int(column) + 1, int(row) + 1):
+                        shape.parentNode.removeChild(shape)
+                        removed = True
+            if removed:
+                touched[path] = part.toxml()
+    return touched
 
 
 def _insert_prepared_sheet(xml, after_index, title, sheet_id, rid):
@@ -340,14 +383,13 @@ def prepare_next_workbook(content, store, draft=None, *, target_year=None):
             new_sheet = _worksheet(raw_sheet, template, imported, year, original.epoch, roster, vacancies, styles)
             requests = required_sheet(original, 'Requests', 'Request')
             requests_path = worksheet_path(book, rels, requests.title)
-            request_xml = _clear_requests(archive.read(requests_path).decode('utf-8'), requests)
             touched = {
                 book_path: _insert_prepared_sheet(book_xml, template_index, title, sheet_id, rid),
                 rels_path: _append(rels_xml, 'Relationships', f'<Relationship Id="{rid}" Type="{DOCREL}/worksheet" Target="/{sheet_path}"/>'),
                 types_path: _append(archive.read(types_path).decode('utf-8'), 'Types',
                                     f'<Override PartName="/{sheet_path}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'),
                 styles_path: styles.xml,
-                requests_path: request_xml,
+                **_clear_requests(archive, requests_path, requests),
             }
             for entry in archive.infolist():
                 value = touched.get(entry.filename)
