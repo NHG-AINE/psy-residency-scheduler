@@ -612,7 +612,7 @@ def prepare_year(annual_sheets, requests, postings, target_year):
     return prepare_workbook(years, planning_sheet(years, target_year), [dict(r) for r in requests], postings)
 
 
-def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
+def parse_workbook(content: bytes, target_year: int | None = None, *, forbidden_sheet_title: str | None = None) -> dict:
     if len(content) > MAX_UPLOAD_BYTES:
         raise WorkbookError("Workbook exceeds the 10 MB upload limit")
     try:
@@ -627,6 +627,8 @@ def parse_workbook(content: bytes, target_year: int | None = None) -> dict:
     except Exception as exc:
         raise WorkbookError("Unable to read this XLSX workbook; upload a valid, unencrypted .xlsx file") from exc
     try:
+        if forbidden_sheet_title and any(name.casefold() == forbidden_sheet_title.casefold() for name in workbook.sheetnames):
+            raise WorkbookError(f'The worksheet {forbidden_sheet_title} already exists. Use the original workbook or rename the conflicting worksheet and retry.')
         for sheet in workbook:
             # Postings may have thousands of styled blank cells outside the data.
             if (sheet.max_row > 10000 or sheet.max_column > 100) and (
