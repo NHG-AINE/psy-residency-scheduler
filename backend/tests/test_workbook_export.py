@@ -2,6 +2,7 @@ import json
 import unittest
 from copy import deepcopy
 from io import BytesIO
+from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
@@ -172,6 +173,21 @@ class ExportTests(unittest.TestCase):
         imported = parse_workbook(output)
         self.assertEqual(imported['residents'][0]['postings'][3]['status'], 'posting')
         self.assertEqual(imported['residents'][0]['postings'][0]['value'], 'LOA')
+
+    def test_reexport_reuses_the_existing_generated_note_author(self):
+        content, draft = fixture()
+        first, _ = export_workbook(content, 2027, draft)
+        draft['residents'][0]['requests'][0]['request']['period'] = 'February 2028'
+        second, _ = export_workbook(first, 2027, draft)
+        with ZipFile(BytesIO(second)) as package:
+            comments = ET.fromstring(package.read('xl/comments/comment1.xml'))
+        authors = [author.text for author in comments.find('{*}authors')]
+        self.assertEqual(authors, ['Original author', 'PSY Scheduler'])
+        sheet = load_workbook(BytesIO(second))['Jul 2027 - Jun 2028']
+        self.assertEqual(sheet['D3'].comment.author, 'Original author')
+        self.assertEqual(sheet['J3'].comment.author, 'PSY Scheduler')
+        self.assertEqual(sheet['N3'].comment.author, 'PSY Scheduler')
+        self.assertIn('Feb 2028', sheet['N3'].comment.text)
 
     def test_dated_request_shows_compact_ranges_and_shades_only_the_requested_months(self):
         assigned = 'NUH Child and Geriatric Psychiatry'
