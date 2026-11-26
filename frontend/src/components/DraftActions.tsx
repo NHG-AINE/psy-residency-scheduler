@@ -4,18 +4,23 @@ import type { Source, Workbook } from '../lib/workbook'
 import DraftReview from './DraftReview'
 import DraftSearchLimit from './DraftSearchLimit'
 import DraftTimer from './DraftTimer'
+import ExportMenu from './ExportMenu'
+import type { ExcelExport } from './ExportMenu'
 
-export default function DraftActions({ state, workbook, yearLabel, exporting, checkingUndo, onExport, onUndo, onDiscard, onFind }: {
-  state: DraftState; workbook: Workbook; yearLabel: string; exporting: boolean; checkingUndo: boolean
-  onUndo: () => void; onExport: () => void; onDiscard: () => void; onFind: (source: Source) => void
+export default function DraftActions({ state, workbook, yearLabel, exporting, checkingUndo, loading, onExport, onUndo, onDiscard, onFind }: {
+  state: DraftState; workbook: Workbook; yearLabel: string; exporting: ExcelExport | null; checkingUndo: boolean; loading: boolean
+  onUndo: () => void; onExport: (kind: ExcelExport) => void; onDiscard: () => void; onFind: (source: Source) => void
 }) {
   const actions = useRef<HTMLDivElement>(null)
   const primary = useRef<HTMLButtonElement>(null)
+  const exportButton = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
   const menuId = useId()
   const focusAction = useRef(false)
   const press = useRef<{ input: 'pointer' | 'keyboard'; ready: boolean } | null>(null)
-  const unavailable = exporting || state.pending || checkingUndo
+  const unavailable = exporting !== null || state.pending || checkingUndo
+  const latestYear = Math.max(...workbook.available_years.map(({ year }) => year))
+  const includeDraft = state.savedResult?.year === latestYear
   const pendingStop = state.cancelling || state.finishing
   useLayoutEffect(() => {
     if (!focusAction.current) return
@@ -30,11 +35,13 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, ch
     void state.generate()
   }
 
-  if (!state.canGenerate) return null
+  const exportMenu = <ExportMenu latestYear={latestYear} hasDraft={!!state.draft} includeDraft={includeDraft}
+    disabled={state.pending || checkingUndo || loading} exporting={exporting} onExport={onExport}
+    buttonRef={state.draft ? primary : exportButton} />
   return <div className="draft-actions" ref={actions}>
     <span className="sr-only" role="status">{state.busy && !state.cancelling
       ? state.finishing ? 'Preparing draft…' : state.ready ? 'A feasible draft is ready to use.' : '' : ''}</span>
-    {state.busy ? <>
+    {!state.canGenerate ? exportMenu : state.busy ? <>
       <span className="draft-running" role="status">{state.draft ? 'Regenerating draft' : 'Generating draft'}</span>
       <DraftTimer draft={state.draft} startedAt={state.startedAt} elapsedSeconds={state.elapsedSeconds} />
       <button key="draft-stop" ref={primary} type="button" className={`button draft-stop${state.ready && !state.cancelling ? '' : ' button-secondary'}`} aria-disabled={pendingStop}
@@ -61,9 +68,7 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, ch
       {!!state.draft.edit_options?.length && <button type="button" className="button button-secondary" disabled={unavailable || !state.canUndo}
         data-draft-undo onClick={onUndo}>Undo last change</button>}
       <DraftReview key={workbook.target_year} draft={state.draft} workbook={workbook} yearLabel={yearLabel} onFind={onFind} />
-      <button ref={primary} type="button" className="button" disabled={unavailable} onClick={onExport}>
-        {exporting ? 'Exporting…' : 'Export Excel'}
-      </button>
+      {exportMenu}
       <button type="button" className="button button-secondary year-arrow draft-overflow" aria-label="Draft actions" title="Draft actions"
         disabled={unavailable} popoverTarget={menuId} onClick={(event) => {
           const panel = menu.current
@@ -81,8 +86,9 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, ch
         <button type="button" onClick={() => { menu.current?.hidePopover(); focusAction.current = true; onDiscard() }}>Discard draft</button>
       </div>
     </> : <>
-      <DraftSearchLimit value={state.searchSeconds} onChange={state.setSearchSeconds} disabled={state.pending} />
-      <button ref={primary} type="button" className="button" disabled={state.pending} onClick={generate}>Generate draft</button>
+      {exportMenu}
+      <DraftSearchLimit value={state.searchSeconds} onChange={state.setSearchSeconds} disabled={unavailable} />
+      <button ref={primary} type="button" className="button" disabled={unavailable} onClick={generate}>Generate draft</button>
     </>}
   </div>
 }

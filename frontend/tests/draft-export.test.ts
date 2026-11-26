@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { exportDraft, downloadDraft } from '../src/lib/draft-export.ts'
+import { exportCurrentWorkbook, downloadWorkbook, prepareNextWorkbook } from '../src/lib/draft-export.ts'
 import { parseSession } from '../src/lib/workbook-session.ts'
 import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
 
@@ -26,17 +26,23 @@ test('export sends original restored workbook and every draft resident regardles
       assert.deepEqual(JSON.parse(form.get('draft') as string), draft)
       return new Response(new Blob(['exported bytes']))
     }
-    const result = await exportDraft(restored.file, 2027, draft)
+    const result = await exportCurrentWorkbook(restored.file, 2027, draft)
     assert.equal(await result.blob.text(), 'exported bytes')
     assert.deepEqual(result.retainedResidents, [])
     globalThis.fetch = async () => new Response(new Blob(['exported bytes']), { headers: { 'X-Export-Retained-Residents': JSON.stringify(['Preserved Resident']) } })
-    assert.deepEqual((await exportDraft(restored.file, 2027, draft)).retainedResidents, ['Preserved Resident'])
+    assert.deepEqual((await exportCurrentWorkbook(restored.file, 2027, draft)).retainedResidents, ['Preserved Resident'])
     globalThis.fetch = async () => new Response(JSON.stringify({ detail: 'Draft does not match workbook.' }), { status: 422 })
-    await assert.rejects(exportDraft(restored.file, 2027, draft), /Draft does not match workbook/)
+    await assert.rejects(exportCurrentWorkbook(restored.file, 2027, draft), /Draft does not match workbook/)
     globalThis.fetch = async () => { throw new TypeError('offline') }
-    await assert.rejects(exportDraft(restored.file, 2027, draft), /Check the connection/)
+    await assert.rejects(exportCurrentWorkbook(restored.file, 2027, draft), /Check the connection/)
     assert.deepEqual(draft, before)
   } finally { globalThis.fetch = fetch }
+})
+
+test('current workbook without a draft preserves the uploaded file', async () => {
+  const file = new File([new Uint8Array([0, 255, 13, 10])], 'Programme.XLSX')
+  const result = await exportCurrentWorkbook(file, 2027, null)
+  assert.equal(result.blob, file)
 })
 
 test('large edited drafts omit only the warning baseline from the export form', async () => {
@@ -67,10 +73,33 @@ test('large edited drafts omit only the warning baseline from the export form', 
       sent = init.body.get('draft') as string
       return new Response('xlsx', { headers: { 'Content-Type': mime } })
     }
-    const exported = await exportDraft(new File(['original workbook'], 'Programme.xlsx'), 2027, edited)
+    const exported = await exportCurrentWorkbook(new File(['original workbook'], 'Programme.xlsx'), 2027, edited)
     assert.equal(exported.blob.type, mime)
     assert.deepEqual(JSON.parse(sent), { ...draft, status: 'edited', residents, capacity_overflows })
     assert.equal(edited.edit_baseline, baseline)
+  } finally { globalThis.fetch = fetch }
+})
+
+test('workbook preparation sends the advertised year and edited draft when available', async () => {
+  const file = new File(['original workbook'], 'Programme.xlsx')
+  const edited: DraftSchedule = { ...draft, status: 'edited', edit_baseline: { residents: [], capacity_overflows: [] } }
+  const store = { version: 1 as const, decisions: [] }
+  const fetch = globalThis.fetch
+  try {
+    for (const current of [edited, null]) {
+      globalThis.fetch = async (url, init) => {
+        assert.equal(url, '/api/export/prepare-next-year')
+        const form = init?.body as FormData
+        assert.equal(await (form.get('originalFile') as File).text(), 'original workbook')
+        assert.equal(form.get('target_year'), '2028')
+        assert.deepEqual(JSON.parse(form.get('store') as string), store)
+        if (current) assert.deepEqual(JSON.parse(form.get('draft') as string), { ...draft, status: 'edited' })
+        else assert.equal(form.has('draft'), false)
+        return new Response('prepared workbook')
+      }
+      const result = await prepareNextWorkbook(file, 2028, store, current)
+      assert.equal(await result.text(), 'prepared workbook')
+    }
   } finally { globalThis.fetch = fetch }
 })
 
@@ -85,11 +114,13 @@ test('download uses draft filename and cleans the temporary link and URL on succ
     URL.createObjectURL = () => 'blob:test'
     URL.revokeObjectURL = (url) => { assert.equal(url, 'blob:test'); events.push('revoke') }
     globalThis.setTimeout = ((callback: () => void) => { callback(); return 1 }) as typeof setTimeout
-    downloadDraft(new Blob(['xlsx']), 'Programme.XLSX', 2027)
+    downloadWorkbook(new Blob(['xlsx']), 'Programme.XLSX', 2027)
     assert.equal(link.download, 'Programme - Draft 2027-2028.xlsx')
     assert.deepEqual(events, ['append', 'click', 'remove', 'revoke'])
+    downloadWorkbook(new Blob(['original']), 'Programme.XLSX')
+    assert.equal(link.download, 'Programme.XLSX')
     events.length = 0; fail = true
-    assert.throws(() => downloadDraft(new Blob(['xlsx']), 'Programme.xlsx', 2027), /download failed/)
+    assert.throws(() => downloadWorkbook(new Blob(['xlsx']), 'Programme.xlsx', 2027), /download failed/)
     assert.deepEqual(events, ['append', 'click', 'remove', 'revoke'])
   } finally {
     URL.createObjectURL = create; URL.revokeObjectURL = revoke; globalThis.setTimeout = timer
