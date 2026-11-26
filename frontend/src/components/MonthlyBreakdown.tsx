@@ -3,11 +3,13 @@ import { scrollToPosition } from '../lib/scroll'
 import type { Workbook } from '../lib/workbook'
 import { monthLabel } from '../lib/workbook'
 import type { DraftSchedule } from '../lib/draft-schedule'
-import type { HistoryEntry } from '../lib/history-review'
+import type { HistoryEntry, RecordedCompletion } from '../lib/history-review'
 import CapacityDetails from './CapacityDetails'
 import { monthlyBreakdown } from '../lib/monthly-breakdown'
 
-export default function MonthlyBreakdown({ workbook, draft, entries }: { workbook: Workbook; draft: DraftSchedule | null; entries: HistoryEntry[] }) {
+export default function MonthlyBreakdown({ workbook, draft, entries, completions }: {
+  workbook: Workbook; draft: DraftSchedule | null; entries: HistoryEntry[]; completions?: RecordedCompletion[]
+}) {
   const [year, setYear] = useState('R1')
   const [capacityFocus, setCapacityFocus] = useState<{ group: string; site: string; month: string; request: number } | null>(null)
   const [expanded, setExpanded] = useState<string[]>([])
@@ -23,7 +25,7 @@ export default function MonthlyBreakdown({ workbook, draft, entries }: { workboo
   }, [expanded, year])
   const years = ['R1', 'R2', 'R3', 'R4', 'R5']
   const selectedYear = years.includes(year) ? year : 'R1'
-  const groups = useMemo(() => monthlyBreakdown(workbook, draft, entries, selectedYear), [workbook, draft, entries, selectedYear])
+  const groups = useMemo(() => monthlyBreakdown(workbook, draft, entries, selectedYear, completions), [workbook, draft, entries, selectedYear, completions])
   return <section className="workspace-panel monthly-breakdown" aria-labelledby="breakdown-heading">
     <div className="breakdown-toolbar"><div><h2 id="breakdown-heading">Monthly breakdown</h2><p className="muted">Jul {workbook.target_year} - Jun {workbook.target_year + 1} &middot; Postings count by requirement year. LOA, unallocated months, unresolved postings and older draft assignments without a requirement year count by resident cohort.</p></div>
       <label>Programme year<select value={selectedYear} onChange={(event) => { setCapacityFocus(null); setYear(event.target.value) }}>{years.map((value) => <option key={value}>{value}</option>)}</select></label>

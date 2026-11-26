@@ -2,7 +2,7 @@ import type { Workbook } from './workbook.ts'
 import { sameSource } from './workbook.ts'
 import { resolvedCatalogueTarget } from './history-review.ts'
 import type { CapacityOverflow, DraftSchedule } from './draft-schedule.ts'
-import type { HistoryEntry } from './history-review.ts'
+import type { HistoryEntry, RecordedCompletion } from './history-review.ts'
 import { draftPostings, draftResidentYear } from './draft-schedule.ts'
 import { postingCategory, postingDisplay, postingHistoryEntry } from './posting-blocks.ts'
 
@@ -13,7 +13,7 @@ export type BreakdownGroup = { key: string; label: string; counts: Counts; insti
 
 const programmeYears = (value?: string | null): string[] => value?.toUpperCase().match(/\bR[1-5]\b/g) || []
 
-export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null, entries: HistoryEntry[], year = '') {
+export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null, entries: HistoryEntry[], year = '', completions?: RecordedCompletion[]) {
   const groupElectives = year === 'R2' || year === 'R5'
   const groups = new Map<string, BreakdownGroup>()
   const eligibleSites = new Set<BreakdownGroup['institutions'][number]>()
@@ -50,7 +50,7 @@ export function monthlyBreakdown(workbook: Workbook, draft: DraftSchedule | null
   for (const resident of workbook.residents) {
     const planned = draft?.residents.find((person) => sameSource(person.source, resident.source))
     const cohortYears = programmeYears(draftResidentYear(resident, draft))
-    for (const posting of draftPostings(resident, draft)) {
+    for (const posting of draftPostings(resident, draft, completions)) {
       if (!months.has(posting.month)) continue
       const display = postingDisplay([posting], 'catalogue', entries)
       const displayCategory = postingCategory(display, posting.status)

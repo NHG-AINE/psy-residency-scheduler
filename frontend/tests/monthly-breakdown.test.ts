@@ -2,8 +2,29 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { monthlyBreakdown } from '../src/lib/monthly-breakdown.ts'
 import type { Workbook, Resident } from '../src/lib/workbook.ts'
-import type { DraftSchedule } from '../src/lib/draft-schedule.ts'
+import { draftPostings, type DraftSchedule } from '../src/lib/draft-schedule.ts'
 import type { HistoryEntry } from '../src/lib/history-review.ts'
+
+test('recorded completion replaces unallocated display and counts and yields to a live draft', () => {
+  const [gap, leave, completed] = ['2027-07', '2027-08', '2027-09']
+  const source = { sheet: 'Plan', row: 4 }
+  const person = { residency_year: 'R5', source, postings: [gap, leave, completed].map((month, index) => ({
+    month, value: month === leave ? 'LOA' : null, status: month === leave ? 'loa' : 'blank',
+    source: { ...source, column: `M${index}` },
+  })) } as Resident
+  const workbook = { residents: [person], months: [gap, leave, completed].map((month) => ({ month })), postings: { core: [] } } as unknown as Workbook
+  const completions = [{ source, months: [completed] }]
+  const draft = { status: 'optimal', residents: [{ source, months: [
+    { month: completed, status: 'posting', label: 'IMH Geriatric Psychiatry', target: { category: 'core', residency_year: 'R5' } },
+  ] }] } as DraftSchedule
+  assert.deepEqual(draftPostings(person, null, completions).map(({ status }) => status), ['blank', 'loa', 'requirements_completed'])
+  assert.deepEqual(monthlyBreakdown(workbook, null, [], 'R5', completions).map(({ label, counts }) => [label, counts]), [
+    ['LOA', { [leave]: 1 }], ['Unallocated', { [gap]: 1 }],
+  ])
+  assert.deepEqual(monthlyBreakdown(workbook, draft, [], 'R5', completions).map(({ label }) => label),
+    ['Geriatric Psychiatry', 'LOA', 'Unallocated'])
+  assert.equal(person.postings[2].status, 'blank')
+})
 
 test('breakdown uses draft overlays, posting requirement years for mixed-year residents, zero sites and full-cohort capacity counts', () => {
   const people = ['R1', 'R1,R2', 'R2'].map((residency_year, row) => ({

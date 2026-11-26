@@ -4,6 +4,7 @@ from copy import deepcopy
 import unittest
 
 from history_review import ReviewStore
+from main import evaluate_timetable
 from requirement_ledger import build_requirement_ledger
 from scheduler import draft_schedule
 from tests.test_r5_rules import r5_book
@@ -33,6 +34,35 @@ def add_history(book, months):
 
 
 class R5CombinedTests(unittest.TestCase):
+    def test_timetable_infers_completion_from_reviewed_postings_without_changing_ledger(self):
+        book = combined_book()
+        roster, = book["residents"]
+        add_history(book, [(f"2027-{month:02d}", "IMH Forensic Psychiatry (Elective)") for month in range(1, 7)])
+        for posting in roster["postings"][1:7]:
+            posting.update(status="posting", value="Recorded combined rotation")
+        roster["postings"][8].update(status="loa", value="LOA")
+        before = deepcopy(book)
+        unresolved = evaluate_timetable(book, STORE)
+        self.assertNotIn("completed_months", unresolved)
+        target = next(item for item in unresolved["catalogue"] if item["label"] == LABEL)
+        entry, = unresolved["entries"]
+        store = ReviewStore.model_validate({"version": 1, "decisions": [
+            {"kind": "resident", "context": entry["context"], "requirement_year": "R5",
+             "target": {"key": target["key"], "signature": target["signature"]}},
+        ]})
+        reviewed = evaluate_timetable(book, store)
+        self.assertEqual(reviewed["completed_months"], [
+            {"source": roster["source"], "months": [roster["postings"][index]["month"] for index in (7, 9, 10, 11)]}
+        ])
+        ledger = build_requirement_ledger(book, store)
+        self.assertTrue(all(month["month"] < book["months"][0]["month"] for month in ledger["residents"][0]["months"]))
+        self.assertEqual(book, before)
+
+        duplicate_month = roster["postings"][7]["month"]
+        book["annual_sheets"].append({"residents": [resident([(duplicate_month, None)], "R5", "Other sheet")]})
+        self.assertEqual(evaluate_timetable(book, store)["completed_months"][0]["months"],
+                         [roster["postings"][index]["month"] for index in (9, 10, 11)])
+
     def test_nine_month_core_history_leaves_only_the_other_core(self):
         for longer, shorter, first, following in (
                 (GERI, CHILD, "IMH Geriatric Psychiatry", "CGH Geriatric Psychiatry"),

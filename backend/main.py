@@ -16,7 +16,7 @@ if __package__:
     from .workbook_rollover import prepare_next_workbook
     from .scheduler import DraftCancelled, DraftSearch, draft_schedule
     from .draft_edits import DraftWarningBaselineRequired, validate_draft_change
-    from .requirement_ledger import build_requirement_ledger
+    from .requirement_ledger import build_requirement_ledger, recorded_completion_months
     from .history_review import ReviewStore, evaluate_review
     from .workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 else:
@@ -24,7 +24,7 @@ else:
     from workbook_rollover import prepare_next_workbook
     from scheduler import DraftCancelled, DraftSearch, draft_schedule
     from draft_edits import DraftWarningBaselineRequired, validate_draft_change
-    from requirement_ledger import build_requirement_ledger
+    from requirement_ledger import build_requirement_ledger, recorded_completion_months
     from history_review import ReviewStore, evaluate_review
     from workbook_import import MAX_UPLOAD_BYTES, WorkbookError, parse_workbook, prepare_year
 
@@ -66,9 +66,17 @@ class PrepareYearRequest(BaseModel):
     store: ReviewStore
 
 
+def evaluate_timetable(workbook, store):
+    labels = evaluate_review(workbook, store, "timetable")
+    completed = recorded_completion_months(workbook, store)
+    if completed:
+        labels["completed_months"] = completed
+    return labels
+
+
 def prepare_year_with_labels(request: PrepareYearRequest):
     workbook = prepare_year(request.annual_sheets, request.requests, request.postings, request.target_year)
-    return JSONResponse({"workbook": workbook, "labels": evaluate_review(workbook, request.store, "timetable")})
+    return JSONResponse({"workbook": workbook, "labels": evaluate_timetable(workbook, request.store)})
 
 
 @app.post("/api/prepare-year")
@@ -84,7 +92,8 @@ async def prepare_planning_year(request: PrepareYearRequest):
 @app.post("/api/history-review")
 async def history_review(request: HistoryReviewRequest):
     try:
-        return await run_in_threadpool(evaluate_review, request.workbook, request.store, request.scope)
+        evaluate = evaluate_timetable if request.scope == "timetable" else evaluate_review
+        return await run_in_threadpool(evaluate, request.workbook, request.store)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, "The workbook review data is incomplete. Import the workbook again.") from exc
 
