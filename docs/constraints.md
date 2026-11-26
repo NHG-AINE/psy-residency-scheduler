@@ -54,8 +54,9 @@ See [programme-structure.md](programme-structure.md) for the programme overview.
   give 3 months of Child credit and 3 months of elective credit.
 
   For both kinds of six-month posting, record a partial block as progress.
-  Award the component credits when the resident completes all 6 training months
-  at the same posting and institution. LOA pauses the block.
+  Award the component credits once, after all 6 training months at the same
+  posting and institution are recognised. A later return to the same posting
+  can complete the block.
 
 - **Schedule R5 electives in valid blocks.** When a resident has 6 elective
   months to complete, schedule one continuous six-month block by default. If

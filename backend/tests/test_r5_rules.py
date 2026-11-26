@@ -478,7 +478,7 @@ class R5ElectiveBlockTests(unittest.TestCase):
         return {"requirement_id": "r5.elective", "category": "elective", "posting": posting,
                 "institution": institution, "label": institution + " " + posting, "remarks": list(remarks)}
 
-    def routes(self, history, options=None, earlier=0, allow_split=False):
+    def routes(self, history, options=None, allow_split=False):
         from rules.r5_rules import prepare_routes, R5_CORES
         credited = sum(m["status"] == "expected" for m in history)
         cores = [{"requirement_id": key, "required_months": 3, "remaining_months": 0} for key in R5_CORES]
@@ -490,7 +490,7 @@ class R5ElectiveBlockTests(unittest.TestCase):
                                     "expected_months": credited, "remaining_months": max(0, 6 - credited)}]}
         errors = []
         routes = prepare_routes(person, options or [self.option("A"), self.option("B", "TTSH")],
-                                "2027-07", earlier, errors, allow_split)
+                                errors, allow_split)
         return routes, errors
 
     def history(self, start, count, posting="A", institution="IMH"):
@@ -548,10 +548,21 @@ class R5ElectiveBlockTests(unittest.TestCase):
         history = self.history(1, 3) + [{"month": "2027-04", "status": "blank"}]
         routes, errors = self.routes(history)
         self.assertFalse(errors)
-        self.assertEqual(len(routes), 1)
-        self.assertFalse(routes[0][0][2])
-        # A gap after an unfinished block cannot be silently continued.
-        self.assertFalse(self.routes(self.history(4, 1))[0])
+        self.assertTrue(any(not route[0][2] for route in routes))
+        routes, errors = self.routes(self.history(4, 1))
+        self.assertFalse(errors)
+        self.assertTrue(all(route[0][2] and route[0][1][0]["institution"] == "IMH" for route in routes))
+        for offering, duration in ((self.option("A"), 6), (three, 3)):
+            routes, errors = self.routes(self.history(1, 2) + self.history(5, 2), [offering], allow_split=True)
+            self.assertFalse(errors)
+            self.assertEqual([(r["required_months"], r["remaining_months"]) for r, _, _ in routes[0]], [(duration, 2)])
+            self.assertEqual(len(routes), 1)
+        another_three = self.option("B", "TTSH", three["remarks"])
+        routes, errors = self.routes(self.history(2, 1) + self.history(6, 1, "B", "TTSH"),
+                                    [three, another_three])
+        self.assertFalse(errors)
+        self.assertEqual([(r["remaining_months"], eligible[0]["label"], partial)
+                          for r, eligible, partial in routes[0]], [(2, "IMH A", True), (2, "TTSH B", True)])
         # LOA pauses the final partial block and keeps its site binding.
         history = self.history(2, 3) + self.history(5, 1, "B", "TTSH") + [{"month": "2027-06", "status": "loa"}]
         routes, errors = self.routes(history)
@@ -559,7 +570,6 @@ class R5ElectiveBlockTests(unittest.TestCase):
         self.assertEqual(routes[0][0][0]["remaining_months"], 2)
         self.assertEqual(routes[0][0][0]["required_months"], 3)
         self.assertEqual(routes[0][0][1][0]["institution"], "TTSH")
-        self.assertFalse(self.routes(history, earlier=1)[0])
         # Already counted six-month totals are preserved, including old 4+2 history.
         routes, errors = self.routes(self.history(1, 4) + self.history(5, 2, "B", "TTSH"))
         self.assertEqual(routes, [[]])

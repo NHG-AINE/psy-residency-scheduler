@@ -72,10 +72,10 @@ of IMH Child and EPIP gives 3 months of Child credit and 3 months of elective
 credit. A resident on the default route then has 3 months of Geriatric
 Psychiatry and 3 months of electives left.
 
-For an elective that earns core credit, both credits are awarded after the
-resident completes all 6 training months in the same posting at the same
-institution. LOA pauses the block. Months completed before leave still count as
-progress towards the six.
+For the combined core and electives that earn core credit, the component
+credits are awarded after the resident completes all 6 training months at the
+same posting and institution. Training months still count if the resident
+returns to the posting after leave or another rotation.
 
 A resident can request 6 months of Child or Geriatric Psychiatry. Extending one
 core from 3 to 6 months leaves 3 elective months. A resident who takes 6 months
@@ -88,10 +88,10 @@ The resident needs at least 3 months of credit in each core. For example,
 give 9 months of Geriatric credit. Another 3 months of Child & Adolescent
 Psychiatry complete the year. The same rule allows 9 months of Child and
 3 months of Geriatric. These 9-month totals are initiated through manual edits.
-If June falls within an established nine-month core allocation, the resident
-finishes the current block at its recorded institution after leave or at the
-start of the next planning year. For example, six months of SKH Geriatric
-and two months of CGH Geriatric leave one month at CGH and three months of Child.
+When history establishes a nine-month core allocation, the resident finishes
+the started block at its recorded institution. For example, six months of SKH
+Geriatric and two months of CGH Geriatric leave one month at CGH and three months
+of Child.
 
 Residents with 6 elective months to complete normally take one continuous
 six-month block. If an eligible request allows a three-month placement, they

@@ -637,9 +637,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
     options += r5_options
     request_outcomes = [resolve_requests(person, prepared["requests"], options, prepared["planning_months"])
                         for person in selected]
-    r5_routes = [r5_rules.prepare_routes(person, r5_options, prepared["planning_start"],
-                     (r1_remaining[i] or 0)
-                     + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i] + r4_blocks[i]), local_blockers[i],
+    r5_routes = [r5_rules.prepare_routes(person, r5_options, local_blockers[i],
                      requests_need_r5_split(request_outcomes[i]), request_outcomes[i],
                      fixed=fixed.get(draft_source_key(person["source"])) if fixed is not None else None)
                  if person["schedule_through"] >= 5 else [[]] for i, person in enumerate(selected)]

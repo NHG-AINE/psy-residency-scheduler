@@ -6,13 +6,13 @@ from math import lcm
 if __package__:
     from .workbook_import import normalized_label, normalized_posting_label
     from .rules.r2_rules import partial_posting_identity
-    from .rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations
+    from .rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations, history_continuations
     from .programme_requirements import additional_r5_credit
     from .rules.r4_rules import completed_r1_inpatient_at_imh
 else:
     from workbook_import import normalized_label, normalized_posting_label
     from rules.r2_rules import partial_posting_identity
-    from rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations
+    from rules.r5_rules import R5_CORES, R5_ELECTIVE, elective_durations, history_continuations
     from programme_requirements import additional_r5_credit
     from rules.r4_rules import completed_r1_inpatient_at_imh
 
@@ -55,6 +55,8 @@ def resolve_requests(person, requests, options, planning_months):
     through = person.get('schedule_through') or max((int(year[1:]) for year in person['recorded_years']), default=1)
     eligible_years = {f'R{year}' for year in range(2, through + 1)}
     outcomes = []
+    history = person.get('months', [])
+    r5_continuations = None
     for row in requests:
         if row.get('matched_resident_source') != person['source'] or not row.get('posting_request'):
             continue
@@ -99,33 +101,27 @@ def resolve_requests(person, requests, options, planning_months):
             continue
         default = 3 if requirement_id in R5_CORES else 6 if requirement_id == R5_ELECTIVE else req['required_months']
         duration = len(period) if exact else default if default in lengths else min(lengths)
-        tail, identity = 0, None
-        for month in reversed(person.get('months', [])):
-            if month['status'] == 'loa':
-                continue
-            if month['status'] != 'expected' or month.get('requirement_id') != requirement_id:
-                break
-            current = (month['posting'], month['institution'])
-            if identity is not None and current != identity:
-                break
-            identity = current
-            tail += 1
-
         eligible, charges = [], []
         fresh = False
         for option in matches:
             supported = _request_durations(option, req['required_months'])
-            credited = tail if (option['posting'], option['institution']) == identity else 0
-            if supported == (3,) and 3 < credited < 6:
-                credited -= 3  # History contains a full first elective and part of its successor.
-            continuation = credited and any(d - credited == duration for d in supported)
-            if supported and (not exact or duration in supported or continuation):
+            site = (option['posting'], option['institution'])
+            credit = additional_r5_credit(option)
+            remainders = ()
+            if not exact or duration not in supported:
+                if requirement_id.startswith('r5.'):
+                    if r5_continuations is None:
+                        r5_continuations = history_continuations(history, options)
+                    credit_key = credit['id'] if credit else None
+                    remainders = r5_continuations.get((requirement_id, *site, credit_key), ())
+                elif any(m['status'] == 'expected' and m.get('requirement_id') == requirement_id
+                         and (m['posting'], m['institution']) == site for m in history):
+                    remainders = (req['remaining_months'],)
+            if supported and (not exact or duration in supported or duration in remainders):
                 eligible.append(option)
                 fresh |= not exact or duration in supported
-                credit = additional_r5_credit(option)
-                used = credited if not exact else 0
                 charges.append(6 - credit["months"] if credit else
-                               min(max(0, d - used) for d in supported) if not exact else duration)
+                               min(remainders or supported) if not exact else duration)
         item.update(requirement_id=requirement_id, duration=duration, requested_months=duration, exact_period=exact,
                     starts=period[:1] if exact else period, period_months=period,
                     requested_durations=[duration] if exact else sorted(lengths),
@@ -246,9 +242,15 @@ def unmet_request_reason(person, request, placements, options, stages, *, edited
             and all(o['institution'] == 'IMH' for o in requested)
             and completed_r1_inpatient_at_imh(person)):
         return 'r1_imh_exclusion', 'R1 Inpatient Psychiatry was completed at IMH. R4 Inpatient must be outside IMH.'
-    # R5 elective history can include a completed first block and a different
-    # partial second block. Actual placement choices below express continuation.
-    partial = partial_posting_identity(person, key) if key != 'r5.elective' else None
+    if key.startswith('r5.'):
+        # A started R5 block can coexist with a second block at another site.
+        sites = {(posting, institution) for req, posting, institution, _
+                 in history_continuations(person['months'], options) if req == key}
+        choices = {(p['option']['posting'], p['option']['institution']) for p in placements
+                   if p['option']['requirement_id'] == key}
+        partial = next(iter(sites)) if len(sites) == 1 and choices == sites else None
+    else:
+        partial = partial_posting_identity(person, key)
     if partial and requested and all((o['posting'], o['institution']) != partial for o in requested):
         posting, institution = partial
         return 'partial_posting_continuation', f'This requirement must continue as {institution} {posting}, where it was started.'

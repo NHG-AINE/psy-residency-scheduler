@@ -6,13 +6,13 @@ if __package__:
     from .cluster_coverage import cluster_coverage
     from .history_review import evaluate_review, mcr_key
     from .programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, additional_r5_credit, validate_posting
-    from .rules.r5_rules import R5_CORES, R5_ELECTIVE, history_targets, r5_credit_progress, r5_runs
+    from .rules.r5_rules import R5_CORES, R5_ELECTIVE, history_targets, r5_credit_progress, r5_runs, shared_credit_blocks
     from .workbook_import import intake_slot_id, month_number, normalized_label, recorded_years
 else:
     from cluster_coverage import cluster_coverage
     from history_review import evaluate_review, mcr_key
     from programme_requirements import PROGRAMME_REQUIREMENTS, R1_COMPLETION_ROUTES, additional_r5_credit, validate_posting
-    from rules.r5_rules import R5_CORES, R5_ELECTIVE, history_targets, r5_credit_progress, r5_runs
+    from rules.r5_rules import R5_CORES, R5_ELECTIVE, history_targets, r5_credit_progress, r5_runs, shared_credit_blocks
     from workbook_import import intake_slot_id, month_number, normalized_label, recorded_years
 
 
@@ -110,10 +110,12 @@ def build_requirement_ledger(workbook, store):
             outcome = outcomes[0] if all(item == outcomes[0] for item in outcomes) else {
                 "status": "pending", "reasons": ["conflicting_month_evidence"]}
             months.append({"month": month, **outcome, "evidence": [evidence for evidence, _ in values]})
-        summaries, supported_r5_plan = _summaries(months, start_number)
+        runs = r5_runs(months)
+        summaries, supported_r5_plan = _summaries(months, runs)
         mixed_progress = [{"label": run["target"]["label"], "start": run["start_month"], "end": run["end_month"],
                            "months": run["count"]}
-                          for run in r5_runs(months) if run["count"] < 6 and additional_r5_credit(run["target"])]
+                          for run in shared_credit_blocks(runs)
+                          if run["count"] < 6 and additional_r5_credit(run["target"])]
         by_id = {item["requirement_id"]: item for item in summaries}
         routes = [{"requirement_ids": list(route),
                    "evidence_status": "supported" if all(by_id[key]["evidence_status"] == "supported" for key in route)
@@ -197,7 +199,7 @@ def _allocation(entry, workbook):
 
 
 
-def _summaries(months, resume_month=None):
+def _summaries(months, runs):
     counts = defaultdict(int)
     site_counts = defaultdict(Counter)
     groups = []
@@ -227,9 +229,8 @@ def _summaries(months, resume_month=None):
             groups.append(active)
         active["expected_months"] += 1
         active["end"] = month["month"]
-    runs = r5_runs(months)
     r5_counts = r5_credit_progress(runs)
-    targets = history_targets(runs, resume_month)
+    targets = history_targets(runs)
     supported_plan = targets is not None
     if not supported_plan:
         # Show recognised months even when their order prevents a valid continuation.
@@ -264,7 +265,7 @@ def _summaries(months, resume_month=None):
 
 def programme_requirements_completed(months):
     """Both the R1 route and all mandatory later requirements are evidenced."""
-    requirements, supported_plan = _summaries(months)
+    requirements, supported_plan = _summaries(months, r5_runs(months))
     if not supported_plan:
         return False
     completed = {r["requirement_id"] for r in requirements if not r["remaining_months"]}
