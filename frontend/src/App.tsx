@@ -530,7 +530,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }}>
     {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editor || editing.move || editing.released || editing.returning || checkingUndo || undo)}><table>
-      <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}. Blank cells are labelled unallocated.</caption>
+      <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
       <tbody>{groupDraftResidents(residents, draft, resolution?.entries).map((resident) => {
@@ -560,7 +560,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
               return count > 0 && <RequestDetails className={`request-count ${status}`} key={status} name={show(resident.name)} rows={rows.filter((row) => row.status === status)} hint={`${count} ${label} - click for details`}>{count} {label}</RequestDetails>
             })}</div>}
           </th>
-          {groupPostings(draftPostings(resident, draft)).map((block) => {
+          {groupPostings(draftPostings(resident, draft, resolution?.completed_months)).map((block) => {
             const status = block[0].status
             const display = postingDisplay(block, 'catalogue', resolution?.entries)
             const value = display.label
@@ -570,7 +570,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
             const hoverName = category === 'elective' && !/\(\s*elective\s*\)/i.test(value) ? `${value} (Elective)` : value
             const hoverRange = range(block).replaceAll('Sept ', 'Sep ').replace('–', '-')
             const indicator = requestIndicator(block[0].month)
-            const projection = category === 'requirements_completed' ? 'Draft projection - ' : ''
+            const projection = category === 'requirements_completed' && block[0].draft ? 'Draft projection - ' : ''
             const draftPrefix = projection || (block[0].draft ? 'Draft assignment - ' : '')
             const start = block[0].draftBlockStart
             const blockId = `${rowId}-${block[0].month}`
@@ -650,7 +650,8 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         posting: option.posting, institution: option.institution, offering: option.source }, [editor]) : editing.clearPreview()}
       onApply={() => void editing.apply(editor)} onClose={editing.closeEditor} />}
     {!loading && <ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-marker legend-${kind}`} />{label}</li>)}</ul>}
-    {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft} entries={resolution?.entries || []} />, breakdownHost)}
+    {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft}
+      entries={resolution?.entries || []} completions={resolution?.completed_months} />, breakdownHost)}
   </>
 }
 

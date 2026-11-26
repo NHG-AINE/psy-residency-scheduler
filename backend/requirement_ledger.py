@@ -23,8 +23,8 @@ def source_key(source):
     return tuple(source.get(key) for key in ("sheet", "row", "column"))
 
 
-def build_requirement_ledger(workbook, store):
-    """Build selected-roster expected progress before the planning period.
+def build_requirement_ledger(workbook, store, *, include_planning_year=False):
+    """Build selected-roster expected progress before or through the planning period.
 
     Resolution remains global so saved exact periods are not broadened/truncated.
     Resolved current/earlier-year postings, including remediation, count duration.
@@ -38,7 +38,7 @@ def build_requirement_ledger(workbook, store):
             raise ValueError("planning start does not agree with target_year")
     except (KeyError, IndexError, TypeError, ValueError) as error:
         raise ValueError("Valid planning months[0].month agreeing with target_year are required") from error
-    cutoff_number = start_number - 1
+    cutoff_number = month_number(workbook["months"][-1]["month"]) if include_planning_year else start_number - 1
     cutoff = f"{cutoff_number // 12:04d}-{cutoff_number % 12 + 1:02d}"
     blocked = {source_key(record.get("source", {}))[:2]
                for issue in workbook.get("issues", []) if issue.get("code") in BLOCKED_IDENTITIES
@@ -57,10 +57,13 @@ def build_requirement_ledger(workbook, store):
                     and ("annual_sheets" in workbook or resident.get("match_status") != "ambiguous"))
 
     resolved = defaultdict(list)
-    for entry in evaluate_review(workbook, store)["entries"]:
+    selected = {"residents": workbook.get("residents", [])}
+    annual = workbook.get("annual_sheets", workbook.get("histories", []) + [selected])
+    review_workbook = workbook if not include_planning_year or "annual_sheets" in workbook else {
+        **workbook, "histories": annual}
+    for entry in evaluate_review(review_workbook, store)["entries"]:
         for month, source in zip(entry["months"], entry["sources"]):
             resolved[(mcr_key(entry["mcr"]), normalized_label(entry["name"]), month["month"], source_key(source))].append(entry)
-    annual = workbook.get("annual_sheets", workbook.get("histories", []) + [{"residents": workbook.get("residents", [])}])
     roster_identities = {source_key(r["source"])[:2]:
                          (mcr_key(r.get("mcr")), normalized_label(r.get("name")))
                          for r in workbook.get("residents", [])}
@@ -76,12 +79,12 @@ def build_requirement_ledger(workbook, store):
         for resident in sheet["residents"]:
             identity = linked_identity(resident)
             if not safe(resident):
-                if any(month_number(posting["month"]) < start_number for posting in resident["postings"]):
+                if any(month_number(posting["month"]) <= cutoff_number for posting in resident["postings"]):
                     unsafe_history.add(identity)
                 continue
             for posting in resident["postings"]:
                 month = posting["month"]
-                if month_number(month) >= start_number:
+                if month_number(month) > cutoff_number:
                     continue
                 evidence = {"value": posting.get("value"), "status": posting["status"],
                             "recorded_year": resident.get("residency_year"), "source": posting["source"],
@@ -272,3 +275,32 @@ def programme_requirements_completed(months):
     return any(completed.issuperset(route) for route in R1_COMPLETION_ROUTES) and all(
         r["requirement_id"] in completed for r in requirements
         if r["requirement_year"] != "R1" and not r.get("alternative"))
+
+
+def recorded_completion_months(workbook, store):
+    """Find selected-year blanks to display after evidenced programme completion."""
+    planning_months = {month["month"] for month in workbook.get("months", [])}
+    candidates = {}
+    for resident in workbook["residents"]:
+        last_posting = max((p["month"] for p in resident["postings"] if p["status"] == "posting"), default="")
+        trailing = {p["month"] for p in resident["postings"]
+                    if p["status"] == "blank" and p["month"] > last_posting and p["month"] in planning_months}
+        if trailing and not resident.get("is_intake_placeholder"):
+            candidates[source_key(resident["source"])] = trailing
+    if not candidates:
+        return []
+
+    result = []
+    for person in build_requirement_ledger(workbook, store, include_planning_year=True)["residents"]:
+        trailing = candidates.get(source_key(person["source"]))
+        if not trailing or person["warnings"] or not recorded_years(person["recorded_year"]):
+            continue
+        months = person["months"]
+        if any(month["status"] == "pending" for month in months) or not programme_requirements_completed(months):
+            continue
+        last_posting = max(month["month"] for month in months if month["status"] == "expected")
+        completed = [month["month"] for month in months if month["month"] in trailing and month["month"] > last_posting
+                     and month["status"] == "blank" and len(month["evidence"]) == 1]
+        if completed:
+            result.append({"source": person["source"], "months": completed})
+    return result

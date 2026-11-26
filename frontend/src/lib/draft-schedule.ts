@@ -2,8 +2,7 @@ import { sameSource, sourceLabel, monthLabel } from './workbook.ts'
 import type { Resident, Source, Workbook } from './workbook.ts'
 import { reasonLabel, resolvedCatalogueTarget } from './history-review.ts'
 import { postingHistoryEntry } from './posting-blocks.ts'
-import type { HistoryEntry } from './history-review.ts'
-import type { ReviewStore } from './history-review.ts'
+import type { HistoryEntry, RecordedCompletion, ReviewStore } from './history-review.ts'
 import type { SavedDraft } from './workbook-session.ts'
 
 export type RequestOutcome = {
@@ -292,17 +291,24 @@ export async function validateDraftChange(workbook: Workbook, store: ReviewStore
 
 // Display copies only: source retains the location being replaced, never generated evidence.
 // This overlay must never be passed to the history review or requirement ledger.
-export function draftPostings(resident: Resident, draft: DraftSchedule | null): Resident['postings'] {
-  if (!isUsableDraft(draft)) return resident.postings
-  const person = draft.residents.find((candidate) => sameSource(candidate.source, resident.source))
-  const unresolved = draft.skipped_residents?.find((candidate) => sameSource(candidate.source, resident.source))
-    ?.reasons.some((reason) => ['unresolved_history', 'pending_history_review'].includes(reason.code))
-  if (!person) return unresolved ? resident.postings.map((posting) => posting.status === 'blank'
-    ? { ...posting, unresolvedDraft: true } : posting) : resident.postings
+export function draftPostings(resident: Resident, draft: DraftSchedule | null, completions?: RecordedCompletion[]): Resident['postings'] {
+  const schedule = isUsableDraft(draft) ? draft : null
+  const person = schedule?.residents.find((candidate) => sameSource(candidate.source, resident.source))
+  if (!person) {
+    const completed = completions?.find((candidate) => sameSource(candidate.source, resident.source))?.months
+    const unresolved = schedule?.skipped_residents?.find((candidate) => sameSource(candidate.source, resident.source))
+      ?.reasons.some((reason) => ['unresolved_history', 'pending_history_review'].includes(reason.code))
+    if (!completed && !unresolved) return resident.postings
+    return resident.postings.map((posting) => {
+      if (posting.status !== 'blank') return posting
+      if (completed?.includes(posting.month)) return { ...posting, status: 'requirements_completed' }
+      return unresolved ? { ...posting, unresolvedDraft: true } : posting
+    })
+  }
   return resident.postings.map((posting) => {
     const month = person.months.find((candidate) => candidate.month === posting.month)
     if (posting.status === 'blank' && month?.status === 'requirements_completed') {
-      return { ...posting, status: 'requirements_completed' }
+      return { ...posting, status: 'requirements_completed', draft: true }
     }
     return posting.status !== 'loa' && month?.status === 'posting' && month.label
       ? { ...posting, value: month.label, status: 'posting', draft: true, draftCategory: month.target?.category || 'core', draftBlockStart: month.block_start } : posting

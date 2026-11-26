@@ -21,7 +21,8 @@ export type HistoryEntry = {
   match: { status: string; reasons: string[]; candidates: (CatalogueEntry & { year_context: string })[]; selected_candidate?: CatalogueEntry | null }
   review: { status: string; reasons: string[]; target: CatalogueEntry | null; requirement_year: string | null }
 }
-export type HistoryReview = { entries: HistoryEntry[]; catalogue: CatalogueEntry[]; decisions: DecisionState[] }
+export type RecordedCompletion = { source: Source; months: string[] }
+export type HistoryReview = { entries: HistoryEntry[]; catalogue: CatalogueEntry[]; decisions: DecisionState[]; completed_months?: RecordedCompletion[] }
 export const REVIEW_CHANGED = 'psy-review-changed'
 export const STORAGE_KEY = 'psy-history-review-v1'
 export const emptyStore = (): ReviewStore => ({ version: 1, decisions: [] })
@@ -127,6 +128,7 @@ export async function evaluateHistory(workbook: Workbook, store: ReviewStore, si
 
 function isHistoryReview(data: HistoryReview | null): data is HistoryReview {
   return !!data && [data.entries, data.catalogue, data.decisions].every(Array.isArray)
+    && (data.completed_months === undefined || Array.isArray(data.completed_months))
 }
 
 const computedImportFields = new Set(['match_status', 'matched_resident_source', 'catalogue_match', 'is_intake_placeholder', 'slot_id'])
