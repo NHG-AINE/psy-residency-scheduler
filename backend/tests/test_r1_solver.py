@@ -242,6 +242,28 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(sum(item["months"] for item in paused["residents"][0]["carryforward"]), 12)
         self.assertTrue(all(m["status"] == "loa" for m in paused["residents"][0]["months"]))
 
+    def test_generated_remainder_completes_paired_and_combined_routes(self):
+        from requirement_ledger import build_requirement_ledger
+        from tests.rollover_fixtures import following_year
+
+        for route, first_phase, route_index in (
+                ("TTSH/NNI", ["TTSH General Medicine"] * 2 + ["NNI Neurology"] * 2
+                 + ["TTSH General Medicine"] * 2, 0),
+                ("NUH", ["NUH Medicine & Neurology"] * 6, 1)):
+            with self.subTest(route=route):
+                book = r1_book()
+                inpatient = "IMH Inpatient Psychiatry"
+                set_history(book, first_phase + [inpatient] * 4 + ["LOA"] * 2)
+                leave_after(book, 2)
+                result = draft_schedule(book, STORE, max_seconds=5)
+                self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                person, = result["residents"]
+                self.assertEqual(person["route"], route)
+                self.assertEqual([m["label"] for m in person["months"] if m["target"]], [inpatient] * 2)
+                following = following_year(book, person["months"], "R1")
+                ledger, = build_requirement_ledger(following, STORE)["residents"]
+                self.assertEqual(ledger["r1_routes"][route_index]["evidence_status"], "supported")
+
     def test_capacity_lower_bound_never_exceeds_enumerated_overflow(self):
         from itertools import product
         # Choice lengths include LOA/partial carryforward and future-only zero.

@@ -212,7 +212,7 @@ class RequirementLedgerTests(unittest.TestCase):
         self.assertEqual(requirement(partial, "r1.medicine_neurology")["expected_months"], 3)
         self.assertEqual(requirement(partial, "r1.neurology")["expected_months"], 0)
 
-    def test_r3_loa_pauses_but_gaps_other_postings_and_sites_cannot_pool(self):
+    def test_r3_same_site_credit_survives_leave_and_interruptions(self):
         months = [(f"2025-{i:02d}", "IMH Continuity Clinic" if i <= 6 else "LOA") for i in range(1, 13)]
         result = ledger(book([resident(months, "R3")]))
         self.assertEqual(requirement(result, "r3.continuity_clinic")["remaining_months"], 6)
@@ -225,10 +225,10 @@ class RequirementLedgerTests(unittest.TestCase):
             changed = list(months)
             changed[7] = ("2025-08", break_value)
             summary = requirement(ledger(book([resident(changed + tail, "R3")])), "r3.continuity_clinic")
-            self.assertEqual(summary["expected_months"], 6)
+            self.assertEqual(summary["expected_months"], 12)
             self.assertGreaterEqual(len(summary["continuity_groups"]), 2)
         gap = months[:6] + tail
-        self.assertEqual(requirement(ledger(book([resident(gap, "R3")])), "r3.continuity_clinic")["expected_months"], 6)
+        self.assertEqual(requirement(ledger(book([resident(gap, "R3")])), "r3.continuity_clinic")["expected_months"], 12)
 
     def test_year_confirmation_remediation_stale_and_programme_validation(self):
         history = resident([("2026-01", "TTSH General Medicine")], "R3")
