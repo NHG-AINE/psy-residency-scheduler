@@ -11,15 +11,18 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 if __package__:
-    from .workbook_import import WorkbookError, header, parse_workbook, posting_catalogue
+    from .request_preferences import MONTHS
+    from .workbook_import import WorkbookError, header, month_number, parse_workbook, posting_catalogue
 else:
-    from workbook_import import WorkbookError, header, parse_workbook, posting_catalogue
+    from request_preferences import MONTHS
+    from workbook_import import WorkbookError, header, month_number, parse_workbook, posting_catalogue
 
 MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 DOCREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 VML = 'urn:schemas-microsoft-com:vml'
 EXCEL = 'urn:schemas-microsoft-com:office:excel'
+MONTH_ABBREVIATIONS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
 
 def _ref(source):
@@ -85,6 +88,62 @@ def _red_style(styles, style_id):
     return styles, len(xfs)
 
 
+def _format_month_range(start, end):
+    start_year, start_month = divmod(start, 12)
+    end_year, end_month = divmod(end, 12)
+    first = MONTH_ABBREVIATIONS[start_month]
+    last = f'{MONTH_ABBREVIATIONS[end_month]} {end_year}'
+    if start == end:
+        return last
+    if start_year != end_year:
+        first = f'{first} {start_year}'
+    return f'{first}–{last}'
+
+
+def _month_ranges(months):
+    ranges = []
+    for month in sorted({month_number(value) for value in months}):
+        if ranges and month == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], month)
+        else:
+            ranges.append((month, month))
+    return ', '.join(_format_month_range(start, end) for start, end in ranges)
+
+
+def _requested_window(period):
+    match = re.fullmatch(r'([A-Za-z]+)(?:\s+([0-9]{4}))?(?:\s*[-–]\s*([A-Za-z]+)\s+([0-9]{4}))?', period)
+    if not match:
+        return None
+    first, first_year, last, last_year = match.groups()
+    start_month = MONTHS.get(first.lower())
+    end_month = MONTHS.get((last or first).lower())
+    start_year = int(first_year or last_year or 0)
+    end_year = int(last_year or first_year or 0)
+    if not (start_month and end_month and start_year and end_year):
+        return None
+    start = start_year * 12 + start_month - 1
+    end = end_year * 12 + end_month - 1
+    return (start, end) if start <= end else None
+
+
+def _requested_timing(row):
+    period = row['request'].get('period')
+    period = '' if period is None else str(period)
+    label = period if period.strip() else 'Any time in planning year'
+    window = None
+    if row.get('reason') != 'Period is unclear or outside the planning year':
+        window = _requested_window(period.strip())
+    if window:
+        start, end = window
+        label = _format_month_range(start, end)
+
+    durations = row.get('requested_durations') or ([row['requested_months']] if row.get('requested_months') else [])
+    if not durations or (window and durations == [end - start + 1]):
+        return label
+    unit = 'month' if durations == [1] else 'months'
+    return f"{label} · {' or '.join(map(str, durations))} {unit}"
+
+
 def _notes(person):
     result = []
     unmet = False
@@ -98,12 +157,15 @@ def _notes(person):
         if status not in {'not_met', 'pending'}:
             raise WorkbookError('Invalid request outcome.')
         unmet |= status == 'not_met'
-        requested = ' OR '.join(f"{row['request'].get('posting_request') or '(unspecified)'} ({row['request'].get('period') or 'Any time in planning year'})" for row in alternatives)
-        assigned = '; '.join(f"{row['label']} ({', '.join(row['months'])})" for row in outcome.get('assigned', [])) or 'No matching assignment'
+        requested = ' OR '.join(
+            f"{row['request'].get('posting_request') or '(unspecified)'} ({_requested_timing(row)})"
+            for row in alternatives)
+        assigned = '; '.join(f"{row['label']} ({_month_ranges(row['months'])})"
+                             for row in outcome.get('assigned', [])) or 'No matching assignment'
         result.append(f"Request {'not met' if status == 'not_met' else 'pending review'}: {requested}\nAssigned: {assigned}\nReason: {outcome.get('reason') or 'Requires staff review.'}")
     completed = [m['month'] for m in person['months'] if m['status'] == 'requirements_completed']
     if completed:
-        result.append(f"Draft projection: requirements completed; unallocated months remain blank ({', '.join(completed)}).")
+        result.append(f"Draft projection: requirements completed; unallocated months remain blank ({_month_ranges(completed)}).")
     return '\n\n'.join(result), unmet
 
 

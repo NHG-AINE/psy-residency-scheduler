@@ -147,6 +147,58 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(imported['residents'][0]['postings'][3]['status'], 'posting')
         self.assertEqual(imported['residents'][0]['postings'][0]['value'], 'LOA')
 
+    def test_unmet_geriatric_request_and_assigned_posting_show_compact_ranges(self):
+        content, draft = fixture()
+        outcome = draft['residents'][0]['requests'][0]
+        outcome.update(request={'posting_request': 'SKH Geriatric Psychiatry', 'period': 'July - December 2027'},
+                       requested_durations=[6], assigned=[{'label': 'NUH Child and Geriatric Psychiatry',
+                                                           'months': [f'2028-{month:02d}' for month in range(1, 7)]}])
+
+        output, _ = export_workbook(content, 2027, draft)
+        note = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']['D3'].comment
+        self.assertEqual(note.author, 'Original author')
+        self.assertEqual(note.text.splitlines()[:5], [
+            'Keep this note', '',
+            'Request not met: SKH Geriatric Psychiatry (Jul–Dec 2027)',
+            'Assigned: NUH Child and Geriatric Psychiatry (Jan–Jun 2028)',
+            'Reason: Outstanding training',
+        ])
+
+    def test_request_alternatives_keep_distinct_durations_and_unclear_period_text(self):
+        content, draft = fixture()
+        outcome = draft['residents'][0]['requests'][0]
+        outcome['alternatives'] = [
+            {'request': {'posting_request': 'Option A', 'period': ' '}, 'requested_durations': [3, 6], 'requested_months': 6},
+            {'request': {'posting_request': 'Option B', 'period': 'October 2027 – March 2028'}, 'requested_months': 3},
+            {'request': {'posting_request': 'Option C', 'period': 'June 2028'}},
+            {'request': {'posting_request': 'Option D', 'period': 'After exams'}, 'requested_months': 1},
+            {'request': {'posting_request': 'Option E', 'period': '  July - December 2027  '},
+             'reason': 'Period is unclear or outside the planning year', 'requested_durations': [6]},
+        ]
+
+        output, _ = export_workbook(content, 2027, draft)
+        note = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']['D3'].comment.text
+        self.assertIn('Request not met: Option A (Any time in planning year · 3 or 6 months) OR '
+                      'Option B (Oct 2027–Mar 2028 · 3 months) OR Option C (Jun 2028) OR '
+                      'Option D (After exams · 1 month) OR Option E (  July - December 2027   · 6 months)', note)
+
+    def test_assigned_and_completed_month_ranges_keep_gaps_and_postings_separate(self):
+        content, draft = fixture()
+        person = draft['residents'][0]
+        person['requests'][0]['assigned'] = [
+            {'label': 'First posting', 'months': ['2028-03', '2028-01', '2027-12', '2028-01']},
+            {'label': 'Second posting', 'months': ['2028-04']},
+        ]
+        for month in person['months']:
+            if month['month'] in {'2027-12', '2028-01', '2028-03'}:
+                month['status'] = 'requirements_completed'
+
+        output, _ = export_workbook(content, 2027, draft)
+        note = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']['D3'].comment.text
+        self.assertIn('Assigned: First posting (Dec 2027–Jan 2028, Mar 2028); Second posting (Apr 2028)', note)
+        self.assertIn('Draft projection: requirements completed; unallocated months remain blank '
+                      '(Nov 2027–Jan 2028, Mar 2028).', note)
+
     def test_pending_and_met_alternative_are_not_red_and_new_notes_are_readable(self):
         content, draft = fixture()
         w = load_workbook(BytesIO(content))
