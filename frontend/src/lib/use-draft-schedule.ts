@@ -16,6 +16,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   const resultRef = useRef(result)
   const updateResult = useCallback((value: DraftResult) => { resultRef.current = value; setResult(value) }, [])
   const [cancelling, setCancelling] = useState(false)
+  const [cancelled, setCancelled] = useState(false)
   const [ready, setReady] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const active = useRef<{
@@ -107,7 +108,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
     const start = performance.now()
     setOriginYear(workbook.target_year)
     setStartedAt(start)
-    setBusy(true); updateResult({ saved: resultRef.current.saved, failure: null }); setError(''); setNotice('')
+    setBusy(true); setCancelled(false); updateResult({ saved: resultRef.current.saved, failure: null }); setError(''); setNotice('')
     let statusTimeout: ReturnType<typeof setTimeout> | undefined
     try {
       const saved = readReviewStore(window.localStorage)
@@ -138,6 +139,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
       operation.controller.abort()
       if (active.current === operation) {
         active.current = null
+        setCancelled(operation.cancelled && !operation.invalidated)
         setBusy(false); setCancelling(false); setFinishing(false); setReady(false); setStartedAt(null)
       }
       void operation.token.then(cancelDraft).catch(() => {})
@@ -146,6 +148,6 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   const visible = canGenerate && result.saved?.year === workbook?.target_year ? result.saved : null
   const onOriginYear = canGenerate && originYear === selectedYear
   return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, ready: ready && onOriginYear, finishing: finishing && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, finishGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
-    elapsedSeconds: visible?.elapsedSeconds ?? null }
+    cancelled: cancelled && onOriginYear, elapsedSeconds: visible?.elapsedSeconds ?? null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>

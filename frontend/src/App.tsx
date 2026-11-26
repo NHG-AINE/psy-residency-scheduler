@@ -244,7 +244,8 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   const { draft, error: draftError, failedAttempt } = draftState
   const timetable = useRef<HTMLDivElement>(null)
   const focusedSource = useRef<Source | null>(null)
-  const beforeGeneration = useRef<{ draft: DraftSchedule | null } | null>(null)
+  const beforeGeneration = useRef<{ draft: DraftSchedule | null } | null>(draftState.busy ? { draft } : null)
+  const discardRequested = useRef(false)
   const [attempt, setAttempt] = useState(0)
   const rawReviews = useSyncExternalStore(subscribeToReviews, reviewSnapshot)
   const savedReviews = useMemo(() => readTimetableReviews(rawReviews), [rawReviews])
@@ -266,6 +267,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
   }, [workbook, onLabels, rawReviews, savedReviews, attempt, importLoading, resolution])
   const error = !importLoading && !resolution ? savedReviews.error || (failure?.workbook === workbook && failure.review === savedReviews && failure.attempt === attempt ? failure.message : '') : ''
   const loading = importLoading || (!resolution && !error)
+  const timetableBusy = loading || draftState.busy
   const hasEditOptions = !!draft?.edit_options?.length
   const canEdit = hasEditOptions && !loading && !savedReviews.error && !draftState.pending && !exporting
   const [checkingUndo, setCheckingUndo] = useState(false)
@@ -461,25 +463,44 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       side: event.shiftKey ? (right ? 'after' : 'before') : undefined })
   }
   useLayoutEffect(() => {
-    if (loading || !focusSource || focusedSource.current === focusSource) return
+    if (timetableBusy || !focusSource || focusedSource.current === focusSource) return
     const target = document.getElementById(residentRowId(focusSource))
     if (target && timetable.current?.contains(target)) {
       focusedSource.current = focusSource
       target.focus({ preventScroll: true })
       target.scrollIntoView({ block: 'center', inline: 'nearest' })
     }
-  }, [focusSource, loading])
-  useEffect(() => {
-    if (importLoading || year !== workbook.target_year) { beforeGeneration.current = null; return }
-    if (draftState.busy) { beforeGeneration.current ??= { draft }; return }
-    if (loading || !beforeGeneration.current) return
-    const previous = beforeGeneration.current.draft
-    beforeGeneration.current = null
+  }, [focusSource, timetableBusy])
+  useLayoutEffect(() => {
+    if (importLoading || year !== workbook.target_year || (draftState.pending && !draftState.busy)) {
+      if (!draftState.pending) beforeGeneration.current = null
+      discardRequested.current = false
+      return
+    }
+    const previous = beforeGeneration.current
+    const regenerating = draftState.busy && !previous && !!draft && !loading
+    const generated = !timetableBusy && previous !== null && draft !== null && draft !== previous.draft
+    const restored = !timetableBusy && ((previous !== null && draftState.cancelled) || (discardRequested.current && !draft))
+    if (draftState.busy) {
+      beforeGeneration.current ??= { draft }
+      discardRequested.current = false
+    } else if (!loading) {
+      beforeGeneration.current = null
+      discardRequested.current = false
+    }
     const grid = timetable.current
-    if (draft && draft !== previous && grid && grid.getBoundingClientRect().top >= window.innerHeight) return revealElement(grid)
-  }, [draft, draftState.busy, importLoading, loading, workbook.target_year, year])
+    if (!(generated || restored || regenerating) || !grid) return
+    const targets = regenerating ? [grid] : [grid, breakdownHost]
+    const animations = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? [] : targets.map((target) =>
+      target?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }))
+    const stop = generated && grid.getBoundingClientRect().top >= window.innerHeight ? revealElement(grid) : undefined
+    return () => {
+      stop?.()
+      animations.forEach((animation) => animation?.cancel())
+    }
+  }, [draft, draftState.busy, draftState.cancelled, draftState.pending, importLoading, loading, timetableBusy, workbook.target_year, year, breakdownHost])
   useEffect(() => {
-    if (loading || !breakdownHost || !timetable.current) return
+    if (timetableBusy || !breakdownHost || !timetable.current) return
     let stop: (() => void) | undefined
     // Let the final timetable and breakdown paint before starting the scroll.
     let frame = requestAnimationFrame(() => {
@@ -488,7 +509,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       })
     })
     return () => { cancelAnimationFrame(frame); stop?.() }
-  }, [loading, breakdownHost, onReady, workbook, resolution])
+  }, [timetableBusy, breakdownHost, onReady, workbook, resolution])
   const availableYears = [...years].sort((a, b) => a - b)
   const yearIndex = availableYears.indexOf(year)
   const words = (value: string) => value.split(/(\s+)/).map((word, index) => /\s/.test(word) ? word : <span className="posting-word" key={index}>{word}</span>)
@@ -508,10 +529,11 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
         </div>}
       </div>
       <DraftActions state={draftState} workbook={workbook} yearLabel={`Jul ${workbook.target_year} – Jun ${workbook.target_year + 1}`}
-        exporting={exporting} checkingUndo={checkingUndo} loading={importLoading} onUndo={undoLastChange} onExport={onExport} onDiscard={onDiscard} onFind={onFind} />
+        exporting={exporting} checkingUndo={checkingUndo} loading={importLoading} onUndo={undoLastChange} onExport={onExport}
+        onDiscard={() => { discardRequested.current = true; onDiscard() }} onFind={onFind} />
     </div>
     {filters}
-    {draft && !hasEditOptions && <p className="table-note draft-regenerate-note">Regenerate this draft to edit its posting blocks.</p>}
+    {draft && !draftState.busy && !hasEditOptions && <p className="table-note draft-regenerate-note">Regenerate this draft to edit its posting blocks.</p>}
     <p className={hiddenUndo || checkingUndo ? 'table-note' : undoError?.draft === draft ? 'draft-error' : 'sr-only'} role="status">
       {checkingUndo ? 'Checking which later changes can be kept…' : undoError?.draft === draft ? undoError.message
         : hiddenUndo ? `Undid the last change to ${hiddenUndo}’s draft. The resident’s row was filtered out when you selected Undo.` : editing.announcement}
@@ -524,12 +546,13 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
     {draftError && <p className="draft-error" role="alert">{draftError}</p>}
     {exportError && <p className="draft-error" role="alert">{exportError}</p>}
     {error && <div className="timetable-label-error" role="alert"><p>Catalogue labels are unavailable. Original labels are shown. {error}</p><button className="button button-secondary" type="button" onClick={() => setAttempt((value) => value + 1)}>Retry catalogue labels</button></div>}
-    <div ref={timetable} aria-busy={loading} onDragOver={(event) => {
+    {loading && !draftState.busy && <span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span>}
+    <div ref={timetable} aria-busy={timetableBusy} onDragOver={(event) => {
       if (!event.defaultPrevented && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }} onDragLeave={(event) => {
       if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) && !editing.moving.current?.keyboard) editing.selectDestination(null)
     }}>
-    {loading ? <><span className="sr-only" role="status">{importLoading ? 'Loading workbook data' : 'Loading catalogue labels'}</span><Skeleton /></> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editor || editing.move || editing.released || editing.returning || checkingUndo || undo)}><table>
+    {timetableBusy ? <Skeleton /> : !residents.length ? <p className="empty-note">{workbook.residents.length ? 'No residents match this search or request filter.' : 'No resident rows were found for this planning year.'}</p> : <TimetableGrid suppressTooltip={!!(editor || editing.move || editing.released || editing.returning || checkingUndo || undo)}><table>
       <caption className="sr-only">{draft ? 'Draft' : 'Imported'} timetable for July {workbook.target_year} to June {workbook.target_year + 1}.</caption>
       <colgroup><col className="resident-column" />{workbook.months.map((month) => <col key={month.month} />)}</colgroup>
       <thead><tr><th scope="col">Resident</th>{workbook.months.map((month) => <th scope="col" key={month.month} title={sourceLabel(month.source)}>{monthLabel(month.month)}</th>)}</tr></thead>
@@ -649,7 +672,7 @@ function Timetable({ residents, workbook, year, years, onYearChange, draftState,
       onSelect={(option) => option ? editing.check({ kind: 'edit', resident: editor.source, start: editor.start,
         posting: option.posting, institution: option.institution, offering: option.source }, [editor]) : editing.clearPreview()}
       onApply={() => void editing.apply(editor)} onClose={editing.closeEditor} />}
-    {!loading && <ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-marker legend-${kind}`} />{label}</li>)}</ul>}
+    {!timetableBusy && <ul className="posting-legend" aria-label="Posting colour legend">{Object.entries(postingCategoryLabels).map(([kind, label]) => <li key={kind}><span aria-hidden="true" className={`legend-marker legend-${kind}`} />{label}</li>)}</ul>}
     {!loading && breakdownHost && createPortal(<MonthlyBreakdown key={year} workbook={workbook} draft={draft}
       entries={resolution?.entries || []} completions={resolution?.completed_months} />, breakdownHost)}
   </>
@@ -922,7 +945,7 @@ export default function App() {
           historyResident={historyResident} draftState={draftState}
         /> : busy && <><span className="sr-only" role="status">Loading workbook data</span><Skeleton /></>}
       </section>}
-      {workbook && view === 'Timetable' && <div ref={setBreakdownHost} />}
+      {workbook && view === 'Timetable' && <div ref={setBreakdownHost} hidden={draftState.busy} />}
     </main>
     {workbook && !busy && ['Residents', 'Requests', 'Postings'].includes(view) && <ScrollToTop key={view} />}
   </>
