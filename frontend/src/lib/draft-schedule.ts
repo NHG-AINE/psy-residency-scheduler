@@ -429,7 +429,8 @@ export function groupedCapacityRows(rows: CapacityRow[]) {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label))
 }
 
-export function monthRanges(months: string[]) {
+export function monthRanges(months: string[], formatRange = (start: string, end: string) => start === end
+  ? monthLabel(start) : `${monthLabel(start)} \u2013 ${monthLabel(end)}`) {
   const ranges: string[][] = []
   const ordinal = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7))
   for (const month of [...new Set(months)].sort()) {
@@ -437,6 +438,5 @@ export function monthRanges(months: string[]) {
     if (last && ordinal(month) === ordinal(last.at(-1)!) + 1) last.push(month)
     else ranges.push([month])
   }
-  return ranges.map((range) => range.length === 1 ? monthLabel(range[0])
-    : `${monthLabel(range[0])} \u2013 ${monthLabel(range.at(-1)!)}`).join(', ')
+  return ranges.map((range) => formatRange(range[0], range.at(-1)!)).join(', ')
 }

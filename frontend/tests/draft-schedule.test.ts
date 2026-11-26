@@ -372,9 +372,9 @@ test('draft feedback shows historical warnings and request outcomes with the rel
     assert.doesNotMatch(alternativeHtml, /Request not met|R4 Inpatient must be outside IMH/)
 
     for (const [months, expected] of [
-      [Array.from({ length: 12 }, (_, i) => `${i < 6 ? 2027 : 2028}-${String((i + 6) % 12 + 1).padStart(2, '0')}`), 'Jul 27 \u2013 Jun 28'],
-      [['2027-12', '2028-01', '2028-03'], 'Dec 27 \u2013 Jan 28, Mar 28'],
-      [['2028-04'], 'Apr 28'],
+      [Array.from({ length: 12 }, (_, i) => `${i < 6 ? 2027 : 2028}-${String((i + 6) % 12 + 1).padStart(2, '0')}`), 'Jul 2027–Jun 2028'],
+      [['2027-12', '2028-01', '2028-03'], 'Dec 2027–Jan 2028, Mar 2028'],
+      [['2028-04'], 'Apr 2028'],
     ] as const) {
       const assigned = renderToStaticMarkup(createElement(RequestDetails, {
         ...props, rows: [{ ...row, assigned: [{ label: 'Clinic', months: [...months] }] }],
