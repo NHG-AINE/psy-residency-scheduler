@@ -215,7 +215,7 @@ def _summaries(months, resume_month=None):
             continue
         key = month["requirement_id"]
         counts[key] += 1
-        if key.startswith(("r2.", "r3.")):
+        if key.startswith(("r2.", "r3.", "r4.")):
             site_counts[key][month["posting"], month["institution"]] += 1
         if key != "r3.continuity_clinic":
             active = None
@@ -241,7 +241,7 @@ def _summaries(months, resume_month=None):
             key = rule["id"]
             count = r5_counts[key] if year == "R5" else counts[key]
             required = targets.get(key, rule["months"])
-            if year in {"R2", "R3"}:
+            if year in {"R2", "R3", "R4"}:
                 same_site = max(site_counts[key].values(), default=0)
                 if year == "R3" or same_site < required:
                     count = same_site

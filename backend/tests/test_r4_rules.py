@@ -134,7 +134,7 @@ class R4Tests(unittest.TestCase):
         self.assertTrue(any(item["requirement_id"] == "r3.continuity_clinic" and item["institution"] == "NUH"
                             for item in person["carryforward"]))
 
-    def test_disconnected_partial_r4_is_flagged(self):
+    def test_conflicting_partial_r4_sites_are_flagged(self):
         book = r4_book()
         for sheet in book["annual_sheets"]:
             for past in sheet["residents"]:
@@ -152,11 +152,35 @@ class R4Tests(unittest.TestCase):
                     month["source"]["row"] = 4
                 sheet["residents"].append(duplicate)
         book["annual_sheets"].append({"residents": [resident(
-            [("2027-04", "NUH Consultation Liaison Psychiatry"), ("2027-06", "NUH Consultation Liaison Psychiatry")], "R4", "Partial")]})
+            [("2027-04", "NUH Consultation Liaison Psychiatry"), ("2027-05", "TTSH Consultation Liaison Psychiatry"),
+             ("2027-06", "NUH Consultation Liaison Psychiatry")], "R4", "Partial")]})
         result = draft_schedule(book, STORE)
         self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
         self.assertEqual([person["name"] for person in result["residents"]], ["Second Resident"])
         self.assertIn("conflicting_partial_r4_history", [reason["code"] for reason in result["skipped_residents"][0]["reasons"]])
+
+    def test_interleaved_partial_r4_postings_both_resume(self):
+        from requirement_ledger import build_requirement_ledger
+        from tests.rollover_fixtures import following_year
+        from tests.test_r5_rules import r5_book
+
+        book = r5_book()
+        book["annual_sheets"].pop()
+        book["residents"][0]["residency_year"] = "R4"
+        forensic = "IMH Forensic Psychiatry"
+        emergency = "IMH Emergency Psychiatry"
+        history = resident([("2027-04", forensic), ("2027-05", emergency), ("2027-06", forensic)],
+                           "R4", "Interrupted R4")
+        book["annual_sheets"].append({"residents": [history]})
+        result = draft_schedule(book, STORE)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        generated = result["residents"][0]["months"]
+        self.assertEqual(Counter(m["label"] for m in generated[:3]), {forensic: 1, emergency: 2})
+        assigned = [m for m in generated if m["target"] and m["target"]["residency_year"] == "R4"]
+        self.assertEqual(len(assigned), 9)
+        following = following_year(book, assigned, "R4")
+        ledger, = build_requirement_ledger(following, STORE)["residents"]
+        self.assertEqual({r["remaining_months"] for r in ledger["requirements"] if r["requirement_year"] == "R4"}, {0})
 
     def test_weighted_inpatient_and_even_cl_targets_with_cluster_priority(self):
         book = r4_book()

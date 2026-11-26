@@ -81,7 +81,7 @@ class R3Tests(unittest.TestCase):
             [(f"2025-{m:02d}", clinic) for m in range(7, 11)] + [("2025-11", "LOA"), ("2025-12", "LOA")]
             + [(f"2026-{m:02d}", clinic) for m in range(1, 7)], "R3", "Earlier clinic")]})
         book["annual_sheets"].append({"residents": [resident(
-            [(f"2026-{m:02d}", "IMH Forensic Psychiatry") for m in (7, 8, 9)],
+            [("2026-07", "IMH Forensic Psychiatry"), ("2026-08", "IMH Emergency Psychiatry")],
             "R4", "Other rotations")]})
         for remaining, site in ((2, None), (0, clinic), (2, "TTSH Continuity Clinic")):
             with self.subTest(site=site):
