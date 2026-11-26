@@ -26,7 +26,7 @@ INPATIENT = 'IMH Inpatient Psychiatry'
 STORE = ReviewStore(version=1, decisions=[])
 
 
-def fixture(*, next_sheet=False):
+def fixture(*, next_sheet=False, request_notes=False):
     def populate(workbook):
         workbook.remove(workbook['Jul 2026 - Jun 2027'])
         latest = workbook[LATEST]
@@ -42,10 +42,16 @@ def fixture(*, next_sheet=False):
         latest['H3'].fill = PatternFill('solid', fgColor='DDEEFF')
         latest['J3'].alignment = Alignment(wrap_text=True)
         latest.row_dimensions[3].height = 23
-        workbook['Requests']['D3'] = 'Continuation is also an old request'
-        workbook['Requests']['D3'].alignment = Alignment(wrap_text=True)
-        workbook['Requests'].freeze_panes = 'D2'
-        workbook['Requests']['J3'] = 'Keep layout note outside request fields'
+        requests = workbook['Requests']
+        requests['D3'] = 'Continuation is also an old request'
+        requests['D3'].alignment = Alignment(wrap_text=True)
+        requests.freeze_panes = 'D2'
+        requests['J3'] = 'Keep layout note outside request fields'
+        if request_notes:
+            for coord, note in [('D1', 'Request heading'), ('D3', 'Old request note'),
+                                ('D4', 'Old note on an empty cell'), ('J3', 'Layout note')]:
+                requests[coord].comment = Comment(note, 'Planner')
+            requests['J3'].hyperlink = '#Requests!D1'
         workbook.active = workbook['Postings']
         workbook.views[0].firstSheet = workbook.index(workbook['Requests'])
         latest.defined_names.add(DefinedName('LatestRoster', attr_text=f"'{LATEST}'!$D$3"))
@@ -108,7 +114,19 @@ def edited_draft(content):
 
 class WorkbookRolloverTests(unittest.TestCase):
     def test_edited_draft_round_trips_with_clean_roster_and_preserved_history(self):
-        content = fixture()
+        comments_path = 'xl/comments/comment2.xml'
+        drawing_path = 'xl/drawings/commentsDrawing2.vml'
+        control = (b'<v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="request-button">'
+                   b'<x:ClientData xmlns:x="urn:schemas-microsoft-com:office:excel" ObjectType="Button">'
+                   b'<x:Row>2</x:Row><x:Column>3</x:Column></x:ClientData></v:shape>')
+        with_control = BytesIO()
+        with ZipFile(BytesIO(fixture(request_notes=True))) as source, ZipFile(with_control, 'w') as target:
+            for entry in source.infolist():
+                data = source.read(entry)
+                if entry.filename == drawing_path:
+                    data = data.replace(b'</xml>', control + b'</xml>')
+                target.writestr(entry, data)
+        content = with_control.getvalue()
         draft = edited_draft(content)
         normal_export, _ = export_workbook(content, 2027, draft)
         output, year, warnings = prepare_next_workbook(content, STORE, draft, target_year=2028)
@@ -118,10 +136,12 @@ class WorkbookRolloverTests(unittest.TestCase):
         self.assertNotIn(8, warnings.get('missing_latest_progress', []))
         with ZipFile(BytesIO(normal_export)) as old, ZipFile(BytesIO(output)) as new:
             changed = {'[Content_Types].xml', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels',
-                       'xl/styles.xml', 'xl/worksheets/sheet2.xml'}  # Requests is workbook's second sheet.
+                       'xl/styles.xml', 'xl/worksheets/sheet2.xml', comments_path, drawing_path}
             for name in old.namelist():
                 if name not in changed:
                     self.assertEqual(new.read(name), old.read(name), name)
+            self.assertIn(control, new.read(drawing_path))
+            self.assertEqual(new.read(drawing_path).count(b'ObjectType="Note"'), 2)
 
         workbook = load_workbook(BytesIO(output))
         before = load_workbook(BytesIO(normal_export))
@@ -135,10 +155,15 @@ class WorkbookRolloverTests(unittest.TestCase):
         self.assertEqual(latest['R3'].value, INPATIENT)
         self.assertEqual(latest['D3'].comment.text, 'Existing note')
         self.assertEqual(requests['D1'].value, 'Posting Request')
+        self.assertEqual(requests['D1'].comment.text, 'Request heading')
         self.assertIsNone(requests['D2'].value)
         self.assertIsNone(requests['D3'].value)
+        self.assertIsNone(requests['D3'].comment)
+        self.assertIsNone(requests['D4'].value)
+        self.assertIsNone(requests['D4'].comment)
         self.assertTrue(requests['D3'].alignment.wrap_text)
         self.assertEqual(requests['J3'].value, 'Keep layout note outside request fields')
+        self.assertEqual(requests['J3'].comment.text, 'Layout note')
         self.assertEqual(requests.freeze_panes, 'D2')
         self.assertEqual(following.freeze_panes, 'G3')
         self.assertEqual(following.column_dimensions['D'].width, 31)
