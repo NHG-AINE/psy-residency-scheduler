@@ -626,9 +626,7 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         _add_catalogue_blockers(o, seen_r4, blockers)
         if o["remarks"]:
             blockers.append({"code": "unsupported_r4_remarks", "source": o["source"]})
-    r4_blocks = [r4_rules.prepare_blocks(person, r4_options, prepared["planning_start"],
-                     (r1_remaining[i] or 0)
-                     + sum(r["remaining_months"] for r, _, _ in blocks[i] + r3_blocks[i]), local_blockers[i])
+    r4_blocks = [r4_rules.prepare_blocks(person, r4_options, local_blockers[i])
                  if person["schedule_through"] >= 4 else [] for i, person in enumerate(selected)]
     options += r4_options
     r5_options = [o for o in prepared["catalogue_options"] if o["residency_year"] == "R5"] if any(p["schedule_through"] >= 5 for p in selected) else []

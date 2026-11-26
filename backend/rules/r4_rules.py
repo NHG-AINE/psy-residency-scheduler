@@ -3,10 +3,8 @@
 from .r2_rules import partial_posting_identity
 if __package__ == "backend.rules":
     from ..programme_requirements import PROGRAMME_REQUIREMENTS
-    from ..workbook_import import month_number
 else:
     from programme_requirements import PROGRAMME_REQUIREMENTS
-    from workbook_import import month_number
 
 
 def completed_r1_inpatient_at_imh(person, planned_months=0):
@@ -15,7 +13,7 @@ def completed_r1_inpatient_at_imh(person, planned_months=0):
         and m["institution"] == "IMH" for m in person["months"]) >= PROGRAMME_REQUIREMENTS["R1"]["Inpatient Psychiatry"]["months"]
 
 
-def prepare_blocks(person, options, planning_start, earlier_months, blockers):
+def prepare_blocks(person, options, blockers):
     blocks = []
     imh = completed_r1_inpatient_at_imh(person)
     for requirement in person["requirements"]:
@@ -27,25 +25,10 @@ def prepare_blocks(person, options, planning_start, earlier_months, blockers):
         except ValueError:
             blockers.append({"code": "conflicting_partial_r4_history", "source": person["source"]})
             continue
-        if partial:
-            history = [m for m in person["months"] if m["status"] == "expected" and m.get("requirement_id") == key]
-            first, last = month_number(history[0]["month"]), month_number(history[-1]["month"])
-            tail = [m for m in person["months"] if month_number(m["month"]) >= first]
-            expected = first
-            for month in tail:
-                if month_number(month["month"]) != expected or not (
-                        month["status"] == "loa" or month["status"] == "expected" and month.get("requirement_id") == key):
-                    break
-                expected += 1
-            if earlier_months or expected != month_number(planning_start) or last >= expected:
-                blockers.append({"code": "conflicting_partial_r4_history", "source": person["source"]})
-                continue
         eligible = [o for o in options if o["requirement_id"] == key
                     and (partial is None or (o["posting"], o["institution"]) == partial)
                     and not (imh and key == "r4.inpatient_psychiatry" and o["institution"] == "IMH")]
         if not eligible:
             blockers.append({"code": "missing_r4_catalogue_option", "source": person["source"], "requirement_id": key})
         blocks.append((requirement, eligible, partial is not None))
-    if sum(partial for _, _, partial in blocks) > 1:
-        blockers.append({"code": "conflicting_partial_r4_history", "source": person["source"]})
     return blocks
