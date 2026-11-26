@@ -36,9 +36,34 @@ def fixture():
     months[4]['status'] = 'requirements_completed'
     draft = {'status': 'feasible', 'cutoff': '2027-06', 'residents': [
         {'source': person['source'], 'name': person['name'], 'mcr': person['mcr'], 'projected_year': 'R4,R5', 'months': months,
-         'requests': [{'request': {'posting_request': 'Requested posting', 'period': 'Oct-Dec'}, 'status': 'not_met',
+         'requests': [{'request': {'posting_request': 'Requested posting', 'period': 'October 2027'}, 'status': 'not_met',
                        'reason': 'Outstanding training', 'assigned': [{'label': option['label'], 'months': ['2027-10']}]}]}]}
     return content, draft
+
+
+def reopen_request_export(outcome, assignments, *, july_note=None):
+    def prepare(workbook):
+        sheet = workbook['Jul 2027 - Jun 2028']
+        sheet.unmerge_cells('H3:I3')
+        for cell in sheet['G3:R3'][0]:
+            cell.value = None
+        if july_note:
+            sheet['G3'].comment = Comment(july_note, 'Planner')
+        workbook['Postings'].append(['R3', 'Core', 'NUH', 'Continuity Clinic', 12, 12, 'Continuity Clinic'])
+        workbook['Postings']['C6'] = 'NUH'  # Combined Child and Geriatric core posting.
+
+    content = structured_workbook_bytes(prepare)
+    workbook = parse_workbook(content)
+    options = {option['label']: option for option in posting_catalogue(workbook['postings'])}
+    resident = {key: workbook['residents'][0][key] for key in ('name', 'mcr', 'source')}
+    resident['requests'] = [outcome]
+    resident['months'] = [
+        {'month': date['month'], 'status': 'posting', 'label': label, 'target': options[label]}
+        if label else {'month': date['month'], 'status': 'outside_draft_scope'}
+        for date, label in zip(workbook['months'], assignments, strict=True)]
+    draft = {'status': 'feasible', 'cutoff': '2027-06', 'residents': [resident]}
+    output, _ = export_workbook(content, 2027, draft)
+    return load_workbook(BytesIO(output))[workbook['target_sheet']]
 
 
 class ExportTests(unittest.TestCase):
@@ -134,7 +159,7 @@ class ExportTests(unittest.TestCase):
         self.assertIn('requirements completed', s['D3'].comment.text)
         self.assertIn('Keep this note', s['D3'].comment.text)
         self.assertIn('Requested posting', s['D3'].comment.text)
-        self.assertIn('Oct-Dec', s['D3'].comment.text)
+        self.assertIn('Oct 2027', s['D3'].comment.text)
         self.assertIn('Assigned:', s['D3'].comment.text)
         self.assertEqual(s['D3'].font.color.rgb, 'FFFF0000')
         self.assertTrue(s['D3'].font.bold)
@@ -142,10 +167,39 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(s['D3'].font.name, 'Arial')
         with ZipFile(BytesIO(content)) as before, ZipFile(BytesIO(output)) as after:
             differences = [n for n in before.namelist() if before.read(n) != after.read(n)]
-            self.assertEqual(set(differences), {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml'})
+            self.assertEqual(set(differences), {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml',
+                                                'xl/drawings/commentsDrawing1.vml'})
         imported = parse_workbook(output)
         self.assertEqual(imported['residents'][0]['postings'][3]['status'], 'posting')
         self.assertEqual(imported['residents'][0]['postings'][0]['value'], 'LOA')
+
+    def test_dated_request_shows_compact_ranges_and_shades_only_the_requested_months(self):
+        assigned = 'NUH Child and Geriatric Psychiatry'
+        outcome = {'status': 'not_met', 'request': {'posting_request': 'SKH Geriatric Psychiatry', 'period': 'Jul - Dec 2027'},
+                   'requested_months': 6, 'assigned': [{'label': assigned, 'months': [f'2028-{m:02d}' for m in range(1, 7)]}]}
+        sheet = reopen_request_export(outcome, [None] * 6 + [assigned] * 6, july_note='Keep July note')
+        self.assertIn('SKH Geriatric Psychiatry (Jul–Dec 2027)', sheet['D3'].comment.text)
+        self.assertIn('Assigned: NUH Child and Geriatric Psychiatry (Jan–Jun 2028)', sheet['D3'].comment.text)
+        self.assertEqual([c.column_letter for c in sheet['G3:R3'][0] if c.fill.fgColor.rgb == 'FFFBE1DF'],
+                         list('GHIJKL'))
+        self.assertIn('Keep July note\n\nRequested SKH Geriatric Psychiatry for Jul–Dec 2027.', sheet['G3'].comment.text)
+        self.assertTrue(all(c.comment is None for c in sheet['H3:R3'][0]))
+
+    def test_undated_unmet_clinic_request_highlights_the_whole_planning_year(self):
+        outcome = {'status': 'not_met', 'request': {'posting_request': 'IMH Continuity Clinic', 'period': None}}
+        sheet = reopen_request_export(outcome, ['NUH Continuity Clinic'] * 6 + ['TTSH General Medicine'] * 3 + [None] * 3)
+        self.assertTrue(all(c.fill.fgColor.rgb == 'FFFBE1DF' for c in sheet['G3:R3'][0]))
+        self.assertIn('Requested IMH Continuity Clinic at any time in the planning year', sheet['G3'].comment.text)
+        self.assertTrue(all(c.comment is None for c in sheet['H3:R3'][0]))
+
+    def test_partial_match_keeps_the_gap_in_the_note_and_shades_only_the_miss(self):
+        clinic = 'NUH Continuity Clinic'
+        outcome = {'status': 'not_met', 'request': {'posting_request': clinic, 'period': 'Dec 2027 - Mar 2028'},
+                   'assigned': [{'label': clinic, 'months': ['2027-12', '2028-01', '2028-03']}],
+                   'matched_months': ['2027-12', '2028-01', '2028-03']}
+        sheet = reopen_request_export(outcome, [None] * 5 + [clinic, clinic, None, clinic] + [None] * 3)
+        self.assertIn('Assigned: NUH Continuity Clinic (Dec 2027–Jan 2028, Mar 2028)', sheet['D3'].comment.text)
+        self.assertEqual([c.column_letter for c in sheet['G3:R3'][0] if c.fill.fgColor.rgb == 'FFFBE1DF'], ['N'])
 
     def test_pending_and_met_alternative_are_not_red_and_new_notes_are_readable(self):
         content, draft = fixture()
@@ -153,13 +207,14 @@ class ExportTests(unittest.TestCase):
         w['Jul 2027 - Jun 2028']['D3'].comment = None
         stream = BytesIO(); w.save(stream); content = stream.getvalue()
         outcome = draft['residents'][0]['requests'][0]
-        outcome['status'] = 'pending'
+        outcome.update(status='pending', requested_durations=[3, 6])
         draft['residents'][0]['requests'].append({**deepcopy(outcome), 'status': 'not_met', 'alternatives': [{'status': 'met'}]})
         output, retained = export_workbook(content, 2027, draft)
         s = load_workbook(BytesIO(output))['Jul 2027 - Jun 2028']
         self.assertEqual(s['D3'].font.color.rgb, '00003366')
         self.assertEqual(s['D3'].comment.text.count('Requested posting'), 1)
         self.assertIn('pending review', s['D3'].comment.text)
+        self.assertIn('Oct 2027 · 3 or 6 months', s['D3'].comment.text)
 
     def test_blank_month_merge_is_opened_but_existing_note_merge_is_preserved(self):
         content, draft = fixture()
@@ -230,7 +285,8 @@ class ExportTests(unittest.TestCase):
             self.assertIn('Requested posting', thread)
             self.assertIn('id="original-id"', thread)
             for name in before.namelist():
-                if name not in {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml', 'xl/threadedComments/threadedComment1.xml'}:
+                if name not in {'xl/worksheets/sheet2.xml', 'xl/styles.xml', 'xl/comments/comment1.xml',
+                                'xl/drawings/commentsDrawing1.vml', 'xl/threadedComments/threadedComment1.xml'}:
                     self.assertEqual(before.read(name), after.read(name), name)
 
     def test_payload_mismatches_are_rejected_and_download_has_filename(self):

@@ -11,15 +11,18 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 if __package__:
-    from .workbook_import import WorkbookError, header, parse_workbook, posting_catalogue
+    from .request_preferences import MONTHS
+    from .workbook_import import WorkbookError, header, month_number, normalized_posting_label, parse_workbook, posting_catalogue
 else:
-    from workbook_import import WorkbookError, header, parse_workbook, posting_catalogue
+    from request_preferences import MONTHS
+    from workbook_import import WorkbookError, header, month_number, normalized_posting_label, parse_workbook, posting_catalogue
 
 MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 DOCREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 VML = 'urn:schemas-microsoft-com:vml'
 EXCEL = 'urn:schemas-microsoft-com:office:excel'
+MONTH_ABBREVIATIONS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
 
 def _ref(source):
@@ -45,10 +48,11 @@ def _set_cell(xml, coord, value=None, style=None):
     pattern = rf'<(?:\w+:)?c\b(?=[^>]*\br="{coord}")[^>]*?(?:/>|>.*?</(?:\w+:)?c>)'
     match = re.search(pattern, xml, re.DOTALL)
     if value is None:
-        if not match:
-            raise WorkbookError('The resident name cell is missing.')
-        cell = re.sub(r'\s+s="[^"]*"', '', match[0], count=1)
-        cell = re.sub(r'(<(?:\w+:)?c)\b', rf'\1 s="{style}"', cell, count=1)
+        if match:
+            cell = re.sub(r'\s+s="[^"]*"', '', match[0], count=1)
+            cell = re.sub(r'(<(?:\w+:)?c)\b', rf'\1 s="{style}"', cell, count=1)
+        else:
+            cell = f'<c r="{coord}" s="{style}"/>'
     else:
         if style is None and match:
             old_style = re.search(r'\bs="([^"]*)"', match[0])
@@ -68,6 +72,12 @@ def _set_cell(xml, coord, value=None, style=None):
     return xml[:position] + cell + xml[position:]
 
 
+def _append_style(styles, tag, node, count):
+    ET.register_namespace('', MAIN)
+    styles = _append(styles, tag, ET.tostring(node, encoding='unicode'))
+    return re.sub(rf'(<{tag}\b[^>]*\bcount=")[^"]*', rf'\g<1>{count}', styles, count=1)
+
+
 def _red_style(styles, style_id):
     root = ET.fromstring(styles)
     fonts, xfs = root.find(f'{{{MAIN}}}fonts'), root.find(f'{{{MAIN}}}cellXfs')
@@ -78,16 +88,110 @@ def _red_style(styles, style_id):
     ET.SubElement(font, f'{{{MAIN}}}color', rgb='FFFF0000')
     xf.set('fontId', str(len(fonts)))
     xf.set('applyFont', '1')
-    ET.register_namespace('', MAIN)
-    for tag, node, count in [('fonts', font, len(fonts) + 1), ('cellXfs', xf, len(xfs) + 1)]:
-        styles = _append(styles, tag, ET.tostring(node, encoding='unicode'))
-        styles = re.sub(rf'(<{tag}\b[^>]*\bcount=")[^"]*', rf'\g<1>{count}', styles, count=1)
-    return styles, len(xfs)
+    styles = _append_style(styles, 'fonts', font, len(fonts) + 1)
+    return _append_style(styles, 'cellXfs', xf, len(xfs) + 1), len(xfs)
+
+
+def _missed_style(styles, style_id):
+    root = ET.fromstring(styles)
+    fills, xfs = root.find(f'{{{MAIN}}}fills'), root.find(f'{{{MAIN}}}cellXfs')
+    color = 'FFFBE1DF'
+    for fill_id, fill in enumerate(fills):
+        if fill.find(f'{{{MAIN}}}patternFill[@patternType="solid"]/{{{MAIN}}}fgColor[@rgb="{color}"]') is not None:
+            break
+    else:
+        fill_id = len(fills)
+        fill = ET.fromstring(f'<fill><patternFill patternType="solid"><fgColor rgb="{color}"/></patternFill></fill>')
+        styles = _append_style(styles, 'fills', fill, fill_id + 1)
+    xf = deepcopy(xfs[style_id])
+    xf.set('fillId', str(fill_id))
+    xf.set('applyFill', '1')
+    return _append_style(styles, 'cellXfs', xf, len(xfs) + 1), len(xfs)
+
+
+def _format_month_range(start, end):
+    start_year, start_month = divmod(start, 12)
+    end_year, end_month = divmod(end, 12)
+    first = MONTH_ABBREVIATIONS[start_month]
+    last = f'{MONTH_ABBREVIATIONS[end_month]} {end_year}'
+    if start == end:
+        return last
+    if start_year != end_year:
+        first = f'{first} {start_year}'
+    return f'{first}–{last}'
+
+
+def _month_ranges(months):
+    ranges = []
+    for month in sorted({month_number(value) for value in months}):
+        if ranges and month == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], month)
+        else:
+            ranges.append((month, month))
+    return ', '.join(_format_month_range(start, end) for start, end in ranges)
+
+
+def _requested_window(period):
+    match = re.fullmatch(r'([A-Za-z]+)(?:\s+([0-9]{4}))?(?:\s*[-–]\s*([A-Za-z]+)\s+([0-9]{4}))?', period)
+    if not match:
+        return None
+    first, first_year, last, last_year = match.groups()
+    start_month = MONTHS.get(first.lower())
+    end_month = MONTHS.get((last or first).lower())
+    start_year = int(first_year or last_year or 0)
+    end_year = int(last_year or first_year or 0)
+    if not (start_month and end_month and start_year and end_year):
+        return None
+    start = start_year * 12 + start_month - 1
+    end = end_year * 12 + end_month - 1
+    return (start, end) if start <= end else None
+
+
+def _requested_timing(row, *, in_sentence=False):
+    period = row['request'].get('period')
+    period = '' if period is None else str(period)
+    label = period if period.strip() else 'Any time in planning year'
+    window = None
+    if row.get('reason') != 'Period is unclear or outside the planning year':
+        window = _requested_window(period.strip())
+    if window:
+        start, end = window
+        label = _format_month_range(start, end)
+    if in_sentence:
+        label = f'for {label}' if period.strip() else 'at any time in the planning year'
+
+    durations = row.get('requested_durations') or ([row['requested_months']] if row.get('requested_months') else [])
+    if not durations or (window and durations == [end - start + 1]):
+        return label
+    unit = 'month' if durations == [1] else 'months'
+    return f"{label} · {' or '.join(map(str, durations))} {unit}"
+
+
+def _missed_months(option, months):
+    if option.get('status') in {'pending', 'met'}:
+        return set()
+    window = _requested_window(str(option['request'].get('period') or '').strip())
+    selected = months
+    if window:
+        selected = [m for m in months if window[0] <= month_number(m['month']) <= window[1]] or months
+    matched = set(option.get('matched_months', []))
+    eligible = {tuple(key) for key in option.get('option_keys', [])}
+    requested = normalized_posting_label(option['request'].get('posting_request') or '')
+    for month in selected:
+        target = month.get('target') or {}
+        if month['status'] != 'posting' or not target.get('label'):
+            continue
+        identity = (target.get('requirement_id'), target.get('institution'), target['label'])
+        label = normalized_posting_label(target['label'])
+        if identity in eligible or ('option_keys' not in option and requested in {label, f"{label} ({target.get('category')})"}):
+            matched.add(month['month'])
+    return {month['month'] for month in selected} - matched
 
 
 def _notes(person):
     result = []
     unmet = False
+    missed_requests = []
     for outcome in person.get('requests', []):
         if 'duplicate_of' in outcome or outcome.get('status') == 'met':
             continue
@@ -98,13 +202,23 @@ def _notes(person):
         if status not in {'not_met', 'pending'}:
             raise WorkbookError('Invalid request outcome.')
         unmet |= status == 'not_met'
-        requested = ' OR '.join(f"{row['request'].get('posting_request') or '(unspecified)'} ({row['request'].get('period') or 'Any time in planning year'})" for row in alternatives)
-        assigned = '; '.join(f"{row['label']} ({', '.join(row['months'])})" for row in outcome.get('assigned', [])) or 'No matching assignment'
+        requested = ' OR '.join(
+            f"{row['request'].get('posting_request') or '(unspecified)'} ({_requested_timing(row)})"
+            for row in alternatives)
+        assigned = '; '.join(f"{row['label']} ({_month_ranges(row['months'])})"
+                             for row in outcome.get('assigned', [])) or 'No matching assignment'
         result.append(f"Request {'not met' if status == 'not_met' else 'pending review'}: {requested}\nAssigned: {assigned}\nReason: {outcome.get('reason') or 'Requires staff review.'}")
+        if status == 'not_met':
+            missed = set().union(*(_missed_months(row, person['months']) for row in alternatives))
+            if missed:
+                message = ' OR '.join(f"{row['request'].get('posting_request') or '(unspecified)'} {_requested_timing(row, in_sentence=True)}"
+                                      for row in alternatives)
+                detail = 'Request not met.' if any(row.get('assigned') or row.get('matched_months') for row in alternatives) else 'No matching assignment.'
+                missed_requests.append((missed, f'Requested {message}. {detail}'))
     completed = [m['month'] for m in person['months'] if m['status'] == 'requirements_completed']
     if completed:
-        result.append(f"Draft projection: requirements completed; unallocated months remain blank ({', '.join(completed)}).")
-    return '\n\n'.join(result), unmet
+        result.append(f"Draft projection: requirements completed; unallocated months remain blank ({_month_ranges(completed)}).")
+    return '\n\n'.join(result), unmet, missed_requests
 
 
 def _add_notes(parts, sheet_path, sheet_xml, notes):
@@ -206,6 +320,7 @@ def export_workbook(content, target_year, draft):
             xml = parts[sheet_path].decode('utf-8')
             styles = parts['xl/styles.xml'].decode('utf-8')
             notes, seen, unmerged, retained = {}, set(), set(), []
+            shaded_styles = {}
             for person in draft['residents']:
                 identity = _ref(person['source'])
                 if identity not in residents or identity in seen:
@@ -245,6 +360,7 @@ def export_workbook(content, target_year, draft):
                     if not isinstance(projected, str) or not re.fullmatch(r'R[1-5](?:,\s*R[1-5])*', projected):
                         raise WorkbookError('Invalid projected residency year.')
                     xml = _set_cell(xml, f"{get_column_letter(columns['residency year'])}{row}", projected)
+                inherited_styles = {}
                 for month in person['months']:
                     if month['status'] not in {'posting', 'loa', 'outside_draft_scope', 'requirements_completed'}:
                         raise WorkbookError('Invalid draft month status.')
@@ -271,7 +387,25 @@ def export_workbook(content, target_year, draft):
                         raise WorkbookError('Draft posting references do not match the workbook catalogue.')
                     label = option['label'] + (' (Elective)' if option['category'] == 'elective' else '')
                     xml = _set_cell(xml, coord, label, style=inherited_style)
-                note, unmet = _notes(person)
+                    if inherited_style is not None:
+                        inherited_styles[coord] = inherited_style
+                note, unmet, missed_requests = _notes(person)
+                shaded = set()
+                for missed, message in missed_requests:
+                    first = True
+                    for month in sorted(missed):
+                        coord = f"{months[month]}{row}"
+                        if any(coord in merged and str(merged) not in unmerged for merged in sheet.merged_cells.ranges):
+                            continue
+                        if coord not in shaded:
+                            base = inherited_styles.get(coord, sheet[coord].style_id)
+                            if base not in shaded_styles:
+                                styles, shaded_styles[base] = _missed_style(styles, base)
+                            xml = _set_cell(xml, coord, style=shaded_styles[base])
+                            shaded.add(coord)
+                        if first:
+                            notes[coord] = notes[coord] + '\n' + message if coord in notes else message
+                            first = False
                 coord = f"{get_column_letter(columns['name'])}{row}"
                 if note:
                     notes[coord] = note
