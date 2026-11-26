@@ -255,12 +255,13 @@ def _add_notes(parts, sheet_path, sheet_xml, notes):
         return next(f'xl/{directory}/draft{i}.{suffix}' for i in range(1, 2002) if f'xl/{directory}/draft{i}.{suffix}' not in parts)
     comment_path = path(comment_rel) if comment_rel is not None else fresh('comments', 'xml')
     vml_path = path(vml_rel) if vml_rel is not None else fresh('drawings', 'vml')
-    comments = parts.get(comment_path, f'<comments xmlns="{MAIN}"><authors><author>PSY Scheduler</author></authors><commentList></commentList></comments>')
+    comments = parts.get(comment_path, f'<comments xmlns="{MAIN}"><authors></authors><commentList></commentList></comments>')
     root = ET.fromstring(comments)
     authors = root.find(f'{{{MAIN}}}authors')
-    author_id = len(authors)
-    comments = _append(comments, 'authors', '<author>PSY Scheduler</author>')
     existing_notes = {c.get('ref'): c for c in root.find(f'{{{MAIN}}}commentList')}
+    author_id = next((i for i, author in enumerate(authors) if (author.text or '').strip() == 'PSY Scheduler'), len(authors))
+    if author_id == len(authors) and notes.keys() - existing_notes.keys():
+        comments = _append(comments, 'authors', f'<author xmlns="{MAIN}">PSY Scheduler</author>')
     vml = parts.get(vml_path, '<xml></xml>')
     if '_x0000_t202' not in vml:
         vml = _append(vml, 'xml', f'<v:shapetype xmlns:v="{VML}" id="_x0000_t202" coordsize="21600,21600"/>')
