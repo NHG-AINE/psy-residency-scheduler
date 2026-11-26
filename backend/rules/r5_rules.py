@@ -1,6 +1,6 @@
 """R5 core routes and six-month or paired three-month elective blocks."""
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import product
 from .r2_rules import add_blocks
 
@@ -27,8 +27,6 @@ def r5_runs(months):
             active = None
         previous = number
         if month["status"] == "loa":
-            if active is not None:
-                active["next_month"] = number + 1
             continue
         if month["status"] != "expected" or not month.get("requirement_id", "").startswith("r5."):
             active = None
@@ -36,32 +34,46 @@ def r5_runs(months):
         identity = (month["posting"], month["institution"])
         key = month["requirement_id"]
         if active is None or active["identity"] != identity or active["requirement_id"] != key:
-            active = {"requirement_id": key, "identity": identity, "start": number, "count": 0,
+            active = {"requirement_id": key, "identity": identity, "count": 0,
                       "target": month.get("target") or {}, "start_month": month["month"]}
             runs.append(active)
         active["count"] += 1
         active["end_month"] = month["month"]
-        active["next_month"] = number + 1
     return runs
+
+
+def shared_credit_blocks(runs):
+    """Collect progress for six-month blocks whose credit is awarded together."""
+    blocks = {}
+    for run in runs:
+        key = run["requirement_id"]
+        credit = _credit_key(run["target"])
+        if key == COMBINED["id"] or credit:
+            identity = (key, credit, run["identity"])
+            block = blocks.setdefault(identity, {**run, "count": 0})
+            block["count"] += run["count"]
+            block["end_month"] = run["end_month"]
+    return list(blocks.values())
 
 
 def r5_credit_progress(runs):
     """Count credited components exactly once, retaining incomplete six-month blocks."""
-    counts = Counter()
+    counts, completed = Counter(), set()
     for run in runs:
+        if run["requirement_id"] != COMBINED["id"] and not _credit_key(run["target"]):
+            counts[run["requirement_id"]] += run["count"]
+    for run in shared_credit_blocks(runs):
         key, length = run["requirement_id"], run["count"]
         credit = additional_r5_credit(run["target"])
         if key == COMBINED["id"]:
             counts[key] = max(counts[key], min(length, 6))
-            if length == 6:
-                for core in R5_CORES:
-                    counts[core] += 3
-        elif credit:
-            if length == 6:
+        if length >= 6 and (key, _credit_key(run["target"])) not in completed:
+            completed.add((key, _credit_key(run["target"])))
+            if credit:
                 counts[credit["id"]] += credit["months"]
                 counts[R5_ELECTIVE] += 6 - credit["months"]
-        else:
-            counts[key] += length
+            else:
+                counts.update({core: 3 for core in R5_CORES})
     return counts
 
 
@@ -125,8 +137,10 @@ def _requested_components(requests, options):
 def _templates(runs, options, requests, allow_split):
     requested, mixed_requests = _requested_components(requests, options)
     counts = r5_credit_progress(runs)
-    core_runs = Counter(run["requirement_id"] for run in runs)
-    historical_cores = {run["requirement_id"] for run in runs}
+    historical_sites = defaultdict(set)
+    for run in runs:
+        historical_sites[run["requirement_id"]].add(run["identity"])
+    historical_cores = set(historical_sites)
     historical_mixed = {credit for run in runs if (credit := _credit_key(run["target"]))}
     available_mixed = {credit for option in options if (credit := _credit_key(option))}
     mixed_sets = [()] + [(core,) for core in R5_CORES if core in available_mixed | historical_mixed]
@@ -149,7 +163,7 @@ def _templates(runs, options, requests, allow_split):
                 continue
             cores = []
             for key, length in zip(R5_CORES, lengths):
-                if length == 6 and core_runs[key] > 1:
+                if length == 6 and len(historical_sites[key]) > 1:
                     cores.extend([(key, 3, None)] * 2)
                 elif length:
                     cores.append((key, length, None))
@@ -179,9 +193,13 @@ def _manual_core_templates(splits=((3, 9), (6, 6), (9, 3))):
                 yield combined + [(key, length, None) for key, blocks in zip(R5_CORES, lengths) for length in blocks]
 
 
-def _fit_history(template, runs, options, resume_month):
-    """Match each physical run to consecutive whole blocks and at most one open block."""
+def _fit_history(template, runs, options):
+    """Fit chronological posting runs to whole or started same-site blocks."""
     matched = {}
+    elective_months = Counter()
+    for run in runs:
+        if run["requirement_id"] == R5_ELECTIVE and not _credit_key(run["target"]):
+            elective_months[run["identity"]] += run["count"]
     for run in runs:
         key, left = run["requirement_id"], run["count"]
         credit = _credit_key(run["target"])
@@ -191,28 +209,38 @@ def _fit_history(template, runs, options, resume_month):
                              and (o["posting"], o["institution"]) == run["identity"]), run["target"])
             if offering.get("label"):
                 durations = elective_durations(offering)
-        for index, (req, duration, extra) in enumerate(template):
-            if req != key or extra != credit or index in matched:
+        # Finish a block at this site before opening another slot for it.
+        slots = sorted(range(len(template)), key=lambda index: index not in matched)
+        for index in slots:
+            req, duration, extra = template[index]
+            previous = matched.get(index)
+            credited = previous["count"] if previous else 0
+            if req != key or extra != credit or credited == duration:
+                continue
+            if previous and previous["identity"] != run["identity"]:
                 continue
             if key == R5_ELECTIVE and duration not in durations:
                 return None
-            # Four/five adjacent months of a flexible elective already form one
-            # six-month block. A three-only offering instead starts a second block.
-            if key == R5_ELECTIVE and duration == 3 and 3 < left < 6 and 6 in durations:
+            # Four/five same-site months of a flexible elective establish a
+            # six-month block. A three-only offering can start a second block.
+            if key == R5_ELECTIVE and duration == 3 and 3 < elective_months[run["identity"]] < 6 and 6 in durations:
                 return None
-            count = min(left, duration)
-            if count < duration and (run is not runs[-1] or run["next_month"] != resume_month):
-                return None
-            matched[index] = {**run, "count": count}
+            count = min(left, duration - credited)
+            matched[index] = {**(previous or run), "count": credited + count}
             left -= count
             if not left:
                 break
         if left:
             return None
+    # Different eligible three-month electives are distinct placements.
+    unfinished = Counter(template[index][0] for index, run in matched.items()
+                         if template[index][0] in R5_CORES and run["count"] < template[index][1])
+    if any(count > 1 for count in unfinished.values()):
+        return None
     return matched
 
 
-def _fitted_plans(runs, options, resume_month, requests=(), allow_split=False, manual_edit=False):
+def _fitted_plans(runs, options, requests=(), allow_split=False, manual_edit=False):
     # Preserve completed legacy elective credit (four months plus two). Core
     # history must still fit its own blocks even when all twelve months are present.
     electives = [r for r in runs if r["requirement_id"] == R5_ELECTIVE and not _credit_key(r["target"])]
@@ -221,7 +249,7 @@ def _fitted_plans(runs, options, resume_month, requests=(), allow_split=False, m
 
     regular = set()
     for template in _templates(runs, options, requests, allow_split):
-        matched = _fit_history(template, runs, options, resume_month)
+        matched = _fit_history(template, runs, options)
         if matched is not None:
             regular.add(tuple(template))
             yield template, matched, False
@@ -230,12 +258,19 @@ def _fitted_plans(runs, options, resume_month, requests=(), allow_split=False, m
 
     # Only an edit may start an all-core plan. Recorded blocks that no ordinary
     # plan can finish may continue one. Prefer 6+6 while both splits still fit.
-    for splits in (((6, 6),), ((3, 9), (9, 3))):
+    recorded = Counter()
+    for run in runs:
+        recorded[run["requirement_id"]] += run["count"]
+    combined_credit = 3 if recorded[COMBINED["id"]] else 0
+    extended_splits = tuple(split for split in ((3, 9), (9, 3))
+                            if manual_edit or any(duration == 9 and recorded[core] + combined_credit > 6
+                                                  for core, duration in zip(R5_CORES, split)))
+    for splits in (((6, 6),), extended_splits):
         found = False
         for template in _manual_core_templates(splits):
             if tuple(template) in regular:
                 continue
-            matched = _fit_history(template, runs, options, resume_month)
+            matched = _fit_history(template, runs, options)
             if matched is not None:
                 found = True
                 yield template, matched, manual_edit
@@ -243,7 +278,7 @@ def _fitted_plans(runs, options, resume_month, requests=(), allow_split=False, m
             return
 
 
-def history_targets(runs, resume_month):
+def history_targets(runs):
     """Use the least extended supported plan consistent with the recorded blocks."""
     def components(template):
         totals = Counter()
@@ -258,11 +293,24 @@ def history_targets(runs, resume_month):
         totals.setdefault(R5_ELECTIVE, 0)
         return totals
 
-    plans = (components(template) for template, _, _ in _fitted_plans(runs, (), resume_month))
+    plans = (components(template) for template, _, _ in _fitted_plans(runs, ()))
     return min(plans, key=lambda t: sum(t[core] for core in R5_CORES), default=None)
 
 
-def prepare_routes(person, options, planning_start, earlier_months, blockers, allow_split=False, requests=(), *, fixed=None):
+def history_continuations(months, options):
+    """Return durations of the supported remainders for each started option."""
+    runs = r5_runs(months)
+    remaining = defaultdict(set)
+    if runs:
+        for template, matched, _ in _fitted_plans(runs, options):
+            for index, run in matched.items():
+                key, duration, credit = template[index]
+                if run["count"] < duration:
+                    remaining[key, *run["identity"], credit].add(duration - run["count"])
+    return remaining
+
+
+def prepare_routes(person, options, blockers, allow_split=False, requests=(), *, fixed=None):
     requirements = {r["requirement_id"]: r for r in person["requirements"]}
     runs = r5_runs(person["months"])
     routes, missing = [], None
@@ -272,8 +320,7 @@ def prepare_routes(person, options, planning_start, earlier_months, blockers, al
                                for month in fixed["months"] if month["status"] == "posting"
                                and month["target"]["residency_year"] == "R5")
     manual_edit = bool(fixed_blocks) and all(key != R5_ELECTIVE for _, key in fixed_blocks)
-    resume_month = None if earlier_months else month_number(planning_start)
-    for template, matched, manual in _fitted_plans(runs, options, resume_month, requests, allow_split, manual_edit):
+    for template, matched, manual in _fitted_plans(runs, options, requests, allow_split, manual_edit):
         if manual:
             remaining = Counter((key, duration - matched.get(index, {}).get("count", 0))
                                 for index, (key, duration, _) in enumerate(template))

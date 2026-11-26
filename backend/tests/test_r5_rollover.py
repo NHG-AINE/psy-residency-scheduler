@@ -1,5 +1,4 @@
 from collections import Counter
-from copy import deepcopy
 from datetime import date
 from itertools import groupby
 import unittest
@@ -7,10 +6,10 @@ import unittest
 from draft_edits import validate_draft_change
 from requirement_ledger import build_requirement_ledger, programme_requirements_completed
 from scheduler import draft_schedule
+from tests.rollover_fixtures import following_year
 from tests.test_r1_solver import STORE
-from tests.test_r5_combined import CHILD, GERI, LABEL, combined_book
+from tests.test_r5_combined import CHILD, COMBINED, GERI, LABEL, add_history, combined_book
 from tests.test_r5_rules import r5_book
-from tests.test_requirement_ledger import resident
 from tests.test_workbook_import import structured_workbook_bytes
 from workbook_import import parse_workbook
 
@@ -23,26 +22,69 @@ MIXED = {"IMH Child and EPIP": CHILD, "CGH Geriatric elective": GERI}
 
 
 def next_year(book, prefix, leave=False):
-    """Record the draft prefix ending in June, using only workbook cell values."""
-    following = deepcopy(book)
-    labels = [m["label"] + (" (Elective)" if m["target"]["category"] == "elective" else "")
-              for m in prefix]
+    """Place a draft prefix at the end of the year to test a June cutoff."""
+    recorded = list(prefix)
     if leave:
-        labels.append("LOA")
+        recorded.append({"status": "loa"})
     dates = [m["month"] for m in book["months"]]
-    following["annual_sheets"].append({"residents": [resident(
-        list(zip(dates[-len(labels):], labels)), "R5", "Previous R5")]})
-    following["target_year"] += 1
-    for month, cell in zip(following["months"], following["residents"][0]["postings"]):
-        month["month"] = str(int(month["month"][:4]) + 1) + month["month"][4:]
-        cell["month"] = month["month"]
+    following = following_year(book, [{**m, "month": date}
+                                     for m, date in zip(recorded, dates[-len(recorded):])], "R5")
     if leave:
         following["residents"][0]["postings"][0].update(status="loa", value="LOA")
-    following["requests"] = []
     return following
 
 
 class R5RolloverTests(unittest.TestCase):
+    def test_interrupted_combined_block_earns_credits_on_completion(self):
+        other_site = "IMH Child and Geriatric Psychiatry"
+        for tail, complete, conflict in (([LABEL] * 2, True, False), ([LABEL], False, False),
+                                          ([other_site], False, True)):
+            with self.subTest(tail=tail):
+                book = combined_book()
+                book["postings"]["core"].append({**book["postings"]["core"][-1], "posting": other_site,
+                                                  "source": {"sheet": "Postings", "row": 901}})
+                book["postings"]["electives"].append({"residency_year": "R5", "institution": "IMH",
+                    "elective": "General Psychiatry", "remarks": [], "source": {"sheet": "Postings", "row": 902}})
+                labels = [LABEL] * 4 + [FLEX + " (Elective)"] * 6 + tail
+                add_history(book, [(f"{2026 + i // 12}-{i % 12 + 1:02d}", label)
+                                   for i, label in enumerate(labels, start=6)])
+                ledger, = build_requirement_ledger(book, STORE)["residents"]
+                by_id = {r["requirement_id"]: r for r in ledger["requirements"]}
+                self.assertEqual(by_id[CHILD]["expected_months"], 3 if complete else 0)
+                self.assertEqual(by_id[GERI]["expected_months"], 3 if complete else 0)
+                self.assertEqual(by_id[ELECTIVE]["expected_months"], 6)
+                self.assertEqual("conflicting_partial_r5_history" in ledger["warnings"], conflict)
+                if not conflict and not complete:
+                    book["requests"] = [{"matched_resident_source": book["residents"][0]["source"],
+                                         "posting_request": LABEL, "period": period}
+                                        for period in ("Jul - Jul 2027", "Jul - Nov 2027")]
+                result = draft_schedule(book, STORE, max_seconds=5)
+                if conflict:
+                    self.assertEqual(result["status"], "blocked")
+                else:
+                    self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+                    self.assertEqual(by_id[COMBINED]["expected_months"], 6 if complete else 5)
+                    assigned = [m for m in result["residents"][0]["months"] if m["target"]]
+                    self.assertEqual([m["label"] for m in assigned], [] if complete else [LABEL])
+                    if assigned:
+                        self.assertEqual(result["residents"][0]["requests"][0]["status"], "met")
+                        self.assertEqual(result["residents"][0]["requests"][1]["reason_code"], "duration_mismatch")
+                        following = following_year(book, result["residents"][0]["months"], "R5")
+                        next_ledger, = build_requirement_ledger(following, STORE)["residents"]
+                        self.assertTrue(programme_requirements_completed(next_ledger["months"]))
+
+    def test_interrupted_core_can_return_after_a_completed_block_at_another_site(self):
+        book = combined_book()
+        labels = [GERI_SITE] + [OTHER_GERI] * 3 + [GERI_SITE] * 2 + [CHILD_SITE] * 6
+        add_history(book, [(f"{2026 + i // 12}-{i % 12 + 1:02d}", label)
+                           for i, label in enumerate(labels, start=6)])
+        ledger, = build_requirement_ledger(book, STORE)["residents"]
+        self.assertTrue(programme_requirements_completed(ledger["months"]))
+        result = draft_schedule(book, STORE, max_seconds=5)
+        self.assertIn(result["status"], {"optimal", "feasible"}, result["blockers"])
+        self.assertTrue(all(month["status"] == "requirements_completed"
+                            for month in result["residents"][0]["months"]))
+
     def test_edited_nine_month_core_resumes_second_site_after_june(self):
         book = r5_book()
         first, second, child = "CGH Geriatric Psychiatry", "IMH Geriatric Psychiatry", "NUH Child & Adolescent Psychiatry"
