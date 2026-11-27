@@ -198,6 +198,8 @@ class DraftSearch:
     ready: Event = field(default_factory=Event)
     finish: Event = field(default_factory=Event)
     finished_early: bool = False
+    priority: str | None = None
+    has_requests: bool = False
 
     def observe_finish(self):
         if self.finish.is_set():
@@ -248,6 +250,8 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
     if stopping():
         return None, "unknown", stages, monotonic() - started
     if initial_feasibility and deadline > monotonic():
+        if search:
+            search.priority = "initial_feasibility"
         stage_started = monotonic()
         model.clear_objective()
         solver = cp_model.CpSolver()
@@ -274,13 +278,17 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         if not valid:
             stopping()
             return None, solver.status_name(feasibility_status).lower(), stages, monotonic() - started
+    pending_stage = None
     for objective_index, (name, objective) in enumerate(objectives):
         if stopping():
             break
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
+        if search and initial_feasibility:
+            search.priority = name
         stage_started = monotonic()
+        pending_stage = name
         if callable(objective):
             objective = objective()
             objectives[objective_index] = (name, objective)
@@ -288,7 +296,6 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
                 break
             remaining = deadline - monotonic()
             if remaining <= 0:
-                stages.append({"priority": name, "status": "unknown", "wall_time_seconds": monotonic() - stage_started})
                 break
         relaxation = None
         if (name == "monthly_medicine_neurology_ratio" and r1_ratio_data
@@ -355,6 +362,7 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         status = _solve_model(solver, model, callback, cancel, search)
         stages.append({"priority": name, "status": solver.status_name(status).lower(),
                        "wall_time_seconds": monotonic() - stage_started})
+        pending_stage = None
         if relaxation is not None:
             stages[-1]["posting_relaxation" if name == "posting_balance" else "ratio_relaxation"] = relaxation
         if status not in {cp_model.OPTIMAL, cp_model.FEASIBLE}:
@@ -377,6 +385,8 @@ def _solve_priorities(model, objectives, variables, max_seconds, cancel=None, r1
         for variable in variables:
             model.add_hint(variable, best.value(variable))
         completed += 1
+    if pending_stage is not None:
+        stages.append({"priority": pending_stage, "status": "unknown", "wall_time_seconds": monotonic() - stage_started})
     complete = completed == len(objectives) and status == cp_model.OPTIMAL
     if complete and initial_feasibility and search:
         search.finished_early = False
@@ -982,6 +992,8 @@ def draft_schedule(workbook, reviewstore, max_seconds=DEFAULT_SOLVE_SECONDS, can
         scored[solver] = diagnostics
         return tuple(diagnostics["objectives"][name] for name in priorities)
     result["soft_priority"] = [name for name, _ in objectives]
+    if search:
+        search.has_requests = "resident_requests" in priorities
     if fixed is not None:
         if set(fixed) != {draft_source_key(person["source"]) for person in selected}:
             raise ValueError("The draft no longer matches the planning roster. Generate a new draft.")
