@@ -165,7 +165,7 @@ class DraftFinishTests(unittest.TestCase):
             worker = Thread(target=lambda: replies.append(client.post(f"/api/draft?token={token}", json=payload)))
             worker.start()
             self.assertTrue(entered.wait(5))
-            self.assertEqual(client.get(f"/api/draft/{token}/status").json(), {"ready": True})
+            self.assertTrue(client.get(f"/api/draft/{token}/status").json()["ready"])
             self.assertEqual(client.post(f"/api/draft/{token}/finish").status_code, 204)
             worker.join(5)
             self.assertFalse(worker.is_alive())

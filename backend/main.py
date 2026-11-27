@@ -130,8 +130,11 @@ async def start_draft():
 @app.get("/api/draft/{token}/status")
 async def draft_status(token: str):
     operation = _draft_operations.get(token)
-    ready = bool(operation and not operation["cancel"].is_set() and operation["search"].ready.is_set())
-    return JSONResponse({"ready": ready}, headers={"Cache-Control": "no-store"})
+    search = operation["search"] if operation and not operation["cancel"].is_set() else None
+    status = {"ready": bool(search and search.ready.is_set())}
+    if search and (priority := search.priority):
+        status.update(priority=priority, has_requests=search.has_requests)
+    return JSONResponse(status, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/draft/{token}/finish")
