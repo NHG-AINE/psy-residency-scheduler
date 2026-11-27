@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { canGenerateDraft, cancelDraft, checkDraftReady, finishDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
+import { canGenerateDraft, cancelDraft, checkDraftStatus, finishDraft, generateDraft, settleDraftAttempt, startDraft } from './draft-schedule'
 import type { DraftResult } from './draft-schedule'
+import { draftPhase } from './draft-timing'
 import type { SavedDraft } from './workbook-session'
 import { readReviewStore, reviewSignature, REVIEW_CHANGED, STORAGE_KEY } from './history-review'
 import type { Workbook } from './workbook'
@@ -18,6 +19,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   const [cancelling, setCancelling] = useState(false)
   const [cancelled, setCancelled] = useState(false)
   const [ready, setReady] = useState(false)
+  const [phase, setPhase] = useState(draftPhase().active)
   const [finishing, setFinishing] = useState(false)
   const active = useRef<{
     token: Promise<string>; controller: AbortController; cancelled: boolean; invalidated: boolean
@@ -108,6 +110,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
     const start = performance.now()
     setOriginYear(workbook.target_year)
     setStartedAt(start)
+    setPhase(draftPhase().active)
     setBusy(true); setCancelled(false); updateResult({ saved: resultRef.current.saved, failure: null }); setError(''); setNotice('')
     let statusTimeout: ReturnType<typeof setTimeout> | undefined
     try {
@@ -119,14 +122,14 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
       const signal = operation.controller.signal
       const request = generateDraft(workbook, saved.store, signal, token, searchSeconds)
       async function pollStatus() {
-        const available = await checkDraftReady(token, signal).catch(() => false)
+        const status = await checkDraftStatus(token, signal).catch(() => null)
         if (signal.aborted || active.current !== operation) return
-        if (available) {
+        if (status?.priority) setPhase(draftPhase(status.priority, status.hasRequests).active)
+        if (status?.ready && !operation.ready) {
           operation.ready = true
           setReady(true)
-        } else {
-          statusTimeout = setTimeout(() => void pollStatus(), 500)
         }
+        statusTimeout = setTimeout(() => void pollStatus(), 500)
       }
       void pollStatus()
       const data = await request
@@ -147,7 +150,7 @@ export function useDraftSchedule(workbook: Workbook | null, importing: boolean, 
   }
   const visible = canGenerate && result.saved?.year === workbook?.target_year ? result.saved : null
   const onOriginYear = canGenerate && originYear === selectedYear
-  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, ready: ready && onOriginYear, finishing: finishing && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, finishGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
+  return { savedResult: result.saved, getSavedResult, restore, notice, searchSeconds, setSearchSeconds, draft: visible?.data ?? null, busy: busy && onOriginYear, pending: busy, cancelling: cancelling && onOriginYear, ready: ready && onOriginYear, phase, finishing: finishing && onOriginYear, error: onOriginYear ? error : '', failedAttempt: onOriginYear ? result.failure : null, canGenerate, generate, discard, cancelGeneration, finishGeneration, startedAt: onOriginYear ? startedAt : null, applyChange, canUndo: !!visible?.undo?.length,
     cancelled: cancelled && onOriginYear, elapsedSeconds: visible?.elapsedSeconds ?? null }
 }
 export type DraftState = ReturnType<typeof useDraftSchedule>

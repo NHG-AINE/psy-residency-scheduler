@@ -236,11 +236,16 @@ export async function cancelDraft(token: string): Promise<void> {
   if (!response.ok) throw new Error('Could not cancel draft generation. Check the connection and retry.')
 }
 
-export async function checkDraftReady(token: string, signal: AbortSignal): Promise<boolean> {
+export async function checkDraftStatus(token: string, signal: AbortSignal) {
   const response = await fetch(`/api/draft/${encodeURIComponent(token)}/status`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(DRAFT_CONTROL_TIMEOUT_MS)]),
   })
-  return response.ok && (await response.json()).ready === true
+  const data = response.ok ? await response.json() : null
+  return {
+    ready: data?.ready === true,
+    priority: typeof data?.priority === 'string' ? data.priority : undefined,
+    hasRequests: data?.has_requests === true,
+  }
 }
 
 export async function finishDraft(token: string, signal: AbortSignal): Promise<void> {

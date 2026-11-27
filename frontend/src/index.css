@@ -306,16 +306,29 @@
 
 @layer components {
   .draft-actions { @apply flex flex-wrap items-center gap-2; }
-  .draft-timer, .draft-running { @apply text-xs text-muted; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .draft-actions.is-generating { display: grid; grid-template-columns: minmax(0, 1fr) 10rem; gap: 12px; inline-size: max-content; max-inline-size: 100%; margin-inline-start: auto; }
+  .draft-progress { display: grid; gap: 2px; }
+  .draft-running { @apply text-sm font-medium text-ink; line-height: 1.4; }
+  .draft-running > span { animation: draft-phase-in 160ms ease-out; }
+  .draft-timer { @apply text-xs text-muted; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .draft-stop { min-inline-size: 10rem; white-space: nowrap; border: 1px solid transparent; transition-duration: 120ms; }
   .draft-stop.button-secondary { border-color: var(--color-hairline-strong); }
   .draft-stop[aria-disabled="true"] { cursor: default; opacity: .5; }
-  @media (prefers-reduced-motion: reduce) { .draft-stop { transition: none; } }
+  @media (max-width: 520px) {
+    .draft-actions.is-generating { grid-template-columns: minmax(0, 1fr) 8.5rem; align-items: start; }
+    .is-generating .draft-stop { min-inline-size: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .draft-running > span { animation: none; }
+    .draft-stop { transition: none; }
+  }
   .draft-feedback, .draft-error { @apply mx-6 text-sm leading-relaxed; }
   .draft-feedback, .draft-error { @apply mb-4 rounded-lg px-4 py-3; background: #fff0ee; color: #9f352e; }
   .draft-feedback ul { @apply mt-2 list-disc pl-5; }
   .draft-warning-source { @apply text-xs text-muted; overflow-wrap: anywhere; }
 }
+
+@keyframes draft-phase-in { from { opacity: .45; } to { opacity: 1; } }
 
 .monthly-breakdown { margin-top: 1.5rem; }
 .breakdown-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 1.5rem; }
@@ -501,7 +514,7 @@
 .draft-timing-trigger { color: #292524; text-decoration: underline; text-decoration-color: #938c84; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 .draft-timing-trigger:hover { text-decoration-color: currentColor; }
 .draft-timing-trigger:active { transform: scale(.98); }
-.draft-timing { width: min(430px, calc(100vw - 32px)); padding: 24px; border-radius: 16px; box-shadow: 0 16px 48px #29252426; opacity: 0; transform: translateY(-6px) scale(.98); transform-origin: top right; transition: opacity 220ms ease-out, transform 220ms ease-out, display 220ms allow-discrete, overlay 220ms allow-discrete; }
+.draft-timing { --timing-stage-color: #819e91; width: min(430px, calc(100vw - 32px)); padding: 24px; border-radius: 16px; box-shadow: 0 16px 48px #29252426; opacity: 0; transform: translateY(-6px) scale(.98); transform-origin: top right; transition: opacity 220ms ease-out, transform 220ms ease-out, display 220ms allow-discrete, overlay 220ms allow-discrete; }
 .draft-timing:popover-open { animation: none; opacity: 1; transform: none; }
 @starting-style { .draft-timing:popover-open { opacity: 0; transform: translateY(-6px) scale(.98); } }
 .timing-total { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 20px 0; font-variant-numeric: tabular-nums; }
@@ -510,24 +523,17 @@
 .timing-total small { display: inline; }
 .timing-total > div > small { margin-left: 4px; }
 .timing-bar { display: flex; gap: 3px; height: 6px; margin-bottom: 24px; overflow: hidden; border-radius: 4px; }
-.timing-bar > span { flex-basis: 0; background: #819e91; transform-origin: left; }
-.timing-bar > span:nth-child(3n + 2) { background: #8e9faf; }
-.timing-bar > span:nth-child(3n) { background: #b0baaa; }
-.timing-bar > span.timing-limited { background: #b89471; }
+.timing-bar > span { flex-basis: 0; background: var(--timing-stage-color); transform-origin: left; }
+.draft-timing .timing-limited { --timing-stage-color: #b89471; }
 .draft-timing:popover-open .timing-bar > span { animation: timing-reveal 420ms cubic-bezier(.2,.8,.2,1) backwards; }
 @keyframes timing-reveal { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .timing-stages { margin: 0; padding: 0; list-style: none; }
-.timing-stages > li { position: relative; padding: 0 0 24px 28px; }
-.timing-stages > li:not(:last-child)::after { content: ''; position: absolute; top: 15px; bottom: 4px; left: 5px; width: 1px; background: #e7e5e4; }
-.timing-stages > li::before { content: ''; position: absolute; left: 0; top: 4px; width: 12px; height: 12px; border: 1px solid #819e91; border-radius: 50%; background: #e8f2eb; }
-.timing-stage-title { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; font-size: 12px; font-weight: 500; }
-.timing-stage-title > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.timing-stages p { margin: 4px 0 0; color: #526f5b; font-size: 12px; }
-.timing-stages .timing-limited::before { border-color: #b89471; background: #fff1dc; }
-.timing-limited p { color: #815b24; }
-.timing-remaining { border-top: 1px solid #e7e5e4; padding-top: 12px; color: #6e675e; font-size: 12px; }
-.timing-remaining summary { cursor: pointer; padding: 8px 0; }
-.timing-remaining ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.9; }
+.timing-stages > li { position: relative; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-left: 28px; font-size: 12px; font-weight: 500; }
+.timing-stages > li:not(:last-child) { padding-bottom: 16px; }
+.timing-stages > li:not(:last-child)::after { content: ''; position: absolute; top: 16px; bottom: -4px; left: 5px; width: 1px; background: #e7e5e4; }
+.timing-stages > li::before { content: ''; position: absolute; left: 0; top: 4px; width: 12px; height: 12px; border: 1px solid var(--timing-stage-color); border-radius: 50%; background: #e8f2eb; }
+.timing-stages > li > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.timing-stages .timing-limited::before { background: #fff1dc; }
 @media (max-width: 520px) { .draft-timing-trigger, .timetable-draft-status { min-height: 44px; } .draft-timing { padding: 20px; transform-origin: bottom center; } }
 @media (prefers-reduced-motion: reduce) { .draft-timing, .draft-timing-trigger { transition: none; transform: none; } .draft-timing:popover-open .timing-bar > span { animation: none; } }
 

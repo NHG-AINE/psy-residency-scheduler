@@ -1,35 +1,37 @@
 import type { DraftSchedule } from './draft-schedule.ts'
 
-const labels: Record<string, string> = {
-  capacity_overflow: 'Posting capacity',
-  initial_feasibility: 'Find initial draft',
-  incoming_route_distribution: 'R1 route distribution',
-  monthly_medicine_neurology_ratio: 'R1 Medicine / Neurology ratio',
-  resident_requests: 'Resident requests',
-  posting_balance: 'Posting balance',
-  inpatient_allocation: 'Institution allocation',
-  r3_missing_clusters: 'R3 cluster exposure',
-  inpatient_destination: 'Preferred inpatient destination',
-  missing_clusters: 'R1-R2 cluster exposure',
-  singleton_months: 'Peer grouping',
+export function draftPhase(priority = 'initial_feasibility', hasRequests = false) {
+  switch (priority) {
+    case 'initial_feasibility':
+      return { id: 'finding', active: 'Finding a valid draft', done: 'Valid draft found' }
+    case 'capacity_overflow':
+    case 'incoming_route_distribution':
+    case 'monthly_medicine_neurology_ratio':
+    case 'resident_requests':
+      return {
+        id: 'balancing',
+        active: hasRequests ? 'Balancing capacity and meeting requests' : 'Balancing capacity',
+        done: hasRequests ? 'Capacity and requests optimised' : 'Capacity optimised',
+      }
+    default:
+      return { id: 'refining', active: 'Refining placements', done: 'Placements refined' }
+  }
 }
 
 export function draftTiming(draft: DraftSchedule) {
   const stages = draft.optimisation_stages || []
   const priorities = draft.soft_priority || stages.map((stage) => stage.priority)
-  const initial = stages.find((stage) => stage.priority === 'initial_feasibility')
-  return (initial && !priorities.includes(initial.priority) ? [initial.priority, ...priorities] : priorities).map((priority) => {
-    const stage = stages.find((item) => item.priority === priority)
-    const status = stage?.status
-    const initialDraft = priority === 'initial_feasibility'
-    return {
-      priority, label: labels[priority] || priority.replaceAll('_', ' '),
-      seconds: stage?.wall_time_seconds, status,
-      complete: status === 'optimal' || (initialDraft && status === 'feasible'),
-      outcome: !stage ? 'Not reached' : initialDraft ? (status === 'feasible' ? 'Valid draft found' : 'No draft found')
-        : status === 'optimal' ? 'Optimal'
-        : status === 'feasible' ? 'Best found - not proven'
-        : status === 'unknown' ? 'No new solution' : 'Stopped',
+  const hasRequests = priorities.includes('resident_requests')
+  const phases = new Map<string, { label: string; seconds: number; complete: boolean }>()
+  for (const stage of stages) {
+    const phase = draftPhase(stage.priority, hasRequests)
+    if (!phases.has(phase.id)) {
+      const complete = phase.id === 'finding' ? ['feasible', 'optimal'].includes(stage.status)
+        : priorities.filter((priority) => draftPhase(priority).id === phase.id)
+          .every((priority) => stages.some((item) => item.priority === priority && item.status === 'optimal'))
+      phases.set(phase.id, { label: complete ? phase.done : phase.active, seconds: 0, complete })
     }
-  })
+    phases.get(phase.id)!.seconds += stage.wall_time_seconds
+  }
+  return [...phases].map(([id, phase]) => ({ id, ...phase }))
 }
