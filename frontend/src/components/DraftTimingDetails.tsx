@@ -9,9 +9,7 @@ export default function DraftTimingDetails({ draft, elapsedSeconds, duration }: 
   const panel = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
-  const stages = draftTiming(draft)
-  const reached = stages.filter((stage) => stage.seconds !== undefined)
-  const waiting = stages.filter((stage) => stage.seconds === undefined)
+  const phases = draftTiming(draft)
   useEffect(() => {
     if (!open) return
     const close = (event: Event) => {
@@ -56,17 +54,12 @@ export default function DraftTimingDetails({ draft, elapsedSeconds, duration }: 
       <div className="timing-total"><div><strong>{elapsedSeconds.toFixed(1)}<span> s</span></strong><small>total elapsed</small></div>
         {draft.wall_time_seconds !== undefined && <small>{draft.wall_time_seconds.toFixed(1)} s solver time</small>}
       </div>
-      <div className="timing-bar" aria-hidden="true">{reached.map((stage, index) => <span key={stage.priority}
-        className={stage.complete ? '' : 'timing-limited'}
-        style={{ flexGrow: stage.seconds, animationDelay: `${index * 35}ms` }} />)}</div>
-      <ol className="timing-stages">{reached.map((stage) => <li key={stage.priority} className={stage.complete ? '' : 'timing-limited'}>
-        <div className="timing-stage-title"><span>{stage.label}</span><span>{stage.seconds!.toFixed(1)} s</span></div>
-        <p>{stage.outcome}</p>
-        {stage.status === 'unknown' && stage.priority !== 'initial_feasibility' && <small>Draft retained from the previous stage.</small>}
+      <div className="timing-bar" aria-hidden="true">{phases.map((phase, index) => <span key={phase.id}
+        className={phase.complete ? '' : 'timing-limited'}
+        style={{ flexGrow: phase.seconds, animationDelay: `${index * 35}ms` }} />)}</div>
+      <ol className="timing-stages">{phases.map((phase) => <li key={phase.id} className={phase.complete ? '' : 'timing-limited'}>
+        <span>{phase.label}</span><span>{phase.seconds.toFixed(1)} s</span>
       </li>)}</ol>
-      {waiting.length > 0 && <details className="timing-remaining"><summary>{waiting.length} later {waiting.length === 1 ? 'stage' : 'stages'} not reached</summary>
-        <ul>{waiting.map((stage) => <li key={stage.priority}>{stage.label}</li>)}</ul>
-      </details>}
     </div>
   </>
 }

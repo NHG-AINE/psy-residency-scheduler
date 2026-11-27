@@ -38,12 +38,14 @@ export default function DraftActions({ state, workbook, yearLabel, exporting, ch
   const exportMenu = <ExportMenu latestYear={latestYear} hasDraft={!!state.draft} includeDraft={includeDraft}
     disabled={state.pending || checkingUndo || loading} exporting={exporting} onExport={onExport}
     buttonRef={state.draft ? primary : exportButton} />
-  return <div className="draft-actions" ref={actions}>
+  return <div className={state.busy ? 'draft-actions is-generating' : 'draft-actions'} ref={actions}>
     <span className="sr-only" role="status">{state.busy && !state.cancelling
       ? state.finishing ? 'Preparing draft…' : state.ready ? 'A feasible draft is ready to use.' : '' : ''}</span>
     {!state.canGenerate ? exportMenu : state.busy ? <>
-      <span className="draft-running" role="status">{state.draft ? 'Regenerating draft' : 'Generating draft'}</span>
-      <DraftTimer draft={state.draft} startedAt={state.startedAt} elapsedSeconds={state.elapsedSeconds} />
+      <div className="draft-progress">
+        <span className="draft-running" role="status"><span key={state.phase}>{state.phase}</span></span>
+        <DraftTimer draft={state.draft} startedAt={state.startedAt} elapsedSeconds={state.elapsedSeconds} />
+      </div>
       <button key="draft-stop" ref={primary} type="button" className={`button draft-stop${state.ready && !state.cancelling ? '' : ' button-secondary'}`} aria-disabled={pendingStop}
         onPointerDown={(event) => {
           if (event.isPrimary && event.button === 0) press.current = { input: 'pointer', ready: state.ready }
