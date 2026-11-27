@@ -656,7 +656,8 @@ class R1SolverTests(unittest.TestCase):
         self.assertEqual(status, "feasible")
         self.assertTrue(search.finished_early)
         self.assertIn(solver.value(choice), (0, 1))
-        self.assertEqual([stage["priority"] for stage in stages], ["initial_feasibility"])
+        self.assertEqual([(stage["priority"], stage["status"]) for stage in stages],
+                         [("initial_feasibility", "feasible"), ("posting_balance", "unknown")])
 
     def test_bound_submodels_do_not_repeat_initial_feasibility(self):
         model, bound_model = cp_model.CpModel(), cp_model.CpModel()
